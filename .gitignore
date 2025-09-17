@@ -1,0 +1,29 @@
+# Python 虚拟环境
+venv/
+.venv/
+env/
+venv*/
+ENV/
+env.bak/
+
+# Python 缓存和编译文件
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Jupyter Notebook 缓存
+.ipynb_checkpoints/
+
+# PyCharm
+.idea/
+
+# VS Code
+.vscode/
+
+# 其他常见忽略项
+*.egg-info/
+*.egg
+*.log
+*.tmp
+*.swp
+.DS_Store
