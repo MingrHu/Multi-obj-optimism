@@ -264,11 +264,11 @@ def main():
     load_r2 = r2_score(fact_load, load_pred)
     
     # 保存模型和标准化器
-    os.makedirs("../models/DNN_Optimized_PyTorch", exist_ok=True)
-    torch.save(model.state_dict(), '../models/DNN_Optimized_PyTorch/multi_output_model.pth')
-    joblib.dump(scalers['X'], '../models/DNN_Optimized_PyTorch/scaler_X.pkl')
-    joblib.dump(scalers['y_stdv'], '../models/DNN_Optimized_PyTorch/scaler_y_stdv.pkl')
-    joblib.dump(scalers['y_load'], '../models/DNN_Optimized_PyTorch/scaler_y_load.pkl')
+    os.makedirs("../../data/models/DNN_Optimized_PyTorch", exist_ok=True)
+    torch.save(model.state_dict(), '../../data/models/DNN_Optimized_PyTorch/multi_output_model.pth')
+    joblib.dump(scalers['X'], '../../data/models/DNN_Optimized_PyTorch/scaler_X.pkl')
+    joblib.dump(scalers['y_stdv'], '../../data/models/DNN_Optimized_PyTorch/scaler_y_stdv.pkl')
+    joblib.dump(scalers['y_load'], '../../data/models/DNN_Optimized_PyTorch/scaler_y_load.pkl')
     
     # 输出结果
     print("\n=== 晶粒尺寸标准差模型 ===")
