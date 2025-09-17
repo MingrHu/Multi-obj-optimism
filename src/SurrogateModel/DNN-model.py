@@ -213,6 +213,7 @@ class MultiOutputTrainer:
         
         # 加载最佳模型
         self.model.load_state_dict(torch.load('best_model.pth'))
+        os.remove('best_model.pth')
         print('Training completed!')
     
     def predict(self, X):
