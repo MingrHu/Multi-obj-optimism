@@ -8,7 +8,7 @@
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
 import pandas as pd
-
+import numpy as np
 
 # 数据加载与预处理函数
 def load_and_preprocess_data(file_path):
@@ -104,3 +104,16 @@ def split_data_with_val(X, y_stdv, y_load, test_size=0.2, val_size=0.25, random_
             'scaler_y_load': scaler_y_load
         }
     )
+
+def normal_max_absolute_error(y_true, y_pred):
+    """
+    计算 Normal Maximum Absolute Error (NMAE):
+    NMAE = max(|y_true - y_pred|) / RMSE(y_true - y_pred)
+    """
+    errors = np.abs(y_true - y_pred)
+    max_ae = np.max(errors)  # 分子：最大绝对误差
+    rmse = np.sqrt(np.mean(errors ** 2))  # 分母：预测误差的 RMSE
+    
+    if rmse == 0:
+        return np.inf if max_ae > 0 else 0.0  # 避免除以 0
+    return max_ae / rmse
