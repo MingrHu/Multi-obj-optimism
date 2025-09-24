@@ -150,28 +150,67 @@ def save_best_model(model_type,best_model,best_r2,best_fact,best_pred,scalers,mo
 
 
 #####################################工具辅助函数模块############################################
+import time
+
 class Time:
-    """记录代码块或函数执行时间的工具类"""
- 
+    """记录代码块或函数执行时间的工具类（支持手动和自动模式）"""
+
     def __init__(self, name=None):
         self.name = name  # 可选：标记计时名称
         self.start_time = None
         self.end_time = None
- 
+        self.duration = None  # 存储计算后的时长（秒）
+
+    def start(self):
+        """手动开始计时"""
+        self.start_time = time.perf_counter()
+        return self  # 返回自身，支持链式调用
+
+    def stop(self):
+        """手动停止计时，并计算时长"""
+        if self.start_time is None:
+            raise RuntimeError("请先调用 start() 开始计时！")
+        self.end_time = time.perf_counter()
+        self.duration = self.end_time - self.start_time
+        return self  # 返回自身，支持链式调用
+
+    def get_duration(self, unit="s"):
+        """
+        获取计时时长
+        :param unit: 时间单位，可选 "s"（秒）、"ms"（毫秒）、"us"（微秒）
+        :return: 转换后的时长
+        """
+        if self.duration is None:
+            raise RuntimeError("请先调用 stop() 停止计时！")
+        if unit == "s":
+            return self.duration
+        elif unit == "ms":
+            return self.duration * 1000
+        elif unit == "us":
+            return self.duration * 1_000_000
+        else:
+            raise ValueError("不支持的单位，请选择 's'、'ms' 或 'us'")
+
+    def print_duration(self, unit="ms"):
+        """打印计时结果"""
+        duration = self.get_duration(unit)
+        unit_name = {"s": "秒", "ms": "毫秒", "us": "微秒"}[unit]
+        if self.name:
+            print(f"[{self.name}] 耗时: {duration:.4f} {unit_name}")
+        else:
+            print(f"代码块耗时: {duration:.4f} {unit_name}")
+
+    # 以下保持原有的上下文管理器和装饰器功能
     def __enter__(self):
         """上下文管理器入口，记录开始时间"""
-        self.start_time = time.perf_counter()
+        self.start()
         return self
- 
+
     def __exit__(self, exc_type, exc_val, exc_tb):
         """上下文管理器出口，记录结束时间并打印耗时"""
-        self.end_time = time.perf_counter()
-        duration_ms = (self.end_time - self.start_time) * 1000
-        if self.name:
-            print(f"[{self.name}] 耗时: {duration_ms:.4f} ms")
-        else:
-            print(f"代码块耗时: {duration_ms:.4f} ms")
- 
+        self.stop()
+        self.print_duration(unit="ms")
+
     def __call__(self, func):
         """装饰器：记录被装饰函数的执行时间"""
         def wrapper(*args, **kwargs):
@@ -180,7 +219,7 @@ class Time:
                     self.name = func.__name__  # 默认用函数名标记
                 return func(*args, **kwargs)
         return wrapper
- 
+
     @staticmethod
     def record(func=None, name=None):
         """
@@ -188,13 +227,23 @@ class Time:
         示例：
             @Time.record()
             def foo(): ...
- 
+
             @Time.record(name="自定义名称")
             def bar(): ...
         """
         if func is None:
             return lambda f: Time(name=name)(f)
         return Time(name=name)(func)
+
+def evaluate_model(R2, T, T_min, T_max, w1=0.5, w2=0.5):
+    # 标准化精度
+    f_R2 = min(1.0, R2)
+    # 标准化时间
+    g_T = 1 - (T - T_min) / (T_max - T_min) if T_max != T_min else 1.0
+    # 综合得分
+    score = w1 * f_R2 + w2 * g_T
+    return score
+
 
 #####################################工具辅助函数模块############################################
 

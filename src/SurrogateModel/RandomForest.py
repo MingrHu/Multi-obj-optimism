@@ -20,8 +20,14 @@ def stdv_train_RF(train_times = 20):
     best_stdv_pred = None
     best_fact_stdv = None
 
+    max_time = -np.inf
+    min_time = np.inf
+
     for i in range(train_times):
         print(f"\n=== 第 {i+1}/{train_times} 次训练 ===")
+        t = Time()
+        t.start()
+
          # 1. 加载数据
         X, y_stdv, y_load = load_and_preprocess_data('../../data/RES-108.txt')
     
@@ -55,10 +61,13 @@ def stdv_train_RF(train_times = 20):
         print("实际值 vs. 预测值(前5行):")
         for j in range(5):
             print(f"实际值: {fact_stdv[j][0]:.4f}, 预测值: {stdv_pred[j][0]:.4f}")
+        t.stop()
+        max_time = max(max_time,t.get_duration("ms"))
+        min_time = min(min_time,t.get_duration("ms"))
 
     # 训练结束后，保存最佳模型
     save_best_model("stdv",best_stdv_model,best_stdv_r2,best_fact_stdv,best_stdv_pred,scalers,"RF")
-    return (mean_stdv_r2 ,mean_stdv_nmae)   
+    return (mean_stdv_r2 ,mean_stdv_nmae,max_time,min_time)  
 
 def load_train_RF(train_times = 20): 
 
@@ -70,9 +79,14 @@ def load_train_RF(train_times = 20):
     best_load_pred = None
     best_fact_load = None
 
+    max_time = -np.inf
+    min_time = np.inf
+
     for i in range(train_times):
         print(f"\n=== 第 {i+1}/{train_times} 次训练 ===")
-         # 1. 加载数据
+        t = Time()
+        t.start()
+        # 1. 加载数据
         X, y_stdv,y_load = load_and_preprocess_data('../../data/RES-108.txt')
     
         # 2. 划分数据集并标准化
@@ -105,17 +119,28 @@ def load_train_RF(train_times = 20):
         print("实际值 vs. 预测值(前5行):")
         for j in range(5):
             print(f"实际值: {fact_load[j][0]:.4f}, 预测值: {load_pred[j][0]:.4f}")
+        
+        t.stop()
+        max_time = max(max_time,t.get_duration("ms"))
+        min_time = min(min_time,t.get_duration("ms"))
 
     # 训练结束后，保存最佳模型
     save_best_model("load",best_load_model,best_load_r2,best_fact_load,best_load_pred,scalers,"RF")
-    return (mean_load_r2 ,mean_load_nmae)   
+    return  (mean_load_r2,mean_load_nmae,max_time,min_time)    
 
-if __name__ == "__main__":
-    train_times = 20
-    with Time("Kriging 训练STDV时长统计:"):
-        mean_stdv_r2 ,mean_stdv_nmae = stdv_train_RF(train_times)
-    with Time("Kriging 训练LOAD时长统计:"):
-        mean_load_r2,mean_load_nmae = load_train_RF(train_times)
+def RunRF(train_times):
 
-    print(f"晶粒尺寸INFO: r2均值: {mean_stdv_r2 / train_times:.4f}, nmae均值: {mean_stdv_nmae / train_times:.4f}")
-    print(f"模具载荷INFO: r2均值: {mean_load_r2 / train_times:.4f}, nmae均值: {mean_load_nmae / train_times:.4f}")
+    t1 = Time()
+    t1.start()
+    mean_stdv_r2 ,mean_stdv_nmae,max_stdv_time,min_stdv_time = stdv_train_RF(train_times)
+    t1.stop()
+    sum_stdv_time = t1.get_duration("ms")
+
+    t2 = Time()
+    t2.start()
+    mean_load_r2,mean_load_nmae,max_load_time,min_load_time = load_train_RF(train_times)
+    t2.stop()
+    sum_load_time = t2.get_duration("ms")
+
+    return (mean_stdv_r2,mean_stdv_nmae,max_stdv_time,min_stdv_time,sum_stdv_time,
+            mean_load_r2,mean_load_nmae,max_load_time,min_load_time,sum_load_time)
