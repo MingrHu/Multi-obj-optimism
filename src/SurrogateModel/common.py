@@ -9,7 +9,12 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
 import pandas as pd
 import numpy as np
+import joblib,os,time
+from tensorflow.keras.models import Model
+from tensorflow.keras.layers import Dense, Dropout, BatchNormalization, Input
+from tensorflow.keras.optimizers import Adam
 
+#####################################数据处理函数块############################################
 # 数据加载与预处理函数
 def load_and_preprocess_data(file_path):
     """加载数据并进行预处理"""
@@ -25,10 +30,10 @@ def load_and_preprocess_data(file_path):
     return X, y_stdv, y_load
 
 # 划分数据集 不要验证集
-def split_data_without_val(X, y_stdv, y_load, test_size=0.2, random_state=42):
+def split_data_without_val(X, y_stdv, y_load, test_size=0.2,random_state=42):
     # 划分训练集和测试集
     X_train, X_test, y_stdv_train, y_stdv_test, y_load_train, y_load_test = train_test_split(
-        X, y_stdv, y_load, test_size=test_size, random_state=random_state
+        X, y_stdv, y_load, test_size=test_size,random_state=random_state
     )
  
     # 特征标准化
@@ -38,13 +43,13 @@ def split_data_without_val(X, y_stdv, y_load, test_size=0.2, random_state=42):
  
     # 目标值1标准化（晶粒尺寸标准差）
     scaler_y_stdv = StandardScaler()
-    y_stdv_train_scaled = scaler_y_stdv.fit_transform(y_stdv_train.reshape(-1, 1)).ravel()  # 移除 .values
-    y_stdv_test_scaled = scaler_y_stdv.transform(y_stdv_test.reshape(-1, 1)).ravel()       # 移除 .values
+    y_stdv_train_scaled = scaler_y_stdv.fit_transform(y_stdv_train).ravel()  
+    y_stdv_test_scaled = scaler_y_stdv.transform(y_stdv_test).ravel()       
  
     # 目标值2标准化（模具载荷）
     scaler_y_load = StandardScaler()
-    y_load_train_scaled = scaler_y_load.fit_transform(y_load_train.reshape(-1, 1)).ravel()  # 移除 .values
-    y_load_test_scaled = scaler_y_load.transform(y_load_test.reshape(-1, 1)).ravel()       # 移除 .values
+    y_load_train_scaled = scaler_y_load.fit_transform(y_load_train).ravel()  
+    y_load_test_scaled = scaler_y_load.transform(y_load_test).ravel()       
  
     # 返回标准化后的数据和标准化器
     return (
@@ -58,6 +63,7 @@ def split_data_without_val(X, y_stdv, y_load, test_size=0.2, random_state=42):
         }
     )
 
+# 划分数据集 需要验证集
 def split_data_with_val(X, y_stdv, y_load, test_size=0.2, val_size=0.25, random_state=42):
     # 特征与目标变量
     X_train, X_test, y_stdv_train, y_stdv_test, y_load_train, y_load_test = train_test_split(
@@ -105,6 +111,7 @@ def split_data_with_val(X, y_stdv, y_load, test_size=0.2, val_size=0.25, random_
         }
     )
 
+# 计算NMAE函数
 def normal_max_absolute_error(y_true, y_pred):
     """
     计算 Normal Maximum Absolute Error (NMAE):
@@ -117,3 +124,107 @@ def normal_max_absolute_error(y_true, y_pred):
     if rmse == 0:
         return np.inf if max_ae > 0 else 0.0  # 避免除以 0
     return max_ae / rmse
+
+# 训练的模型类型 最佳模型 最佳决定系数 实际值和预测值 代理模型名称
+def save_best_model(model_type,best_model,best_r2,best_fact,best_pred,scalers,model_name):
+    # 训练结束后，保存最佳模型
+    os.makedirs(f"../../data/models/{model_name}", exist_ok=True)
+    if best_model is not None:
+        if model_name == 'DNN':
+            best_model.save(f'../../data/models/{model_name}/best_{model_type}_model.keras')
+            joblib.dump(scalers, f'../../data/models/{model_name}/{model_type}_scalers.pkl')
+        else:
+            joblib.dump(best_model,f'../../data/models/{model_name}/best_{model_type}_model.pkl')
+            joblib.dump(scalers, f'../../data/models/{model_name}/{model_type}_scalers.pkl')
+        print("\n=== 最佳模型已保存 ===")
+        print(f"最高 R²分数: {best_r2:.4f}")
+        
+        # 打印最佳模型的实际值 vs. 预测值（前5行）
+        print("\n最佳模型预测结果(前5行):")
+        for j in range(5):
+            print(f"实际值: {best_fact[j][0]:.4f}, 预测值: {best_pred[j][0]:.4f}")
+    else:
+        print("警告：未找到有效模型！")
+#####################################数据处理函数块############################################
+
+
+
+#####################################工具辅助函数模块############################################
+class Time:
+    """记录代码块或函数执行时间的工具类"""
+ 
+    def __init__(self, name=None):
+        self.name = name  # 可选：标记计时名称
+        self.start_time = None
+        self.end_time = None
+ 
+    def __enter__(self):
+        """上下文管理器入口，记录开始时间"""
+        self.start_time = time.perf_counter()
+        return self
+ 
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """上下文管理器出口，记录结束时间并打印耗时"""
+        self.end_time = time.perf_counter()
+        duration_ms = (self.end_time - self.start_time) * 1000
+        if self.name:
+            print(f"[{self.name}] 耗时: {duration_ms:.4f} ms")
+        else:
+            print(f"代码块耗时: {duration_ms:.4f} ms")
+ 
+    def __call__(self, func):
+        """装饰器：记录被装饰函数的执行时间"""
+        def wrapper(*args, **kwargs):
+            with self:
+                if self.name is None:
+                    self.name = func.__name__  # 默认用函数名标记
+                return func(*args, **kwargs)
+        return wrapper
+ 
+    @staticmethod
+    def record(func=None, name=None):
+        """
+        静态方法装饰器（支持带参数的装饰器）
+        示例：
+            @Time.record()
+            def foo(): ...
+ 
+            @Time.record(name="自定义名称")
+            def bar(): ...
+        """
+        if func is None:
+            return lambda f: Time(name=name)(f)
+        return Time(name=name)(func)
+
+#####################################工具辅助函数模块############################################
+
+
+
+
+#####################################各类代理模型定义部分######################################
+# DNN的模型定义
+def build_single_output_dnn(input_dim):
+    """构建单输出DNN模型"""
+    inputs = Input(shape=(input_dim,))
+    
+    # 共享特征提取层
+    x = Dense(64, activation='relu')(inputs)
+    x = BatchNormalization()(x)
+    x = Dropout(0.2)(x)
+    
+    x = Dense(32, activation='relu')(x)
+    x = BatchNormalization()(x)
+    x = Dropout(0.1)(x)
+    
+    # 输出层
+    out = Dense(16, activation='relu')(x)
+    out = Dense(1)(out)  # 线性输出
+    
+    model = Model(inputs=inputs, outputs=out)
+    
+    model.compile(
+        optimizer=Adam(learning_rate=0.001),
+        loss='mse',
+        metrics=['mae']
+    )
+    return model
