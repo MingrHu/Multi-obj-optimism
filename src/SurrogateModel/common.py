@@ -20,7 +20,7 @@ def load_and_preprocess_data(file_path):
     """加载数据并进行预处理"""
     df = pd.read_csv(file_path, sep='\t', header=None)
     df.columns = ['Index', 'Workpiece_Temp', 'Die_Temp', 'Forming_Speed', 
-                  'STDV_grainSize', 'Max_grainSize','Avg_grainSize','Die_Load']
+                  'STDV_grainSize','Die_Load']
     
     # 特征与目标变量
     X = df[['Workpiece_Temp', 'Die_Temp', 'Forming_Speed']].values

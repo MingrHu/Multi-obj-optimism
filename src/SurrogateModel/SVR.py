@@ -1,4 +1,4 @@
-import pandas as pd
+import joblib
 import numpy as np
 import os
 from common import (load_and_preprocess_data,split_data_without_val,
@@ -35,8 +35,6 @@ def stdv_train_SVR(train_times = 20):
         # 2. 划分数据集并标准化
         X_train_scaled, X_test_scaled, y_stdv_train_scaled, y_stdv_test_scaled, \
         y_load_train_scaled, y_load_test_scaled, scalers = split_data_without_val(X, y_stdv, y_load,0.2,i+1)            
-        # 4. 定义多项式回归模型（这里使用2次多项式，可以根据需要调整）
-        degree = 2  # 多项式阶数
 
         # 5. 晶粒尺寸标准差模型
         stdv_model = SVR(kernel='rbf', C=1.0, epsilon=0.1)
@@ -96,8 +94,6 @@ def load_train_SVR(train_times = 20):
         # 2. 划分数据集并标准化
         X_train_scaled, X_test_scaled, y_stdv_train_scaled, y_stdv_test_scaled, \
         y_load_train_scaled, y_load_test_scaled, scalers = split_data_without_val(X, y_stdv, y_load,0.2,i+1)        
-        # 4. 定义多项式回归模型（这里使用2次多项式，可以根据需要调整）
-        degree = 2  # 多项式阶数
 
         # 模具最大载荷模型
         load_model = SVR(kernel='rbf', C=1.0, epsilon=0.1)
@@ -151,3 +147,57 @@ def RunSVR(train_times):
 
     return (mean_stdv_r2,mean_stdv_nmae,max_stdv_time,min_stdv_time,sum_stdv_time,
             mean_load_r2,mean_load_nmae,max_load_time,min_load_time,sum_load_time)
+
+def full_sample_SVR():
+
+    print("SVR训练...")
+    os.makedirs("../../data/models/SVR", exist_ok=True)   
+
+    t = Time()
+    t.start()
+
+    # 1. 加载数据
+    X, y_stdv,y_load = load_and_preprocess_data('../../data/RES.txt')
+
+    # 2. 划分数据集并标准化
+    X_train_scaled, X_test_scaled, y_stdv_train_scaled, y_stdv_test_scaled, \
+    y_load_train_scaled, y_load_test_scaled, scalers = split_data_without_val(X, y_stdv, y_load,0.2,42)        
+
+    stdv_model = SVR(kernel='rbf', C=1.0, epsilon=0.1)
+    load_model = SVR(kernel='rbf', C=1.0, epsilon=0.1)
+    # 训练模型
+    stdv_model.fit(X_train_scaled, y_stdv_train_scaled)
+    load_model.fit(X_train_scaled, y_load_train_scaled)
+
+    load_pred_scaled = load_model.predict(X_test_scaled)
+    stdv_pred_scaled = stdv_model.predict(X_test_scaled)
+
+    stdv_pred = scalers['scaler_y_stdv'].inverse_transform(stdv_pred_scaled.reshape(-1, 1))
+    fact_stdv = scalers['scaler_y_stdv'].inverse_transform(y_stdv_test_scaled.reshape(-1, 1))
+    load_pred = scalers['scaler_y_load'].inverse_transform(load_pred_scaled.reshape(-1, 1))
+    fact_load = scalers['scaler_y_load'].inverse_transform(y_load_test_scaled.reshape(-1, 1))
+    
+
+    # 计算相关指标
+    stdv_r2 = r2_score(fact_stdv, stdv_pred)
+    stdv_nmae = normal_max_absolute_error(fact_stdv, stdv_pred)
+    load_r2 = r2_score(fact_load, load_pred)
+    load_nmae = normal_max_absolute_error(fact_load, load_pred)
+ 
+    t.stop()
+    # 打印当前结果
+    print(f"STDV的R²分数: {stdv_r2:.4f}")
+    print(f"NMAE: {stdv_nmae:.4f}")
+    print("实际值 vs. 预测值(前5行):")
+    for j in range(5):
+        print(f"实际值: {fact_stdv[j][0]:.4f}, 预测值: {stdv_pred[j][0]:.4f}")
+    
+    print(f"LOAD的R²分数: {load_r2:.4f}")
+    print(f"NMAE: {load_nmae:.4f}")
+    print("实际值 vs. 预测值(前5行):")
+    for j in range(5):
+        print(f"实际值: {fact_load[j][0]:.4f}, 预测值: {load_pred[j][0]:.4f}")
+    
+    joblib.dump(stdv_model,f'../../data/models/SVR/svr_res_stdv_model.pkl')
+    joblib.dump(load_model,f'../../data/models/SVR/svr_res_load_model.pkl')
+    joblib.dump(scalers, f'../../data/models/SVR/svr_res_scalers.pkl')

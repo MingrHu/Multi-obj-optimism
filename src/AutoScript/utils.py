@@ -1,9 +1,12 @@
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import os
 from sklearn.model_selection import train_test_split
 from itertools import product
 from pyDOE import lhs
+script_dir = os.path.dirname(os.path.abspath(__file__))
+os.chdir(script_dir)
 
 def LHSSampleGenerate(n_samples:int, param_ranges:dict,sample_save_path:str):
 
@@ -123,3 +126,73 @@ def SaveAndprint(boundary_df,df,extype,save_path):
     print(f"采样数据已保存至 {save_path}IN{extype}.txt 总计{len(df)} 个样本")
     print("输入参数统计信息：")
     print(df.describe())
+
+
+def read_file(filename):
+    data = []
+    with open(filename, 'r') as file:
+        for line in file:
+            # 假设列是以空格或制表符分隔的
+            parts = line.strip().split()
+            if len(parts) >= 5:  # 确保至少有5列（文件1）或6列（文件2）
+                data.append(parts)
+    return data
+
+def write_output(filename, data):
+    with open(filename, 'w') as file:
+        for row in data:
+            file.write(row) 
+
+def merge_files(file1_data, file2_data):
+    merged = {}
+    
+    # 处理文件1的数据
+    for row in file1_data:
+        if float(row[4]) < 0:
+            continue
+        work_temp = f"{float(row[1]):.1f}"
+        die_temp = f"{float(row[2]):.1f}"
+        speed = f"{float(row[3]):.1f}"
+
+        grain_size_stdv = row[4]
+        load = row[5] if len(row) > 5 else None
+
+        key = (work_temp, die_temp, speed)
+        if key not in merged:
+            merged[key] = {
+                'work_temp': work_temp,
+                'die_temp':die_temp,
+                'speed':speed,
+                'grain_size_stdv': grain_size_stdv,
+                'load': load
+            }  
+   
+    # 处理文件2的数据
+    for row in file2_data:
+        if float(row[4]) < 0:
+            continue
+        work_temp = f"{float(row[1]):.1f}"
+        die_temp = f"{float(row[2]):.1f}"
+        speed = f"{float(row[3]):.1f}"
+
+        grain_size_stdv = row[4]
+        load = row[5] if len(row) > 5 else None
+        
+        key = (work_temp, die_temp, speed)
+        if key not in merged:
+            merged[key] = {
+                'work_temp': work_temp,
+                'die_temp':die_temp,
+                'speed':speed,
+                'grain_size_stdv': grain_size_stdv,
+                'load': load
+            }
+    
+    # 生成合并后的数据
+    result = []
+    for i,key in enumerate(merged):
+        entry = merged[key]
+        new_row = f"{i}\t{entry['work_temp']}\t{entry['die_temp']}\t{entry['speed']}\t{entry['grain_size_stdv']}\t{entry['load']}\n"
+        result.append(new_row)
+    
+    return result
