@@ -1,7 +1,7 @@
 import numpy as np
 import os
 from joblib import load
-from utils import save_pareto_solutions,AdaptiveSBX
+from utils import save_pareto_solutions,AdaptiveSBX,eps_record,get_paretodata
 from pymoo.algorithms.moo.nsga2 import NSGA2
 from pymoo.operators.sampling.lhs import LHS
 from pymoo.operators.sampling.rnd import FloatRandomSampling
@@ -60,36 +60,10 @@ def NSGA2_run():
     save_pareto_solutions(res)
 
 #*************************TEST*************************************
-def eps_record():
-    with open("../../data/eps_origion_more.txt", "r") as file:
-        lines = [line.strip() for line in file if line.strip()]  # 修复点
 
-    # 提取表头后的数据行（跳过前3行：表头和分隔线）
-    data_rows = lines[3:]  
 
-    eps_list = []
-
-    for row in data_rows:
-        # 按 | 分割每行
-        parts = [part.strip() for part in row.split('|')]
-        
-        # 提取eps（第6列）
-        try:
-            eps = parts[5].strip()  # 第六列是eps
-            eps_value = None if eps == '-' else float(eps)
-            eps_list.append(eps_value)
-        except (IndexError, ValueError):
-            continue  
-
-    # 保存结果到文件
-    with open('../../data/eps_array_more.txt', 'w') as f:
-        temp = np.inf
-        for i,val in enumerate(eps_list):
-            if i == 0:
-                continue
-            temp = min(temp,val)
-            f.write(f"{i}\t{temp}\n")
 
 if __name__ == "__main__":
     # NSGA2_run()
-    eps_record()
+    # eps_record()
+    get_paretodata("../../data/pareto_final_res.txt","../../data/stdv_load_res.txt")

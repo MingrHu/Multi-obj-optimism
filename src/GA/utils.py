@@ -52,35 +52,53 @@ class AdaptiveSBX(SBX):
         # 调用父类的SBX实现
         return super()._do(problem, X, **kwargs)
 
+def eps_record():
+    with open("../../data/eps_origion_more.txt", "r") as file:
+        lines = [line.strip() for line in file if line.strip()]  # 修复点
 
-class HybridPMG(Mutation):
-    def __init__(self, eta_m_min=10, eta_m_max=50, p_poly=0.7, sigma_max=0.1, sigma_min=0.01, lambda_=3):
-        super().__init__()
-        self.eta_m_min = eta_m_min
-        self.eta_m_max = eta_m_max
-        self.p_poly = p_poly
-        self.sigma_max = sigma_max
-        self.sigma_min = sigma_min
-        self.lambda_ = lambda_
+    # 提取表头后的数据行（跳过前3行：表头和分隔线）
+    data_rows = lines[3:]  
 
-    def _do(self, problem, X, t, T, **kwargs):
-        n_var, n_offsprings = problem.n_var, X.shape[0]
-        eta_m = self.eta_m_min + (self.eta_m_max - self.eta_m_min) * (t / T)
-        sigma = self.sigma_max * np.exp(-self.lambda_ * (t / T)) + self.sigma_min
+    eps_list = []
+
+    for row in data_rows:
+        # 按 | 分割每行
+        parts = [part.strip() for part in row.split('|')]
         
-        for i in range(n_offsprings):
-            for j in range(n_var):
-                if np.random.rand() < (1 / n_var):  # Mutation probability
-                    if np.random.rand() < self.p_poly:  # Polynomial mutation
-                        u = np.random.rand()
-                        if u <= 0.5:
-                            delta = (2 * u) ** (1 / (eta_m + 1)) - 1
-                        else:
-                            delta = 1 - (1 / (2 * (1 - u))) ** (1 / (eta_m + 1))
-                        X[i, j] += delta * (problem.xu[j] - problem.xl[j])
-                    else:  # Gaussian mutation
-                        X[i, j] += sigma * np.random.randn() * (problem.xu[j] - problem.xl[j])
-                    
-                    # Bound check
-                    X[i, j] = np.clip(X[i, j], problem.xl[j], problem.xu[j])
-        return X
+        # 提取eps（第6列）
+        try:
+            eps = parts[5].strip()  # 第六列是eps
+            eps_value = None if eps == '-' else float(eps)
+            eps_list.append(eps_value)
+        except (IndexError, ValueError):
+            continue  
+
+    # 保存结果到文件
+    with open('../../data/eps_array_more.txt', 'w') as f:
+        temp = np.inf
+        for i,val in enumerate(eps_list):
+            if i == 0:
+                continue
+            temp = min(temp,val)
+            f.write(f"{i}\t{temp}\n")
+
+def get_paretodata(input_path,save_path):
+    with open(input_path,"r") as file:
+        lines = [line.strip() for line in file if line.strip()]  
+    
+    data_rows = lines
+    res = []
+    for row in data_rows:
+        # 按 | 分割每行
+        parts = [part.strip() for part in row.split('|')]
+        try:
+            stdv = parts[4].strip() 
+            load = parts[5].strip() 
+            res.append([float(stdv),float(load)])
+        except (IndexError, ValueError):
+            continue  
+
+    with open(save_path, 'w') as f:
+        for vec in res:  
+            f.write(f"{vec[0]:.1f}\t{vec[1] / 1000:.2f}\n")
+
