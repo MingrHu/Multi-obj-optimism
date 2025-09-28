@@ -85,7 +85,6 @@ def eps_record():
 def get_paretodata(input_path,save_path):
     with open(input_path,"r") as file:
         lines = [line.strip() for line in file if line.strip()]  
-    
     data_rows = lines
     res = []
     for row in data_rows:
