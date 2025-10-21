@@ -36,7 +36,7 @@ def stdv_train_dnn(train_times = 20):
         X_train_scaled, X_val_scaled, X_test_scaled,y_stdv_train_scaled, y_stdv_val_scaled, y_stdv_test_scaled,\
         y_load_train_scaled, y_load_val_scaled, y_load_test_scaled, scalers = split_data_with_val(X, y_stdv, y_load,0.2,0.25,i + 1)
 
-        stdv_model = build_single_output_dnn(input_dim=X_train_scaled.shape[1])
+        stdv_model = build_single_output_dnn(X=X_train_scaled.shape[1])
 
         callbacks_stdv = [
             EarlyStopping(monitor='val_loss', patience=50, restore_best_weights = True),

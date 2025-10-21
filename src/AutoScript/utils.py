@@ -5,6 +5,12 @@ import os
 from sklearn.model_selection import train_test_split
 from itertools import product
 from pyDOE import lhs
+from ast import List
+from tracemalloc import Statistic
+from executor import (ProcessDB_TO_KEY,
+calculate_von_mises,GetNewFilePath)
+from datetime import datetime
+import os, statistics
 script_dir = os.path.dirname(os.path.abspath(__file__))
 os.chdir(script_dir)
 
@@ -73,6 +79,7 @@ def FullSampleGenerate(param_ranges:dict,sample_save_path:str):
     SaveAndprint(boundary_df, df, 'fullfactorial',sample_save_path)
  
 
+
 # df：生成的全因子采样数据
 # boundary_df：边界样本数据
 # extype：样本类型（如 'fullfactorial'）
@@ -127,6 +134,9 @@ def SaveAndprint(boundary_df,df,extype,save_path):
     print("输入参数统计信息：")
     print(df.describe())
 
+def sample_generate(samples_num:int,param_ranges:dict,sample_save_path:str):
+    LHS_n_samples = samples_num  # 初始样本数量
+    LHSSampleGenerate(LHS_n_samples, param_ranges,sample_save_path)  # 生成拉丁超立方采样数据
 
 def read_file(filename):
     data = []
@@ -196,3 +206,83 @@ def merge_files(file1_data, file2_data):
         result.append(new_row)
     
     return result
+
+#  @brief  提取KEY文件中的目标行
+#  当前默认提取锻件的应力情况
+#  并且调用等效应力计算最大等效应力值
+#  @return 
+#  @author Hu Mingrui
+#  @date   2025/06/03
+#  @about  
+def ExtractValueFromKEY(KEY_inputpath,argv = 'STRESS',user_type = 'GRAIN'):
+
+    value = [0] * 3
+    # 查找所有的KEY文件
+    for i,path in enumerate(KEY_inputpath):
+        # 某一步下面的应力值 单个KEY文件
+        with open(path, 'r',encoding = 'utf-8') as file:
+            lines = file.readlines() 
+            # 更新最值
+            if argv == 'STRESS':
+                value[0] = max(value[0],_extractStress(lines))
+            elif argv == 'FORCE':
+                value[0] = max(value[0],_extractLoad(lines))
+    # 拉取晶粒信息
+    if argv == "USRELM" and user_type == 'GRAIN':
+        with open(KEY_inputpath[-1], 'r',encoding = 'utf-8') as file:
+            lines = file.readlines() 
+            value = _extractGrainInfo(lines)
+
+    return value
+
+###################################功能函数部分###############################################
+def _extractStress(lines,pos = -1,num = 0):
+    # 找首行
+    res = 0
+    for index,line in enumerate(lines):
+        arry = line.split()
+        if len(arry) == 4 and arry[0] == 'STRESS' and arry[1] == '1':
+            pos = index
+            num = int(arry[2])
+            break
+    # 从首行开始遍历
+    if pos != -1 and num > 0:
+        cnt = 1
+        index += 1
+        while cnt <= num:
+            arry1 = lines[index].split()
+            arry2 = lines[index + 1].split()
+            stress = [float(arry1[1]),float(arry1[2]),float(arry1[3]),
+                        float(arry1[4]),float(arry1[5]),float(arry2[0])]
+            res = max(res,calculate_von_mises(stress))
+            cnt += 1
+            index += 2
+    return res
+
+def _extractLoad(lines):
+    # 模具载荷提取
+    res = 0
+    for index,line in enumerate(lines):
+        arry = line.split()
+        if len(arry) == 5 and arry[0] == 'FORCE' and arry[1] == '2':
+            res = float(arry[4])
+    return res
+
+def _extractGrainInfo(lines):
+    # 提取锻件晶粒尺寸信息
+    pos,num = -1,0
+    grainsize = []
+    res = [-1]* 3
+    for index,line in enumerate(lines):
+        arry = line.split()
+        if len (arry) == 5 and arry[0] == 'USRELM' and arry[1] == '1':
+            pos,num = index + 1,int(arry[2])
+            break
+    if pos != -1 and num > 0:
+        for i in range(num):
+            arr = lines[pos + i].split()
+            grainsize.append(float(arr[3]))
+        res[0] = statistics.stdev(grainsize)
+        res[1] = max(grainsize)
+        res[2] = statistics.mean(grainsize)
+    return res

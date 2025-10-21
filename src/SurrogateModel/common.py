@@ -64,11 +64,7 @@ def split_data_without_val(X, y_stdv, y_load, test_size=0.2,random_state=42):
     )
 
 # 划分数据集 需要验证集
-def split_data_with_val(X, y_stdv, y_load, test_size=0.2, val_size=0.25, random_state=42):
-    # 特征与目标变量
-    X_train, X_test, y_stdv_train, y_stdv_test, y_load_train, y_load_test = train_test_split(
-        X, y_stdv, y_load, test_size=test_size, random_state=random_state
-    )
+def split_data_with_val(X, y_stdv, y_load, test_size=0.2, val_size=0.5, random_state=42):
     
     # 第一步：划分训练集和临时集(测试+验证)
     X_train, X_temp, y_stdv_train, y_stdv_temp, y_load_train, y_load_temp = train_test_split(
@@ -78,7 +74,7 @@ def split_data_with_val(X, y_stdv, y_load, test_size=0.2, val_size=0.25, random_
     # 第二步：在临时集中划分验证集和测试集
     X_val, X_test, y_stdv_val, y_stdv_test, y_load_val, y_load_test = train_test_split(
         X_temp, y_stdv_temp, y_load_temp, 
-        test_size=val_size/(test_size + val_size), 
+        test_size=val_size,
         random_state=random_state
     )
     
