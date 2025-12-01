@@ -11,19 +11,6 @@ from typing import Dict, List, Tuple
 # script_dir = os.path.dirname(os.path.abspath(__file__))
 # os.chdir(script_dir)
 
-# *********************SOME VAR DEF***********************
-# KEY文件关键字变量
-KEYFILE_VAR_DIC = {
-    'temp':"NDTMP",
-    'speed':"MOVCTL",
-
-}
-# 指定对象
-OBJ_DEF = {
-    'workpiece':1,
-    'topdie':2,
-    'butdie':3
-}
 
 # 全局计数器及锁
 solvernum = 0
@@ -76,17 +63,17 @@ def FormatFloat(num:str):
     return f"{l}E{sign}{exp_num}"
 
 #  @brief  功能函数 2: 
-#  根据保存位置和原文件全名file_path生成
+#  根据保存位置和原文件全名file生成
 #  新的保存文件路径res
-#  生成规则是取file_path的主体名（无扩展名）
+#  生成规则是取file的主体名（无扩展名）
 #  加上前面的主体保存路径savepath
 #  与设定的标识符tag进行拼接
 #  加上最后的文件类型扩展FILETYPE生成新文件
 #  @return 
 #  @author Hu Mingrui
 #  @date   2025/05/14
-def GetNewFilePath(file_path:str,savepath:str,tag:str,FILETYPE:str):
-    predix = Path(file_path).stem
+def GetNewFilePath(file:str,savepath:str,tag:str,FILETYPE:str):
+    predix = Path(file).stem
     res = os.path.join(savepath,f"{predix}{tag}.{FILETYPE}")
     return res
 
@@ -232,6 +219,132 @@ def ProcessRun_CALDB(DB_inputpath:List,Process_Num = 24):
                 time.sleep(5)
         except Exception as e:
             print(f"Error happend!{e}")
+
+#  @brief  功能函数7：
+#  启动DEF_PRE_64.exe 将DB文件的某一步
+#  转为KEY文件 用于批量产生结果KEY文件
+#  @return 
+#  @author Hu Mingrui
+#  @date   2025/05/15
+#  @about  注意！本模块需要输入最后一步的具体
+#  步数step 因此需要用户设定好后再输入 否则程序报错
+def ProcessDB_TO_KEY(DB_file:str,KEY_file:str,step = ""):
+
+    cmd = f"E\n2\n2\n{DB_file}\n{step}\nE\nE\n8\n{KEY_file}\nE\nY\n"
+    # 将命令写入临时文件
+    cmd_file = "TEMP_DB-KEY.txt"
+    with open(cmd_file, "w", encoding="utf-8") as f:
+        f.write(cmd)
+
+    command = f'"{DEF_PRE_64_path}" < "{cmd_file}"'
+    process = subprocess.Popen(
+    command,
+    stdout = subprocess.PIPE,
+    stderr = subprocess.STDOUT, 
+    text = True,
+    shell = True)
+
+    # 实时显示输出
+    with open("AUTO_OPERATION_LOG.txt", "a", encoding="utf-8") as log_file:
+        while True:
+            output = process.stdout.readline() # type: ignore
+            if not output and process.poll() is not None:
+                break
+            if output:
+                # print(output.strip())
+                log_file.write(output)
+
+    os.remove(cmd_file)
+
+###################################自定义提取函数部分###############################################
+def _extractMaxStress(AllLines:List[List[str]],obj:str,inprogress:bool)->str:
+    finall_res = -1.0
+    # 找首行
+    def fun(lines:List[str])->float:
+        res,pos,num = 0,-1,0
+        for row,line in enumerate(lines):
+            arry = line.split()
+            if len(arry) == 4 and arry[0] == 'STRESS' and arry[1] == obj:
+                pos = row
+                num = int(arry[2])
+                break
+        # 从首行开始遍历
+        if pos != -1 and num > 0:
+            cnt = 1
+            index = pos + 1
+            while cnt <= num:
+                arry1 = lines[index].split()
+                arry2 = lines[index + 1].split()
+                stress = [float(arry1[1]),float(arry1[2]),float(arry1[3]),
+                            float(arry1[4]),float(arry1[5]),float(arry2[0])]
+                res = max(res,calculate_von_mises(stress))
+                cnt += 1
+                index += 2
+        return res
+    if inprogress:
+        for lines in AllLines:
+            finall_res = max(fun(lines),finall_res) # type: ignore
+    else:
+        finall_res = fun(AllLines[-1])
+    return "{:.2f}".format(finall_res)
+
+def _extractMaxLoad(AllLines:List[List[str]],obj:str,inprogress:bool)->str:
+    # 模具载荷提取
+    finall_res = 0.0
+    def fun(lines:List[str])->float:
+        res = 0.0
+        for index,line in enumerate(lines):
+            arry = line.split()
+            if len(arry) == 5 and arry[0] == 'FORCE' and arry[1] == '2':
+                res = float(arry[4])
+        return res
+    if inprogress:
+        for lines in AllLines:
+            finall_res = max(fun(lines),finall_res)
+    else:
+        finall_res = fun(AllLines[-1])
+    return "{:.2f}".format(finall_res)
+
+def _extractGrainStdv(AllLines:List[List[str]],obj:str,inprogress:bool)->str:
+    finall_res = 0.0
+    # 提取锻件晶粒尺寸信息
+    def fun(lines:List[str])->float:
+        pos,num = -1,0
+        grainsize = []
+        res = 0.0
+        for index,line in enumerate(lines):
+            arry = line.split()
+            if len (arry) == 5 and arry[0] == 'USRELM' and arry[1] == '1':
+                pos,num = index + 1,int(arry[2])
+                break
+        if pos != -1 and num > 0:
+            for i in range(num):
+                arr = lines[pos + i].split()
+                grainsize.append(float(arr[3]))
+            res = statistics.stdev(grainsize)
+        return res
+    if inprogress:
+        for lines in AllLines:
+            finall_res = max(fun(lines),finall_res)
+    else:
+        finall_res = fun(AllLines[-1])
+    return "{:.2f}".format(finall_res)
+
+#  @brief 计算等效应力
+#  von-misses准则
+#  @return 
+#  @author Hu Mingrui
+#  @date   2025/06/03
+def calculate_von_mises(stress):
+    """计算等效应力 (Von Mises Stress)"""
+    sxx, syy, szz, sxy, syz, sxz = stress
+
+    return np.sqrt(0.5 * ((sxx - syy)**2 + 
+                         (syy - szz)**2 + 
+                         (szz - sxx)**2 + 
+                         6 * (sxy**2 + syz**2 + sxz**2)))
+
+
 
 # ************************SAMPLE DEF**************************
 #  @brief  样本函数1:

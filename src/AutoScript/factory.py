@@ -11,10 +11,28 @@
 # *******************************************
 import os
 from typing import List
-from utils import(KEYFILE_VAR_DIC,OBJ_DEF,
-GetNewFilePath,FormatFloat,ProcessKEY_TO_DB,
+from utils import(_extractMaxStress,_extractMaxLoad,_extractGrainStdv,
+GetNewFilePath,FormatFloat,ProcessKEY_TO_DB,ProcessDB_TO_KEY,
 ProcessRun_CALDB,LHSSampleGenerate,FullSampleGenerate)
+# *********************SOME VAR DEF***********************
+# KEY文件关键字变量
+KEYFILE_VAR_DIC = {
+    'temp':"NDTMP",
+    'speed':"MOVCTL",
 
+}
+# 指定对象
+OBJ_DEF = {
+    'workpiece':"1",
+    'topdie':"1",
+    'butdie':"1"
+}
+# 
+TAR_FUNC = {
+    'stress':_extractMaxStress,
+    'load':_extractMaxLoad,
+    'grain':_extractGrainStdv
+}
 
 class Doe_sample_generate:
     def __init__(self,sample_method:str,param_ranges:dict[str, tuple[float, float]],n_samples:int,save_path:str) -> None:
@@ -35,6 +53,7 @@ class Doe_sample_generate:
 #  @date   2025/11/27
 #  @about  根据指定的方法完成数据驱动操作
 class Doe_execute:    
+
     def __init__(self, 
                  sample_file: str,  # 样本文件
                  std_key_file:str,  # 模板key文件
@@ -42,8 +61,10 @@ class Doe_execute:
                  res_db_path:str,   # 最终的结果db路径
                  res_key_path:str,  # 最终的结果key路径
                  res_txt_path:str,  # 最终的数据集位置
-                 parmeter:List[List[str]],     # 输入的工艺参数
-                 target_var:List[List[str]]    # 优化的目标变量
+                 parmeter:List[List[str]],     # 工艺参数固定项 2 × n 
+                 target_var:List[List[str]],   # 目标变量固定项 2 × m
+                 is_inprogress:List[bool],     # 目标值是否进行全过程提取 1 × m
+                 max_step:int
                  ):
         self.sp_path = sample_file
         self.std_path = std_key_file
@@ -52,7 +73,9 @@ class Doe_execute:
         self.res_key_path = res_key_path
         self.res_txt_path = res_txt_path
         self.par = parmeter     # [["temp","speed"],["workpiece","topdie"]] 初始的格式
-        self.var = target_var
+        self.var = target_var   # [["temp","load"],["workpiece","topdie"]]
+        self.in_progress = is_inprogress
+        self.max_step = max_step
         # 一些中间路径
         self.tmp_key_file = []
         self.res_db_file = []
@@ -95,6 +118,42 @@ class Doe_execute:
                 continue
             ProcessKEY_TO_DB(tmp_key,save_file)
         ProcessRun_CALDB(self.res_db_file)
+
+    def extract(self,max_step:int) -> None:
+        res_lines = []
+        for i,dbfile in enumerate(self.res_db_file):
+            print(f"当前提取的文件为：{dbfile}")
+            # 创建目录
+            res_save_path = f"{self.res_key_path}{i}"
+            os.makedirs(self.res_key_path,exist_ok = True)
+            list_key = []
+            for step in range(0,self.max_step):
+                key_file = GetNewFilePath(dbfile,res_save_path,str(step),"KEY")
+                list_key.append(key_file)
+                while not os.path.exists(key_file):
+                    ProcessDB_TO_KEY(dbfile,key_file,str(step))
+            res_line = self.par[i + 2]
+            key_lines = []
+            # 以目标值顺序进行搜索
+            # res_line = [temp:398,speed:20,tar1:10.2,tar2:0.9]
+            for key_file in list_key:
+                with open(key_file,'r',encoding = 'utf-8') as f:
+                    key_lines.append(f.readlines())
+
+            for idx in range(len(self.var[0])):
+                tar_info = self.var[0][idx]
+                obj_info = self.var[1][idx]
+                in_progress = self.in_progress[idx]
+                res_line.append(TAR_FUNC[tar_info](key_lines,obj_info,in_progress))
+            # 收集最终结果
+            res_lines.append(res_line)
+        with open("output.txt", "w", encoding="utf-8") as f:
+            for row_idx, row in enumerate(res_lines, start = 1):  
+                row_str = "\t".join(map(str, row))  
+                f.write(f"{row_idx}\t{row_str}\n")  
+                
+
+
 # TEST
 if __name__ == "__main__":
     # 定义参数范围
