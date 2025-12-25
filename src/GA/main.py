@@ -64,6 +64,6 @@ def NSGA2_run():
 
 
 if __name__ == "__main__":
-    # NSGA2_run()
+    NSGA2_run()
     # eps_record()
-    get_paretodata("../../data/pareto_final_res.txt","../../data/stdv_load_res.txt")
+    # get_paretodata("../../data/pareto_final_res.txt","../../data/stdv_load_res.txt")
