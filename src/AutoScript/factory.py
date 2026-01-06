@@ -24,10 +24,10 @@ KEYFILE_VAR_DIC = {
 # 指定对象
 OBJ_DEF = {
     'workpiece':"1",
-    'topdie':"1",
-    'butdie':"1"
+    'topdie':"2",
+    'butdie':"3"
 }
-# 
+# 目标函数
 TAR_FUNC = {
     'stress':_extractMaxStress,
     'load':_extractMaxLoad,
@@ -51,6 +51,16 @@ class Doe_sample_generate:
 #  @return None
 #  @author Hu Mingrui
 #  @date   2025/11/27
+#  @param  sample_file      采样生成的txt文件 例如../../data/AUTO/smp.txt
+#  @param  std_key_file     模板key文件 例如../../data/AUTO/key_modle.key
+#  @param  temp_key_path    中间key文件路径 例如../../data/AUTO/temp_key  
+#  @param  res_db_path      计算结果DB文件 例如../../data/AUTO/res_db
+#  @param  res_key_path     最终结果key文件位置 例如../../data/AUTO/res_key
+#  @param  res_txt_path     提取的数据集位置 例如../../data/AUTO/res_txt
+#  @param  parmeter         工艺参数输入组合 固定 2 × n 第一行为n个工艺参数 第二行为n个工艺参数对应的部件序号
+#  @param  target_val       目标函数的变量 固定 2 × m 第一行为m个目标变量 第二行为m个变量对应的部件序号
+#  @param  is_inprogress    对应每个目标变量是否通过全过程计算提取（例如有的变量需要整个工艺流程来提取 有的只需要最后一步）
+#  @param  max_step         输入设定的key文件求解过程的最大步数（用于确定和生成中间key文件）
 #  @about  根据指定的方法完成数据驱动操作
 class Doe_execute:    
 
@@ -65,7 +75,7 @@ class Doe_execute:
                  target_var:List[List[str]],   # 目标变量固定项 2 × m
                  is_inprogress:List[bool],     # 目标值是否进行全过程提取 1 × m
                  max_step:int
-                 ):
+                ):
         self.sp_path = sample_file
         self.std_path = std_key_file
         self.tmp_key_path = temp_key_path
@@ -73,13 +83,23 @@ class Doe_execute:
         self.res_key_path = res_key_path
         self.res_txt_path = res_txt_path
         self.par = parmeter     # [["temp","speed"],["workpiece","topdie"]] 初始的格式
-        self.var = target_var   # [["temp","load"],["workpiece","topdie"]]
+        self.var = target_var   # [["grain","load"],["workpiece","topdie"]]
         self.in_progress = is_inprogress
         self.max_step = max_step
         # 一些中间路径
         self.tmp_key_file = []
         self.res_db_file = []
 
+# PS:
+# temp  temp    temp    speed
+#   1     2      3       2
+# 915.0	560.0   560.0	26.0
+# 877.0	370.0   370.0	45.0
+# 930.0	686.0   686.0	10.0
+# 963.0	593.0   593.0	24.0
+# 875.0	487.0   487.0	34.0
+# 923.0	668.0   668.0	19.0
+# 899.0	306.0   306.0	34.0
 
     def generate_key_file(self) -> None:
         with open(self.sp_path,'r',encoding = 'utf-8') as file:
@@ -89,18 +109,27 @@ class Doe_execute:
             
         with open(self.std_path,'r',encoding = 'utf-8') as key_file:
             std_key_file = key_file.readlines()
-            for i in range(len(self.par[0])):
+            for i in range(len(self.par)):
+                # 先跳过前两行
                 if i == 0 or i == 1:
                     continue
                 new_key_file = []
+                # 产生新key file
                 for line in std_key_file:
                     line_list = line.split()
                     if len(line) >= 2:
                         for pos,data in enumerate(self.par[i]):
-                            par = self.par[0][pos],tar_obj = self.par[1][pos]
-                            if KEYFILE_VAR_DIC[par] == line_list[0] and line_list[1] == OBJ_DEF[tar_obj]:
+                            # 对于每一行满足条件的key_file 遍历匹配工艺参数和部件对象
+                            # PS:注意 标准KEY文件的目标行格式必须满足每行第一个标识参数名称
+                            # 第二个标识工艺参数所属的对象 最后一个标识工艺参数值
+                            gy_par,tar_obj = self.par[0][pos],self.par[1][pos]
+                            # 寻找匹配的工艺参数和对象 必须完全匹配 匹配后才能进行工艺参数修改
+                            if KEYFILE_VAR_DIC[gy_par] == line_list[0] and line_list[1] == OBJ_DEF[tar_obj]:
+                                # 生成这行的参数值
                                 format_data = FormatFloat(data)
+                                # 替换
                                 line = line.replace(line_list[-1],format_data)
+                                break
                     new_key_file.append(line)
 
                 save_file = GetNewFilePath(self.std_path,self.tmp_key_path,str(i - 2),"KEY")
@@ -152,10 +181,7 @@ class Doe_execute:
                 row_str = "\t".join(map(str, row))  
                 f.write(f"{row_idx}\t{row_str}\n")  
                 
-
-
-# TEST
-if __name__ == "__main__":
+def sample_generate_test():
     # 定义参数范围
     param_ranges = {
         'temp1': (875.0, 965.0),    # 工件温度范围 (℃)
@@ -163,13 +189,27 @@ if __name__ == "__main__":
         'temp3': (300.0, 700.0),    # 模具温度范围 (℃)
         'temp4': (300.0, 700.0),    # 模具温度范围 (℃)
         'temp5': (300.0, 700.0),    # 模具温度范围 (℃)
-        'speed':(10.0, 50.0) ,     # 锻造速度范围 (mm/s)
+        'speed':(10.0, 50.0) ,      # 锻造速度范围 (mm/s)
     }
 
     # 生成样本
     sampler = Doe_sample_generate(
         sample_method = "lhs",
         param_ranges = param_ranges,
-        n_samples=10000,
-        save_path="./data/sample"
+        n_samples=100,
+        save_path="../../data/sample"
     )
+
+def generate_keyfile_test():
+    par = [["temp","temp","temp","speed"],["workpiece","topdie","butdie","topdie"]] 
+    tar = [["grain","load"],["workpiece","topdie"]]
+    is_progress = []
+
+    exc = Doe_execute("../../data/AUTO/smp.txt","../../data/AUTO/key_std.KEY",
+        "../../data/AUTO/temp_key","../../data/AUTO/res_db","../../data/AUTO/res_key",
+        "../../data/AUTO/res_txt",par,tar,is_progress,10)
+    exc.generate_key_file()
+
+# TEST
+if __name__ == "__main__":
+    generate_keyfile_test()
