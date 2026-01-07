@@ -100,7 +100,6 @@ class Doe_execute:
 # 875.0	487.0   487.0	34.0
 # 923.0	668.0   668.0	19.0
 # 899.0	306.0   306.0	34.0
-
     def generate_key_file(self) -> None:
         with open(self.sp_path,'r',encoding = 'utf-8') as file:
             org_lines = file.readlines()
@@ -194,7 +193,7 @@ def sample_generate_test():
 
     # 生成样本
     sampler = Doe_sample_generate(
-        sample_method = "lhs",
+        sample_method = "full",
         param_ranges = param_ranges,
         n_samples=100,
         save_path="../../data/sample"
@@ -212,4 +211,4 @@ def generate_keyfile_test():
 
 # TEST
 if __name__ == "__main__":
-    generate_keyfile_test()
+    sample_generate_test()

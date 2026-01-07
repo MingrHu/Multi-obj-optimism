@@ -376,7 +376,7 @@ def LHSSampleGenerate(n_samples:int, param_ranges,sample_save_path:str):
     df_formatted = combined_df.applymap(lambda x: f"{x:.2f}") # type: ignore
     SaveResult(df_formatted, 'lhs', sample_save_path)
 
-def FullSampleGenerate(param_ranges,sample_save_path:str):
+def FullSampleGenerate(n_samples:int,param_ranges,sample_save_path:str):
     # 阶段1：全因子采样生成初始样本
     def generate_full_factorial_samples(ranges, levels=5):
         """生成全因子采样输入参数"""
@@ -412,10 +412,8 @@ def SaveResult(df: pd.DataFrame, extype: str, save_path: str) -> None:
     # 确保目录存在
     os.makedirs(save_path, exist_ok=True)
     
-    # 添加索引列
-    df_with_id = df.reset_index(names='Index')
     # 保存文件
-    df_with_id.to_csv(f'{save_path}/IN{extype}.txt', sep='\t', index=False, header=False)
+    df.to_csv(f'{save_path}/IN{extype}.txt', sep='\t', index=False, header=False)
     print(f"采样数据已保存至 {save_path}IN{extype}.txt 总计{len(df)} 个样本")
     print("输入参数统计信息：")
     print(df.describe())
