@@ -35,14 +35,20 @@ TAR_FUNC = {
 }
 
 class Doe_sample_generate:
-    def __init__(self,sample_method:str,param_ranges:dict[str, tuple[float, float]],n_samples:int,save_path:str) -> None:
+    def __init__(self,sample_method:str,
+                 param_ranges:dict[str, tuple[float, float]],
+                 save_path:str,
+                 n_samples:int = 0,
+                 level_nums:List[int] = []) -> None:
         # 采样方法
         SAMPLE = {
             'lhs':LHSSampleGenerate,
             'full':FullSampleGenerate
         }
-        if sample_method in SAMPLE:
-            SAMPLE[sample_method](n_samples,param_ranges,save_path)
+        if sample_method == 'lhs':
+            LHSSampleGenerate(n_samples,param_ranges,save_path)
+        elif sample_method == 'full':
+            FullSampleGenerate(param_ranges,save_path,level_nums)
         else:
             raise ValueError(f"Unsupported sample method: {sample_method}")
 
@@ -147,7 +153,7 @@ class Doe_execute:
             ProcessKEY_TO_DB(tmp_key,save_file)
         ProcessRun_CALDB(self.res_db_file)
 
-    def extract(self,max_step:int) -> None:
+    def extract(self) -> None:
         res_lines = []
         for i,dbfile in enumerate(self.res_db_file):
             print(f"当前提取的文件为：{dbfile}")
@@ -184,31 +190,61 @@ def sample_generate_test():
     # 定义参数范围
     param_ranges = {
         'temp1': (875.0, 965.0),    # 工件温度范围 (℃)
-        'temp2': (300.0, 700.0),    # 模具温度范围 (℃)
-        'temp3': (300.0, 700.0),    # 模具温度范围 (℃)
-        'temp4': (300.0, 700.0),    # 模具温度范围 (℃)
-        'temp5': (300.0, 700.0),    # 模具温度范围 (℃)
+        'temp2': (300.0, 700.0),    # 上模具温度范围 (℃)
+        'temp3':(300.0,700.0),      # 下模具温度范围 (℃)
         'speed':(10.0, 50.0) ,      # 锻造速度范围 (mm/s)
     }
 
     # 生成样本
-    sampler = Doe_sample_generate(
-        sample_method = "full",
+    lhs = Doe_sample_generate(
+        sample_method = "lhs",
         param_ranges = param_ranges,
-        n_samples=100,
-        save_path="../../data/sample"
+        save_path="../../data/sample",
+        n_samples=10,
+    )
+
+    full = Doe_sample_generate(
+        sample_method = 'full',
+        param_ranges = param_ranges,
+        save_path = "../../data/sample",
+        n_samples = 0,
+        level_nums = [5,2,2,2]
     )
 
 def generate_keyfile_test():
     par = [["temp","temp","temp","speed"],["workpiece","topdie","butdie","topdie"]] 
     tar = [["grain","load"],["workpiece","topdie"]]
     is_progress = []
-
-    exc = Doe_execute("../../data/AUTO/smp.txt","../../data/AUTO/key_std.KEY",
-        "../../data/AUTO/temp_key","../../data/AUTO/res_db","../../data/AUTO/res_key",
-        "../../data/AUTO/res_txt",par,tar,is_progress,10)
+    exc = Doe_execute("../../data/AUTO/smp.txt",
+                      "../../data/AUTO/key_std.KEY",
+                      "../../data/AUTO/temp_key",
+                      "../../data/AUTO/res_db",
+                      "../../data/AUTO/res_key",
+                      "../../data/AUTO/res_txt",
+                      par,tar,is_progress,880)
     exc.generate_key_file()
+
 
 # TEST
 if __name__ == "__main__":
-    sample_generate_test()
+    par = [["temp","temp","temp","speed"],["workpiece","topdie","butdie","topdie"]] 
+    tar = [["grain","load"],["workpiece","topdie"]]
+    is_progress = [False,True]
+
+    sample_file = "../../data/AUTO/smp.txt"
+    std_key_file = "../../data/AUTO/key_std.KEY"
+    temp_key_path = "../../data/AUTO/temp_key"
+    res_db_path = "../../data/AUTO/res_db"
+    res_key_path = "../../data/AUTO/res_key"
+    res_txt = "../../data/AUTO/res_txt"
+
+    exc = Doe_execute(sample_file,
+                      std_key_file,
+                      temp_key_path,
+                      res_db_path,
+                      res_key_path,
+                      res_txt,
+                      par,tar,is_progress,880)
+    exc.generate_key_file()
+    exc.process_run()
+    

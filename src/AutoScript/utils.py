@@ -352,7 +352,7 @@ def calculate_von_mises(stress):
 #  @return 
 #  @author Hu Mingrui
 #  @date   2025/05/15
-def LHSSampleGenerate(n_samples:int, param_ranges,sample_save_path:str):
+def LHSSampleGenerate(n_samples:int, param_ranges:Dict[str, Tuple[float, float]],sample_save_path:str):
 
     # 阶段1：生成拉丁超立方采样样本
     def generate_lhs_samples(n_samples: int, param_ranges: Dict[str, Tuple[float, float]]) -> pd.DataFrame:
@@ -369,43 +369,38 @@ def LHSSampleGenerate(n_samples:int, param_ranges,sample_save_path:str):
     # 阶段2：添加边界样本
     low_high = [[low, high] for (low, high) in param_ranges.values()]
     boundary_combinations = list(product(*low_high))
-    boundary_df = pd.DataFrame(boundary_combinations, columns=param_ranges.keys())
+    boundary_df = pd.DataFrame(boundary_combinations, columns= list(param_ranges.keys()))
 
     # 合并样本并去重
     combined_df = pd.concat([df, boundary_df], ignore_index=True).drop_duplicates(subset=param_ranges.keys())
     df_formatted = combined_df.applymap(lambda x: f"{x:.2f}") # type: ignore
     SaveResult(df_formatted, 'lhs', sample_save_path)
 
-def FullSampleGenerate(n_samples:int,param_ranges,sample_save_path:str):
+def FullSampleGenerate(param_ranges, sample_save_path: str, level_nums: list[int]):
     # 阶段1：全因子采样生成初始样本
-    def generate_full_factorial_samples(ranges, levels=5):
-        """生成全因子采样输入参数"""
+    def generate_full_factorial_samples(ranges, level_nums):
+        """生成全因子采样输入参数，每个参数可以有不同的水平数量"""
         # 为每个参数生成等间隔的水平值
         param_levels = {}
-        for key, (low, high) in ranges.items():
+        keys = list(ranges.keys())
+        for i, key in enumerate(keys):
+            low, high = ranges[key]
+            levels = level_nums[i]  # 使用对应的level_nums值
             param_levels[key] = np.linspace(low, high, levels)
     
         # 生成所有参数组合
         combinations = list(product(*param_levels.values()))
-        df = pd.DataFrame(combinations, columns=ranges.keys())
+        df = pd.DataFrame(combinations, columns=keys)
         return df
  
-    # 生成初始样本（默认每个参数5个水平）
-    df = generate_full_factorial_samples(param_ranges, levels=10)
+    # 生成初始样本（每个参数使用level_nums中指定的水平数量）
+    df = generate_full_factorial_samples(param_ranges, level_nums)
 
     for col in df.columns:
-        df[col] = df[col].round(4)  # 保留小数点后四位 DEFORM要求
- 
-    # 阶段2：添加边界样本（8个角点）
-    low_high = [[low, high] for (low, high) in param_ranges.values()]
-    boundary_combinations = list(product(*low_high))
-    boundary_df = pd.DataFrame(boundary_combinations, columns = param_ranges.keys())
- 
-    # 合并样本并去重
-    df = pd.concat([df, boundary_df], ignore_index=True).drop_duplicates()
+        df[col] = df[col].round(2)  # 保留小数点后四位 DEFORM要求
 
     # 保存并输出结果
-    SaveResult(df, 'fullfactorial',sample_save_path)
+    SaveResult(df, 'fullfactorial', sample_save_path)
 
 def SaveResult(df: pd.DataFrame, extype: str, save_path: str) -> None:
     """保存采样结果到文件"""
