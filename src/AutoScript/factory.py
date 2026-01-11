@@ -160,6 +160,7 @@ class Doe_execute:
             # 创建目录
             res_save_path = f"{self.res_key_path}{i}"
             os.makedirs(self.res_key_path,exist_ok = True)
+            # 主要存放当前db生成的所有key文件
             list_key = []
             for step in range(0,self.max_step):
                 key_file = GetNewFilePath(dbfile,res_save_path,str(step),"KEY")
@@ -168,16 +169,18 @@ class Doe_execute:
                     ProcessDB_TO_KEY(dbfile,key_file,str(step))
             res_line = self.par[i + 2]
             key_lines = []
-            # 以目标值顺序进行搜索
-            # res_line = [temp:398,speed:20,tar1:10.2,tar2:0.9]
+            # 遍历获取每个key的所有内容 这里可以优化一下内存使用
+            # TODO(MingrHu)
             for key_file in list_key:
                 with open(key_file,'r',encoding = 'utf-8') as f:
                     key_lines.append(f.readlines())
 
             for idx in range(len(self.var[0])):
+                # var = [["grain","load"],["workpiece","topdie"]]
                 tar_info = self.var[0][idx]
                 obj_info = self.var[1][idx]
                 in_progress = self.in_progress[idx]
+                # 拿到当前目标值标签和对象等信息后开始抽取值
                 res_line.append(TAR_FUNC[tar_info](key_lines,obj_info,in_progress))
             # 收集最终结果
             res_lines.append(res_line)

@@ -293,8 +293,9 @@ def _extractMaxLoad(AllLines:List[List[str]],obj:str,inprogress:bool)->str:
     finall_res = 0.0
     def fun(lines:List[str])->float:
         res = 0.0
-        for index,line in enumerate(lines):
+        for _,line in enumerate(lines):
             arry = line.split()
+            # 根据deform的key文件关键字分布情况
             if len(arry) == 5 and arry[0] == 'FORCE' and arry[1] == '2':
                 res = float(arry[4])
         return res
@@ -325,6 +326,8 @@ def _extractGrainStdv(AllLines:List[List[str]],obj:str,inprogress:bool)->str:
         return res
     if inprogress:
         for lines in AllLines:
+            # 有必要讨论一下晶粒的相关情况
+            # TODO(MingrHu)
             finall_res = max(fun(lines),finall_res)
     else:
         finall_res = fun(AllLines[-1])
