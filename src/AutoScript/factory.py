@@ -158,8 +158,8 @@ class Doe_execute:
         for i,dbfile in enumerate(self.res_db_file):
             print(f"当前提取的文件为：{dbfile}")
             # 创建目录
-            res_save_path = f"{self.res_key_path}{i}"
-            os.makedirs(self.res_key_path,exist_ok = True)
+            res_save_path = f"{self.res_key_path}\\{i}"
+            os.makedirs(res_save_path,exist_ok = True)
             # 主要存放当前db生成的所有key文件
             list_key = []
             for step in range(0,self.max_step):
@@ -249,6 +249,7 @@ if __name__ == "__main__":
                       res_txt,
                       par,tar,is_progress,880)
     exc.generate_key_file()
-    exc.process_run()
+    exc.process_run()        
+    exc.extract()
     input("Press Enter to exit...")  # 添加这一行
 
