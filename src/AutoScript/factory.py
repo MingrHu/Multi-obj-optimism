@@ -248,8 +248,34 @@ if __name__ == "__main__":
                       res_key_path,
                       res_txt,
                       par,tar,is_progress,880)
-    exc.generate_key_file()
-    exc.process_run()        
-    exc.extract()
+    # exc.generate_key_file()
+    # exc.process_run()        
+    # exc.extract()
+
+    test_db_file = f"{res_db_path}\\0\\MODEL0.DB"
+    list_key = []
+    res_save_path = f"{exc.res_key_path}\\0"
+    os.makedirs(res_save_path,exist_ok = True)
+
+    for step in range(0,880):
+        key_file = GetNewFilePath(test_db_file,res_save_path,str(step),"KEY")
+        list_key.append(key_file)
+        while not os.path.exists(key_file):
+            ProcessDB_TO_KEY(test_db_file,key_file,str(step))
+    key_lines = []
+    # 遍历获取每个key的所有内容 这里可以优化一下内存使用
+    # TODO(MingrHu)
+    for key_file in list_key:
+        with open(key_file,'r',encoding = 'utf-8') as f:
+            key_lines.append(f.readlines())
+            for idx in range(len(exc.var[0])):
+                # var = [["grain","load"],["workpiece","topdie"]]
+                tar_info = exc.var[0][idx]
+                obj_info = exc.var[1][idx]
+                in_progress = exc.in_progress[idx]
+                # 拿到当前目标值标签和对象等信息后开始抽取值
+                val = _extractGrainStdv(key_lines,obj_info,in_progress)
+                print(val)
+
     input("Press Enter to exit...")  # 添加这一行
 
