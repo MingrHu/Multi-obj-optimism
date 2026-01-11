@@ -1,69 +1,115 @@
-import numpy as np
 import os
-from joblib import load
-from utils import save_pareto_solutions,AdaptiveSBX,eps_record,get_paretodata
+from joblib import load as joblib_load
 from pymoo.algorithms.moo.nsga2 import NSGA2
-from pymoo.operators.sampling.lhs import LHS
 from pymoo.operators.sampling.rnd import FloatRandomSampling
-from pymoo.operators.crossover.sbx import SBX
 from pymoo.operators.mutation.pm import PM
 from pymoo.optimize import minimize
 from pymoo.visualization.scatter import Scatter
-from pymoo.indicators.hv import HV
-from GAproblem import FormingProcessOptimization  # 确保此类已正确定义
+
+from GAproblem import ConstraintSpec, ObjectiveSpec, SurrogateOptimizationProblem
+from utils import AdaptiveSBX, save_pareto_solutions
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
 os.chdir(script_dir)
 
+
+def _load_model(model_dir: str, target_name: str):
+    pkl_path = os.path.join(model_dir, f"{target_name}_model.pkl")
+    keras_path = os.path.join(model_dir, f"{target_name}_model.keras")
+
+    if os.path.exists(pkl_path):
+        return joblib_load(pkl_path)
+
+    if os.path.exists(keras_path):
+        from keras.models import load_model as keras_load_model
+
+        return keras_load_model(keras_path)
+
+    raise FileNotFoundError(f"找不到模型文件：{pkl_path} 或 {keras_path}")
+
+
+#  @brief  遗传算法运行示例
+#  @return None
+#  @author Hu Mingrui
+#  @date   2026/02/06
+#  @about  选择部分输入输出变量进行优化 例如选择1-3为输入变量，res1-res2为输出变量
 def NSGA2_run():
+    model_family = "PRG"
+    model_dir = f"../../data/models/{model_family}"
 
-    # 加载模型和标准化器
-    stdv_model = load('../../data/models/SVR/svr_res_stdv_model.pkl')
-    load_model = load('../../data/models/SVR/svr_res_load_model.pkl')
-    scalers = load('../../data/models/SVR/svr_res_scalers.pkl') 
+    # 1-7 为全部输入变量，res1-res3为全部输出变量
+    vars_out = ["1", "2", "3", "4", "5", "6", "7", "res1", "res2", "res3"]
+    n_vars = 7
 
+    # 目标函数对象为res1 res2
+    objective_names = ["res1", "res2"]
 
-    # 定义优化问题
-    problem = FormingProcessOptimization(
-        stdv_model=stdv_model,
-        load_model=load_model,
-        scalers=scalers  # 传入标准化器
+    # 加载标准化器
+    scalers = joblib_load(os.path.join(model_dir, f"{objective_names[0]}_scalers.pkl"))
+
+    output_names = vars_out[n_vars:]
+    objective_specs = []
+    for name in objective_names:
+        y_index = output_names.index(name)
+        model = _load_model(model_dir, name)
+        objective_specs.append(ObjectiveSpec(name=name, model=model, y_index=y_index, minimize=True))
+
+    # 选择的输入变量为1-3
+    decision_var_indices = [0, 1, 2]
+    # 输入变量的取值范围
+    decision_bounds = [
+        (0, 100),
+        (0, 50),
+        (0, 60),
+    ]
+
+    # 约束条件
+    constraints = [
+        ConstraintSpec(objective="res2", kind="upper", value=150),
+        ConstraintSpec(objective="res1", kind="upper", value=400),
+    ]
+
+    problem = SurrogateOptimizationProblem(
+        objectives=objective_specs,
+        scalers=scalers,
+        decision_var_indices=decision_var_indices,
+        bounds=decision_bounds,
+        x_base=None,
+        fixed_values=None,
+        constraints=constraints,
     )
 
-    # 配置 NSGA-II
     algorithm = NSGA2(
-        pop_size=50, # 初始种群大小
-        n_offsprings=50, # 每代的子代数
-        # sampling=LHS(),
-        sampling = FloatRandomSampling(),
-        # crossover = SBX(prob=0.9, eta=15), # 二进制交叉变异
+        pop_size=100,
+        n_offsprings=100,
+        sampling=FloatRandomSampling(),
         crossover=AdaptiveSBX(eta_c_min=20, eta_c_max=5, prob=0.95),
-        mutation=PM(eta=20), # 多项式变异
-        eliminate_duplicates=True # 是否去重
+        mutation=PM(eta=20),
+        eliminate_duplicates=True,
     )
 
-    # 运行优化
     res = minimize(
         problem,
         algorithm,
-        ('n_gen', 200),
-        seed=42, # LHS无需启用
+        ("n_gen", 200),
+        seed=42,
         verbose=True,
-        save_history = True
+        save_history=True,
     )
-
 
     plot = Scatter()
     plot.add(res.F, color="red")
     plot.save("../../data/pareto_front.png")
 
-    save_pareto_solutions(res)
-
-#*************************TEST*************************************
-
+    input_names = vars_out[:n_vars]
+    var_names = [input_names[i] for i in decision_var_indices]
+    save_pareto_solutions(
+        res,
+        filename="../../data/pareto_solutions.txt",
+        var_names=var_names,
+        obj_names=objective_names,
+    )
 
 
 if __name__ == "__main__":
     NSGA2_run()
-    # eps_record()
-    # get_paretodata("../../data/pareto_final_res.txt","../../data/stdv_load_res.txt")

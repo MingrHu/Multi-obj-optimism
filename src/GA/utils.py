@@ -3,25 +3,57 @@ from pymoo.core.crossover import Crossover
 from pymoo.core.mutation import Mutation
 from pymoo.operators.crossover.sbx import SBX
 
-def save_pareto_solutions(res, filename="../../data/pareto_solutions.txt"):
-    with open(filename, 'a', encoding='utf-8') as f:
+import numpy as np
+from pymoo.operators.crossover.sbx import SBX
+
+
+def save_pareto_solutions(
+    res,
+    filename="../../data/pareto_solutions.txt",
+    *,
+    var_names=None,
+    obj_names=None,
+):
+    X = np.asarray(res.X)
+    F = np.asarray(res.F)
+
+    n_var = int(X.shape[1])
+    n_obj = int(F.shape[1])
+
+    if var_names is None:
+        var_names = [f"x{i+1}" for i in range(n_var)]
+    if obj_names is None:
+        obj_names = [f"f{i+1}" for i in range(n_obj)]
+
+    if len(var_names) != n_var:
+        raise ValueError("var_names 长度必须等于 res.X 的列数")
+    if len(obj_names) != n_obj:
+        raise ValueError("obj_names 长度必须等于 res.F 的列数")
+
+    has_constraints = getattr(res, "G", None) is not None
+    if has_constraints:
+        G = np.asarray(res.G)
+        constraint_violations = np.sum(G > 0, axis=1)
+    else:
+        constraint_violations = np.zeros(X.shape[0], dtype=int)
+
+    with open(filename, "a", encoding="utf-8") as f:
         f.write("Pareto前沿最优解集\n")
         f.write("=" * 80 + "\n")
-        f.write(f"解数量: {len(res.X)}\n")
-        f.write(f"变量数: {res.X.shape[1]}, 目标数: {res.F.shape[1]}\n")
+        f.write(f"解数量: {len(X)}\n")
+        f.write(f"变量数: {n_var}, 目标数: {n_obj}\n")
         f.write("=" * 80 + "\n\n")
-        
-        # 写入表头
-        f.write("序号 | 工件温度(°C) | 模具温度(°C) | 速度(mm/s) | 标准差 | 载荷 | 约束违反\n")
-        f.write("-" * 100 + "\n")
-        
-        # 计算约束违反程度
-        constraint_violations = np.sum(res.G > 0, axis=1)
-        
-        # 写入每个解
-        for i in range(len(res.X)):
-            f.write(f"{i+1:4d} | {res.X[i,0]:11.1f} | {res.X[i,1]:11.1f} | {res.X[i,2]:9.1f} | "
-                   f"{res.F[i,0]:7.2f} | {res.F[i,1]:7.2f} | {constraint_violations[i]:8d}\n")
+
+        header_cols = ["序号"] + list(var_names) + list(obj_names) + ["约束违反"]
+        f.write(" | ".join(header_cols) + "\n")
+        f.write("-" * max(100, len(" | ".join(header_cols)) + 10) + "\n")
+
+        for i in range(len(X)):
+            row = [f"{i+1:4d}"]
+            row += [f"{X[i, j]:.6g}" for j in range(n_var)]
+            row += [f"{F[i, j]:.6g}" for j in range(n_obj)]
+            row += [f"{int(constraint_violations[i])}"]
+            f.write(" | ".join(row) + "\n")
 
 class AdaptiveSBX(SBX):
     def __init__(self, eta_c_min=2, eta_c_max=20, prob=0.9, **kwargs):

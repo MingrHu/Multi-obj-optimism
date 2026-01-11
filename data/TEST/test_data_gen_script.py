@@ -5,19 +5,19 @@ import pandas as pd
 np.random.seed(42)
 
 # 1. 定义参数
-n_rows = 4375    # 数据行数
-n_features = 20  # 自变量
+n_rows = 564    # 数据行数
+n_features = 7  # 自变量
 n_targets = 3   # 因变量
 
-# 2. 生成自变量 X (100行×7列)
-# 采用不同的随机分布模拟不同类型的特征（如温度、速度、压力等）
+# 2. 生成自变量 
+# 采用不同的随机分布模拟不同类型的特征
 X = np.hstack([
     np.random.normal(loc=50, scale=10, size=(n_rows, n_features // 3)),   # 特征1：正态分布
     np.random.uniform(low=0, high=100, size=(n_rows, n_features // 2)),  # 特征2：均匀分布
     np.random.poisson(lam=20, size=(n_rows, n_features - n_features // 3 - n_features // 2))  # 特征3：泊松分布
 ])
 
-# 3. 生成因变量 Y (100行×3列)
+# 3. 生成因变量 Y 
 # 基于自变量线性组合 + 少量噪声生成，保证Y和X有相关性
 # 随机生成系数矩阵 (7个特征 × 3个目标)
 coef = np.random.uniform(low=0.5, high=2.0, size=(n_features, n_targets))
