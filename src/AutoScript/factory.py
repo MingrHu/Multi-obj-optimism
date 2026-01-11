@@ -122,7 +122,7 @@ class Doe_execute:
                 # 产生新key file
                 for line in std_key_file:
                     line_list = line.split()
-                    if len(line) >= 2:
+                    if len(line_list) >= 2:
                         for pos,data in enumerate(self.par[i]):
                             # 对于每一行满足条件的key_file 遍历匹配工艺参数和部件对象
                             # PS:注意 标准KEY文件的目标行格式必须满足每行第一个标识参数名称
@@ -216,7 +216,7 @@ def generate_keyfile_test():
     tar = [["grain","load"],["workpiece","topdie"]]
     is_progress = []
     exc = Doe_execute("../../data/AUTO/smp.txt",
-                      "../../data/AUTO/key_std.KEY",
+                      "../../data/AUTO/MODEL.KEY",
                       "../../data/AUTO/temp_key",
                       "../../data/AUTO/res_db",
                       "../../data/AUTO/res_key",
@@ -230,12 +230,12 @@ if __name__ == "__main__":
     par = [["temp","temp","temp","speed"],["workpiece","topdie","butdie","topdie"]] 
     tar = [["grain","load"],["workpiece","topdie"]]
     is_progress = [False,True]
-
+    # 请输入绝对路径 相对路径在deform里面处理会有问题
     sample_file = "../../data/AUTO/smp.txt"
-    std_key_file = "../../data/AUTO/key_std.KEY"
-    temp_key_path = "../../data/AUTO/temp_key"
-    res_db_path = "../../data/AUTO/res_db"
-    res_key_path = "../../data/AUTO/res_key"
+    std_key_file = "../../data/AUTO/MODEL.KEY"
+    temp_key_path = "C:\\Users\\16969\\Desktop\\Multi-obj-optimism\\data\\AUTO\\temp_key"   # "../../data/AUTO/temp_key"  case 1    
+    res_db_path = "C:\\Users\\16969\\Desktop\\Multi-obj-optimism\\data\\AUTO\\res_db"       # "../../data/AUTO/res_db"   case 2
+    res_key_path = "C:\\Users\\16969\\Desktop\\Multi-obj-optimism\\data\\AUTO\\res_key"     # case 3
     res_txt = "../../data/AUTO/res_txt"
 
     exc = Doe_execute(sample_file,
@@ -247,4 +247,5 @@ if __name__ == "__main__":
                       par,tar,is_progress,880)
     exc.generate_key_file()
     exc.process_run()
-    
+    input("Press Enter to exit...")  # 添加这一行
+

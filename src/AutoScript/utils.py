@@ -185,7 +185,7 @@ def Solve(DB_path:str, path_dir:str):
 #  @date   2025/05/15
 #  @about  注意！本模块需要规划最大能启动多少个
 #  进程进行计算 以免过多导致计算非常缓慢
-def ProcessRun_CALDB(DB_inputpath:List,Process_Num = 24):
+def ProcessRun_CALDB(DB_inputpath:List,Process_Num = 12):
 
     task_queue = Queue()
     for i, dbpath in enumerate(DB_inputpath):
