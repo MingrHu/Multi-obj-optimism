@@ -227,9 +227,7 @@ def generate_keyfile_test():
                       par,tar,is_progress,880)
     exc.generate_key_file()
 
-
-# TEST
-if __name__ == "__main__":
+def run_factory_tets():
     par = [["temp","temp","temp","speed"],["workpiece","topdie","butdie","topdie"]] 
     tar = [["grain","load"],["workpiece","topdie"]]
     is_progress = [False,True]
@@ -248,28 +246,32 @@ if __name__ == "__main__":
                       res_key_path,
                       res_txt,
                       par,tar,is_progress,880)
-    # exc.generate_key_file()
-    # exc.process_run()        
-    # exc.extract()
+    exc.generate_key_file()
+    exc.process_run()        
+    exc.extract()
 
-    test_db_file = f"{res_db_path}\\0\\MODEL0.DB"
-    list_key = []
-    res_save_path = f"{exc.res_key_path}\\0"
-    os.makedirs(res_save_path,exist_ok = True)
+    # test_db_file = f"{res_db_path}\\0\\MODEL0.DB"
+    # list_key = []
+    # res_save_path = f"{exc.res_key_path}\\0"
+    # os.makedirs(res_save_path,exist_ok = True)
 
-    for step in range(0,881):
-        key_file = GetNewFilePath(test_db_file,res_save_path,str(step),"KEY")
-        list_key.append(key_file)
-        while not os.path.exists(key_file):
-            ProcessDB_TO_KEY(test_db_file,key_file,str(step))
-    key_lines = []
-    # 遍历获取每个key的所有内容 这里可以优化一下内存使用
-    # TODO(MingrHu)
-    key_file = list_key[-1]
-    with open(key_file,'r',encoding = 'utf-8') as f:
-        key_lines.append(f.readlines())
-        val = _extractGrainStdv(key_lines,"1",False)
-        print(val)
+    # for step in range(0,881):
+    #     key_file = GetNewFilePath(test_db_file,res_save_path,str(step),"KEY")
+    #     list_key.append(key_file)
+    #     while not os.path.exists(key_file):
+    #         ProcessDB_TO_KEY(test_db_file,key_file,str(step))
+    # key_lines = []
+    # # 遍历获取每个key的所有内容 这里可以优化一下内存使用
+    # # TODO(MingrHu)
+    # key_file = list_key[-1]
+    # with open(key_file,'r',encoding = 'utf-8') as f:
+    #     key_lines.append(f.readlines())
+    #     val = _extractGrainStdv(key_lines,"1",False)
+    #     print(val)
 
     input("Press Enter to exit...")  # 添加这一行
+
+# TEST
+if __name__ == "__main__":
+    run_factory_tets()
 
