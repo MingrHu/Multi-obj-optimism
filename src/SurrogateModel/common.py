@@ -10,101 +10,146 @@ from sklearn.model_selection import train_test_split
 import pandas as pd
 import numpy as np
 import joblib,os,time
-from tensorflow.keras.models import Model
-from tensorflow.keras.layers import Dense, Dropout, BatchNormalization, Input
-from tensorflow.keras.optimizers import Adam
+from keras.models import Model
+from keras.layers import Dense, Dropout, BatchNormalization, Input
+from keras.optimizers import Adam
 
 #####################################数据处理函数块############################################
 # 数据加载与预处理函数
-def load_and_preprocess_data(file_path):
+# @param data_file  存放的数据集
+# @param vars_rst   存放输入变量X和结果Y的字符名 例如[["temp","temp","speed","grain","load"]
+# @param vars_n     输入自变量X的数量
+def load_and_preprocess_data(data_file:str,vars_rst:list[str],vars_n:int):
     """加载数据并进行预处理"""
-    df = pd.read_csv(file_path, sep='\t', header=None)
-    df.columns = ['Index', 'Workpiece_Temp', 'Die_Temp', 'Forming_Speed', 
-                  'STDV_grainSize','Die_Load']
-    
-    # 特征与目标变量
-    X = df[['Workpiece_Temp', 'Die_Temp', 'Forming_Speed']].values
-    y_stdv = df['STDV_grainSize'].values.reshape(-1, 1)
-    y_load = df['Die_Load'].values.reshape(-1, 1)
-    
-    return X, y_stdv, y_load
+    df = pd.read_csv(data_file, sep ='\t', header = None)
+    if len(vars_rst) != df.shape[1]:
+        raise ValueError(f"列名列表长度({len(vars_rst)})与数据列数({df.shape[1]})不匹配")
+    df.columns = vars_rst
+    # 遍历获取x和y
+    X = df.iloc[:, :vars_n].values
+    Y = df.iloc[:,vars_n:len(vars_rst)].values
+    return X, Y
 
 # 划分数据集 不要验证集
-def split_data_without_val(X, y_stdv, y_load, test_size=0.2,random_state=42):
-    # 划分训练集和测试集
-    X_train, X_test, y_stdv_train, y_stdv_test, y_load_train, y_load_test = train_test_split(
-        X, y_stdv, y_load, test_size=test_size,random_state=random_state
+def split_data_without_val(X:np.ndarray, Y:np.ndarray, test_size=0.2, random_state=42):
+    
+    if X.shape[0] != Y.shape[0]:
+        raise ValueError(f"X 和 Y 的样本数不匹配，X样本数：{X.shape[0]}，Y样本数：{Y.shape[0]}")
+    
+    # ------------- 步骤2：通用化数据拆分（适配任意Y的列数）-------------
+    # train_test_split 支持多数组同时拆分，保持样本对应关系一致
+    # 直接拆分 X 和 Y，无需硬编码具体目标变量
+    X_train, X_test, Y_train, Y_test = train_test_split(
+        X, Y, test_size = test_size, random_state=random_state
     )
- 
-    # 特征标准化
+    
+    # ------------- 步骤3：特征矩阵 X 标准化（保持原有逻辑）-------------
     scaler_X = StandardScaler()
     X_train_scaled = scaler_X.fit_transform(X_train)
     X_test_scaled = scaler_X.transform(X_test)
- 
-    # 目标值1标准化（晶粒尺寸标准差）
-    scaler_y_stdv = StandardScaler()
-    y_stdv_train_scaled = scaler_y_stdv.fit_transform(y_stdv_train).ravel()  
-    y_stdv_test_scaled = scaler_y_stdv.transform(y_stdv_test).ravel()       
- 
-    # 目标值2标准化（模具载荷）
-    scaler_y_load = StandardScaler()
-    y_load_train_scaled = scaler_y_load.fit_transform(y_load_train).ravel()  
-    y_load_test_scaled = scaler_y_load.transform(y_load_test).ravel()       
- 
-    # 返回标准化后的数据和标准化器
+    
+    # ------------- 步骤4：目标变量 Y 通用化标准化（支持任意n2列）-------------
+    n_targets = Y.shape[1]  # 获取目标变量的列数（n2）
+    Y_train_scaled_list = []  # 存储每个目标变量的训练集标准化结果
+    Y_test_scaled_list = []   # 存储每个目标变量的测试集标准化结果
+    scalers_Y = {}            # 存储每个目标变量对应的标准化器（便于后续逆变换）
+    
+    # 遍历 Y 的每一列（每个目标变量），分别做独立标准化
+    for target_idx in range(n_targets):
+        # 提取当前目标变量的训练集和测试集
+        y_train_single = Y_train[:, target_idx].reshape(-1, 1)
+        y_test_single = Y_test[:, target_idx].reshape(-1, 1)
+        
+        # 初始化并训练当前目标变量的标准化器
+        scaler_y_single = StandardScaler()
+        y_train_scaled = scaler_y_single.fit_transform(y_train_single).ravel()
+        y_test_scaled = scaler_y_single.transform(y_test_single).ravel()
+        
+        # 存储结果和标准化器
+        Y_train_scaled_list.append(y_train_scaled)
+        Y_test_scaled_list.append(y_test_scaled)
+        scalers_Y[f'scaler_y_{target_idx}'] = scaler_y_single  
+    
+    # ------------- 步骤5：整理返回结果（通用化格式，兼容任意目标变量数）-------------
+    # 构建返回的标准化器字典（合并X的标准化器和Y的所有标准化器）
+    all_scalers = {
+        'scaler_X': scaler_X,
+        **scalers_Y  # 解包Y的标准化器字典
+    }
+    
     return (
         X_train_scaled, X_test_scaled,
-        y_stdv_train_scaled, y_stdv_test_scaled,
-        y_load_train_scaled, y_load_test_scaled,
-        {
-            'scaler_X': scaler_X,
-            'scaler_y_stdv': scaler_y_stdv,
-            'scaler_y_load': scaler_y_load
-        }
+        Y_train_scaled_list, Y_test_scaled_list,
+        all_scalers
     )
 
 # 划分数据集 需要验证集
-def split_data_with_val(X, y_stdv, y_load, test_size=0.2, val_size=0.5, random_state=42):
+def split_data_with_val(X, Y, test_size=0.2, val_size=0.2, random_state=42):
+    # ------------- 步骤1：数据格式校验（提升健壮性）-------------
+    if not isinstance(X, np.ndarray) or not isinstance(Y, np.ndarray):
+        raise TypeError("X 和 Y 必须为 NumPy 数组类型")
+    if X.shape[0] != Y.shape[0]:
+        raise ValueError(f"X 和 Y 的样本数不匹配，X样本数：{X.shape[0]}，Y样本数：{Y.shape[0]}")
     
-    # 第一步：划分训练集和临时集(测试+验证)
-    X_train, X_temp, y_stdv_train, y_stdv_temp, y_load_train, y_load_temp = train_test_split(
-        X, y_stdv, y_load, test_size=test_size + val_size, random_state=random_state
-    )
-    
-    # 第二步：在临时集中划分验证集和测试集
-    X_val, X_test, y_stdv_val, y_stdv_test, y_load_val, y_load_test = train_test_split(
-        X_temp, y_stdv_temp, y_load_temp, 
-        test_size=val_size,
+    # ------------- 步骤2：通用化三层数据拆分（适配任意Y的列数）-------------
+    # 第一步：划分训练集 和 临时集（验证集+测试集）
+    X_train, X_temp, Y_train, Y_temp = train_test_split(
+        X, Y,
+        test_size=test_size + val_size,  # 临时集占比=测试集+验证集
         random_state=random_state
     )
     
-    # 特征标准化
+    # 第二步：在临时集中划分 验证集 和 测试集（注意：此处test_size为相对临时集的比例）
+    temp_test_ratio = test_size / (test_size + val_size)
+    X_val, X_test, Y_val, Y_test = train_test_split(
+        X_temp, Y_temp,
+        test_size=temp_test_ratio,  # 用相对比例保证原始设定的test_size/val_size
+        random_state=random_state
+    )
+    
+    # ------------- 步骤3：特征矩阵 X 标准化（保持三层数据集一致处理）-------------
     scaler_X = StandardScaler()
     X_train_scaled = scaler_X.fit_transform(X_train)
     X_val_scaled = scaler_X.transform(X_val)
     X_test_scaled = scaler_X.transform(X_test)
     
-    # 目标值标准化（晶粒尺寸标准差）
-    scaler_y_stdv = StandardScaler()
-    y_stdv_train_scaled = scaler_y_stdv.fit_transform(y_stdv_train).ravel()
-    y_stdv_val_scaled = scaler_y_stdv.transform(y_stdv_val).ravel()
-    y_stdv_test_scaled = scaler_y_stdv.transform(y_stdv_test).ravel()
+    # ------------- 步骤4：目标变量 Y 通用化标准化（支持任意n2列目标变量）-------------
+    n_targets = Y.shape[1]  # 获取目标变量的列数（n2）
+    # 初始化列表，存储所有目标变量的三层标准化结果（训练/验证/测试）
+    Y_train_scaled_list = []
+    Y_val_scaled_list = []
+    Y_test_scaled_list = []
+    scalers_Y = {}  # 存储每个目标变量对应的标准化器（便于后续逆变换）
     
-    # 目标值标准化（模具载荷）
-    scaler_y_load = StandardScaler()
-    y_load_train_scaled = scaler_y_load.fit_transform(y_load_train).ravel()
-    y_load_val_scaled = scaler_y_load.transform(y_load_val).ravel()
-    y_load_test_scaled = scaler_y_load.transform(y_load_test).ravel()
+    # 遍历 Y 的每一列（每个目标变量），分别做独立标准化（三层数据集共用一个标准化器）
+    for target_idx in range(n_targets):
+        # 提取当前目标变量的三层数据集
+        y_train_single = Y_train[:, target_idx].reshape(-1, 1)
+        y_val_single = Y_val[:, target_idx].reshape(-1, 1)
+        y_test_single = Y_test[:, target_idx].reshape(-1, 1)
+        
+        # 初始化并训练当前目标变量的标准化器（仅在训练集上fit，避免数据泄露）
+        scaler_y_single = StandardScaler()
+        y_train_scaled = scaler_y_single.fit_transform(y_train_single).ravel()
+        y_val_scaled = scaler_y_single.transform(y_val_single).ravel()
+        y_test_scaled = scaler_y_single.transform(y_test_single).ravel()
+        
+        # 存储当前目标变量的标准化结果和标准化器
+        Y_train_scaled_list.append(y_train_scaled)
+        Y_val_scaled_list.append(y_val_scaled)
+        Y_test_scaled_list.append(y_test_scaled)
+        scalers_Y[f'scaler_y_{target_idx}'] = scaler_y_single  # 以列索引命名，便于追溯
+    
+    # ------------- 步骤5：整理返回结果（通用化格式，兼容任意目标变量数）-------------
+    all_scalers = {
+        'scaler_X': scaler_X,
+        **scalers_Y  # 解包Y的标准化器字典，合并为完整的标准化器集合
+    }
     
     return (
         X_train_scaled, X_val_scaled, X_test_scaled,
-        y_stdv_train_scaled, y_stdv_val_scaled, y_stdv_test_scaled,
-        y_load_train_scaled, y_load_val_scaled, y_load_test_scaled,
-        {
-            'scaler_X': scaler_X,
-            'scaler_y_stdv': scaler_y_stdv,
-            'scaler_y_load': scaler_y_load
-        }
+        Y_train_scaled_list, Y_val_scaled_list, Y_test_scaled_list,
+        all_scalers
     )
 
 # 计算NMAE函数
@@ -268,8 +313,8 @@ def build_single_output_dnn(input_dim):
     model = Model(inputs=inputs, outputs=out)
     
     model.compile(
-        optimizer=Adam(learning_rate=0.001),
-        loss='mse',
-        metrics=['mae']
+        optimizer = 'adam',
+        loss = 'mse',
+        metrics = ['mae']
     )
     return model
