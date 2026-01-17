@@ -32,7 +32,7 @@ def load_and_preprocess_data(data_file:str,vars_rst:list[str],vars_n:int):
 
 # 划分数据集 不要验证集
 def split_data_without_val(X:np.ndarray, Y:np.ndarray, test_size=0.2, random_state=42):
-    
+
     if X.shape[0] != Y.shape[0]:
         raise ValueError(f"X 和 Y 的样本数不匹配，X样本数：{X.shape[0]}，Y样本数：{Y.shape[0]}")
     
@@ -166,24 +166,31 @@ def normal_max_absolute_error(y_true, y_pred):
         return np.inf if max_ae > 0 else 0.0  # 避免除以 0
     return max_ae / rmse
 
+# 数据加载与预处理函数
+# @param model_type  模型类型 比如训练的载荷模型load
+# @param model   训练的模型本身
+# @param r2     决定系数
+# @param fact   实际值
+# @param pred   预测值
+# @param sclaers 标准化器 包括X和Y的
+# @param model_name 模型名称 例如ANN
 # 训练的模型类型 最佳模型 最佳决定系数 实际值和预测值 代理模型名称
-def save_best_model(model_type,best_model,best_r2,best_fact,best_pred,scalers,model_name):
+def save_model(model_type:str,model,r2,fact,pred,scalers,model_name:str):
     # 训练结束后，保存最佳模型
     os.makedirs(f"../../data/models/{model_name}", exist_ok=True)
-    if best_model is not None:
+    if model is not None:
         if model_name == 'DNN':
-            best_model.save(f'../../data/models/{model_name}/best_{model_type}_model.keras')
-            joblib.dump(scalers, f'../../data/models/{model_name}/{model_type}_scalers.pkl')
+            model.save(f'../../data/models/{model_name}/{model_type}_model.keras')
         else:
-            joblib.dump(best_model,f'../../data/models/{model_name}/best_{model_type}_model.pkl')
-            joblib.dump(scalers, f'../../data/models/{model_name}/{model_type}_scalers.pkl')
-        print("\n=== 最佳模型已保存 ===")
-        print(f"最高 R²分数: {best_r2:.4f}")
+            joblib.dump(model,f'../../data/models/{model_name}/{model_type}_model.pkl')
+        joblib.dump(scalers, f'../../data/models/{model_name}/{model_type}_scalers.pkl')
+        print("\n=== 模型已保存 ===")
+        print(f"R²分数: {r2:.4f}")
         
         # 打印最佳模型的实际值 vs. 预测值（前5行）
-        print("\n最佳模型预测结果(前5行):")
+        print("\n模型预测结果(前5行):")
         for j in range(5):
-            print(f"实际值: {best_fact[j][0]:.4f}, 预测值: {best_pred[j][0]:.4f}")
+            print(f"实际值: {fact[j][0]:.4f}, 预测值: {pred[j][0]:.4f}")
     else:
         print("警告：未找到有效模型！")
 #####################################数据处理函数块############################################
