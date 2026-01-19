@@ -1,9 +1,9 @@
 from common import evaluate_model
-from DNN import RunDNN
-from KrigingGPR import RunKriging
-from Polynomial import RunPR
-from SVR import RunSVR
-from RandomForest import RunRF
+from DNN import dnn_run
+from KrigingGPR import kriging_fun
+from Polynomial import prg_fun
+from SVR import svr_fun
+from RandomForest import rf_run
 import os 
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
