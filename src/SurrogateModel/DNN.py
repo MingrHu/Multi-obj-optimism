@@ -19,7 +19,7 @@ def dnn_run(file:str,vars_out:list[str],n_var:int,model_par:list[str] = []):
     for idx in range(len(Y_train_scaled_list)):
         # 简单三层感知机
         cur_model = build_single_output_dnn(X_train_scaled.shape[1])
-        callbacks_stdv = [
+        callbacks = [
             EarlyStopping(monitor='val_loss', patience=50, restore_best_weights = True),
             ReduceLROnPlateau(monitor='val_loss', factor=0.2, patience=5,min_lr=1e-6)
         ]
@@ -31,7 +31,7 @@ def dnn_run(file:str,vars_out:list[str],n_var:int,model_par:list[str] = []):
             validation_data=(X_val_scaled, y_val_scaled),
             epochs=1000,
             batch_size=16,
-            callbacks=callbacks_stdv,
+            callbacks=callbacks,
             # 1显示训练过程
             verbose=1 # type: ignore
         )

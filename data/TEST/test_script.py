@@ -5,16 +5,16 @@ import pandas as pd
 np.random.seed(42)
 
 # 1. 定义参数
-n_rows = 100    # 100行数据
-n_features = 7  # 前7列自变量
-n_targets = 3   # 后3列因变量
+n_rows = 4375    # 数据行数
+n_features = 20  # 自变量
+n_targets = 3   # 因变量
 
 # 2. 生成自变量 X (100行×7列)
 # 采用不同的随机分布模拟不同类型的特征（如温度、速度、压力等）
 X = np.hstack([
-    np.random.normal(loc=50, scale=10, size=(n_rows, 2)),   # 特征1-2：正态分布
-    np.random.uniform(low=0, high=100, size=(n_rows, 3)),  # 特征3-5：均匀分布
-    np.random.poisson(lam=20, size=(n_rows, 2))            # 特征6-7：泊松分布
+    np.random.normal(loc=50, scale=10, size=(n_rows, n_features // 3)),   # 特征1：正态分布
+    np.random.uniform(low=0, high=100, size=(n_rows, n_features // 2)),  # 特征2：均匀分布
+    np.random.poisson(lam=20, size=(n_rows, n_features - n_features // 3 - n_features // 2))  # 特征3：泊松分布
 ])
 
 # 3. 生成因变量 Y (100行×3列)
@@ -22,6 +22,7 @@ X = np.hstack([
 # 随机生成系数矩阵 (7个特征 × 3个目标)
 coef = np.random.uniform(low=0.5, high=2.0, size=(n_features, n_targets))
 # 生成Y：X·coef + 偏置 + 噪声
+
 Y = X @ coef + np.array([[10, 20, 30]]) + np.random.normal(loc=0, scale=2, size=(n_rows, n_targets))
 
 # 4. 合并自变量和因变量，得到完整数据集
@@ -35,11 +36,7 @@ df = pd.DataFrame(data, columns=columns)
 # 方法1：对整个DataFrame进行四舍五入，保留两位小数（简洁高效，推荐）
 df = df.round(2)
 
-# 方法2（可选）：astype格式化（需先转为字符串再转回数值，不推荐用于建模，仅用于展示）
-# df = df.applymap(lambda x: f"{x:.2f}").astype(float)
-
-# 6. 保存为TSV文件（与你之前的load_and_preprocess_data函数兼容）
-df.to_csv('simulated_data.txt', sep='\t', index=False, header=False)
+df.to_csv('simulated.txt', sep='\t', index=False, header=False)
 
 # 7. 查看数据基本信息
 print("数据集形状：", df.shape)
