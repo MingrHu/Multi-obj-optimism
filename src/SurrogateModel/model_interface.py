@@ -32,6 +32,6 @@ if __name__ == "__main__":
                 "11","12","13","14","15","16","17","18","19","20", "res1", "res2", "res3"]
     file = '/Users/bytedance/Desktop/Multi-obj-optimism/data/TEST/simulated.txt'
     doe_s = Doe_surrogateModel(file,vars_out,20)
-    doe_s.train_save_model(2)
+    doe_s.train_save_model(1)
 
 
