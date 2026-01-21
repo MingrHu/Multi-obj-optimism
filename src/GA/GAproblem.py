@@ -40,4 +40,3 @@ class FormingProcessOptimization(ElementwiseProblem):
             load - max_load,  # load ≤ 350000 → G ≤ 0
             stdv - max_stdv  # stdv ≥ 5 → G ≤ 0
         ]
-
