@@ -34,7 +34,7 @@ class FormingProcessOptimization(ElementwiseProblem):
         out["F"] = [stdv , load] # 最小化stdv和load
 
         # 设置约束条件
-        max_load = 350000
+        max_load = 360000
         max_stdv = 40
         out["G"] = [
             load - max_load,  # load ≤ 350000 → G ≤ 0
