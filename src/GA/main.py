@@ -38,11 +38,11 @@ def NSGA2_run():
     model_dir = f"../../data/models/{model_family}"
 
     # 1-7 为全部输入变量，res1-res3为全部输出变量
-    vars_out = ["1", "2", "3", "4", "5", "6", "7", "res1", "res2", "res3"]
-    n_vars = 7
+    vars_out = ["1", "2", "3", "grain", "load"]
+    n_vars = 3
 
     # 目标函数对象为res1 res2
-    objective_names = ["res1", "res2"]
+    objective_names = ["grain", "load"]
 
     # 加载标准化器
     scalers = joblib_load(os.path.join(model_dir, f"{objective_names[0]}_scalers.pkl"))
@@ -58,15 +58,15 @@ def NSGA2_run():
     decision_var_indices = [0, 1, 2]
     # 输入变量的取值范围
     decision_bounds = [
-        (0, 100),
-        (0, 50),
-        (0, 60),
+        (875, 965),   # 工件温度范围 [°C]
+        (300, 700),   # 模具温度范围 [°C]
+        (10, 50)      # 上模速度范围 [mm/s]
     ]
 
     # 约束条件
     constraints = [
-        ConstraintSpec(objective="res2", kind="upper", value=150),
-        ConstraintSpec(objective="res1", kind="upper", value=400),
+        ConstraintSpec(objective="grain", kind="upper", value=30),
+        ConstraintSpec(objective="load", kind="upper", value=330000),
     ]
 
     problem = SurrogateOptimizationProblem(

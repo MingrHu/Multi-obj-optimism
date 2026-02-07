@@ -28,9 +28,12 @@ class Doe_surrogateModel:
         self.model[which_model](self.file,self.vars_out,self.n,model_par)
 
 if __name__ == "__main__":
-    vars_out = ["1", "2", "3", "4", "5", "6", "7", "res1", "res2", "res3"]
-    file = '/Users/bytedance/Desktop/Multi-obj-optimism/data/TEST/simulated.txt'
-    doe_s = Doe_surrogateModel(file,vars_out,7)
+    vars_out = ["1", "2", "3", "grain", "load"]
+    # file1
+    # file = '/Users/bytedance/Desktop/Multi-obj-optimism/data/TEST/simulated.txt'
+    # file2
+    file = '/Users/hmr/Desktop/Multi-obj-optimism/data/TEST/simulated.txt'
+    doe_s = Doe_surrogateModel(file,vars_out,n_vars= 3)
     doe_s.train_save_model(2)
 
 
