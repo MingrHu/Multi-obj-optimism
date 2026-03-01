@@ -34,6 +34,6 @@ if __name__ == "__main__":
     # file2
     file = '/Users/hmr/Desktop/Multi-obj-optimism/data/TEST/simulated.txt'
     doe_s = Doe_surrogateModel(file,vars_out,n_vars= 3)
-    doe_s.train_save_model(2)
+    doe_s.train_save_model(1)
 
 
