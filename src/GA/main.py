@@ -37,7 +37,7 @@ def NSGA2_run():
     model_family = "PRG"
     model_dir = f"../../data/models/{model_family}"
 
-    # 1-7 为全部输入变量，res1-res3为全部输出变量
+    # 1-3为输入变量 grain和load是输出变量
     vars_out = ["1", "2", "3", "grain", "load"]
     n_vars = 3
 
