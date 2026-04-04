@@ -1,6 +1,6 @@
 import numpy as np
 import os
-from common import (load_and_preprocess_data,split_data_without_val,
+from .common import (load_and_preprocess_data,split_data_without_val,
                     normal_max_absolute_error,save_model,Time)
 from sklearn.preprocessing import PolynomialFeatures
 from sklearn.linear_model import LinearRegression

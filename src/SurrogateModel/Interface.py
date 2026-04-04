@@ -1,8 +1,8 @@
-from DNN import dnn_run
-from KrigingGPR import kriging_fun
-from Polynomial import prg_fun
-from SVR import svr_fun
-from RandomForest import rf_run
+from .DNN import dnn_run
+from .KrigingGPR import kriging_fun
+from .Polynomial import prg_fun
+from .SVR import svr_fun
+from .RandomForest import rf_run
 #  @brief  代理模型类
 #  @return None
 #  @author Hu Mingrui

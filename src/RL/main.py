@@ -1,7 +1,7 @@
 import os
 import numpy as np
 from stable_baselines3 import PPO
-from RL_env import ForgingEnv
+from .RL_env import ForgingEnv
 
 # 设置工作目录
 script_dir = os.path.dirname(os.path.abspath(__file__))

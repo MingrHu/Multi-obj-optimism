@@ -6,8 +6,8 @@ from pymoo.operators.mutation.pm import PM
 from pymoo.optimize import minimize
 from pymoo.visualization.scatter import Scatter
 
-from GAproblem import ConstraintSpec, ObjectiveSpec, SurrogateOptimizationProblem
-from utils import AdaptiveSBX, save_pareto_solutions
+from .GAproblem import ConstraintSpec, ObjectiveSpec, SurrogateOptimizationProblem
+from .utils import AdaptiveSBX, save_pareto_solutions
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
 os.chdir(script_dir)

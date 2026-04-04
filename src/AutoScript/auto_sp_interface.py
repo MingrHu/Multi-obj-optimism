@@ -11,29 +11,20 @@
 # *******************************************
 import os
 from typing import List
-from utils import(_extractMaxStress,_extractMaxLoad,_extractGrainStdv,
+from .utils import(_extractMaxStress,_extractMaxLoad,_extractGrainStdv,
 GetNewFilePath,FormatFloat,ProcessKEY_TO_DB,ProcessDB_TO_KEY,
 ProcessRun_CALDB,LHSSampleGenerate,FullSampleGenerate)
-# *********************SOME VAR DEF***********************
-# KEY文件关键字变量
-KEYFILE_VAR_DIC = {
-    'temp':"NDTMP",
-    'speed':"MOVCTL",
+from .deform_conf import DeformConfig
 
-}
-# 指定对象
-OBJ_DEF = {
-    'workpiece':"1",
-    'topdie':"2",
-    'butdie':"3"
-}
-# 目标函数
-TAR_FUNC = {
-    'stress':_extractMaxStress,
-    'load':_extractMaxLoad,
-    'grain':_extractGrainStdv
-}
-
+#  @brief  采样类
+#  @return None
+#  @author Hu Mingrui
+#  @date   2025/11/24
+#  @param  sample_method    采样方法 lhs/full
+#  @param  param_ranges     参数范围字典 例如{'temp1': (875.0, 965.0), 'temp2': (300.0, 700.0), 'temp3':(300.0,700.0), 'speed':(10.0, 50.0)}
+#  @param  save_path        采样生成的txt文件保存路径 例如../../data/sample
+#  @param  n_samples        采样的总数量 例如10
+#  @param  level_nums       采样等级数量列表如果采用full采样方法 必须输入 例如[5,2,2,2] 例如5个等级 每个等级2个参数
 class Doe_sample_generate:
     def __init__(self,sample_method:str,
                  param_ranges:dict[str, tuple[float, float]],
@@ -48,6 +39,8 @@ class Doe_sample_generate:
         if sample_method == 'lhs':
             LHSSampleGenerate(n_samples,param_ranges,save_path)
         elif sample_method == 'full':
+            if  level_nums == []:
+                raise ValueError("level_nums must be provided for full sampling")
             FullSampleGenerate(param_ranges,save_path,level_nums)
         else:
             raise ValueError(f"Unsupported sample method: {sample_method}")
@@ -64,8 +57,8 @@ class Doe_sample_generate:
 #  @param  res_key_path     最终结果key文件位置 例如../../data/AUTO/res_key
 #  @param  res_txt_path     提取的数据集位置 例如../../data/AUTO/res_txt
 #  @param  parmeter         工艺参数输入组合 固定 2 × n 第一行为n个工艺参数 第二行为n个工艺参数对应的部件序号
-#  @param  target_val       目标函数的变量 固定 2 × m 第一行为m个目标变量 第二行为m个变量对应的部件序号
-#  @param  is_inprogress    对应每个目标变量是否通过全过程计算提取（例如有的变量需要整个工艺流程来提取 有的只需要最后一步）
+#  @param  target_val       目标值 固定 2 × m 第一行为m个目标变量 第二行为m个变量实际对应的部件序号 比如workpiece对应1 topdie对应2 butdie对应3
+#  @param  is_inprogress    对应每个目标值是否通过全过程计算提取（例如有的变量需要整个工艺流程来提取 有的只需要最后一步）
 #  @param  max_step         输入设定的key文件求解过程的最大步数（用于确定和生成中间key文件）
 #  @about  根据指定的方法完成数据驱动操作
 class Doe_execute:    
@@ -96,7 +89,7 @@ class Doe_execute:
         self.tmp_key_file = []
         self.res_db_file = []
 
-# PS:
+# 输入示例PS:
 # temp  temp    temp    speed
 #   1     2      3       2
 # 915.0	560.0   560.0	26.0
@@ -129,7 +122,7 @@ class Doe_execute:
                             # 第二个标识工艺参数所属的对象 最后一个标识工艺参数值
                             gy_par,tar_obj = self.par[0][pos],self.par[1][pos]
                             # 寻找匹配的工艺参数和对象 必须完全匹配 匹配后才能进行工艺参数修改
-                            if KEYFILE_VAR_DIC[gy_par] == line_list[0] and line_list[1] == OBJ_DEF[tar_obj]:
+                            if DeformConfig.get_key_var(gy_par) == line_list[0] and line_list[1] == DeformConfig.get_object_id(tar_obj):
                                 # 生成这行的参数值
                                 format_data = FormatFloat(data)
                                 # 替换
@@ -181,97 +174,12 @@ class Doe_execute:
                 obj_info = self.var[1][idx]
                 in_progress = self.in_progress[idx]
                 # 拿到当前目标值标签和对象等信息后开始抽取值
-                res_line.append(TAR_FUNC[tar_info](key_lines,obj_info,in_progress))
+                res_line.append(DeformConfig.get_target_function(tar_info)(key_lines,obj_info,in_progress))
             # 收集最终结果
             res_lines.append(res_line)
         with open("output.txt", "w", encoding="utf-8") as f:
             for row_idx, row in enumerate(res_lines, start = 1):  
                 row_str = "\t".join(map(str, row))  
                 f.write(f"{row_idx}\t{row_str}\n")  
-                
-def sample_generate_test():
-    # 定义参数范围
-    param_ranges = {
-        'temp1': (875.0, 965.0),    # 工件温度范围 (℃)
-        'temp2': (300.0, 700.0),    # 上模具温度范围 (℃)
-        'temp3':(300.0,700.0),      # 下模具温度范围 (℃)
-        'speed':(10.0, 50.0) ,      # 锻造速度范围 (mm/s)
-    }
-
-    # 生成样本
-    lhs = Doe_sample_generate(
-        sample_method = "lhs",
-        param_ranges = param_ranges,
-        save_path="../../data/sample",
-        n_samples=10,
-    )
-
-    full = Doe_sample_generate(
-        sample_method = 'full',
-        param_ranges = param_ranges,
-        save_path = "../../data/sample",
-        n_samples = 0,
-        level_nums = [5,2,2,2]
-    )
-
-def generate_keyfile_test():
-    par = [["temp","temp","temp","speed"],["workpiece","topdie","butdie","topdie"]] 
-    tar = [["grain","load"],["workpiece","topdie"]]
-    is_progress = []
-    exc = Doe_execute("../../data/AUTO/smp.txt",
-                      "../../data/AUTO/MODEL.KEY",
-                      "../../data/AUTO/temp_key",
-                      "../../data/AUTO/res_db",
-                      "../../data/AUTO/res_key",
-                      "../../data/AUTO/res_txt",
-                      par,tar,is_progress,880)
-    exc.generate_key_file()
-
-def run_factory_tets():
-    par = [["temp","temp","temp","speed"],["workpiece","topdie","butdie","topdie"]] 
-    tar = [["grain","load"],["workpiece","topdie"]]
-    is_progress = [False,True]
-    # 请输入绝对路径 相对路径在deform里面处理会有问题
-    sample_file = "../../data/AUTO/smp.txt"
-    std_key_file = "../../data/AUTO/MODEL.KEY"
-    temp_key_path = "C:\\Users\\16969\\Desktop\\Multi-obj-optimism\\data\\AUTO\\temp_key"   # "../../data/AUTO/temp_key"  case 1    
-    res_db_path = "C:\\Users\\16969\\Desktop\\Multi-obj-optimism\\data\\AUTO\\res_db"       # "../../data/AUTO/res_db"   case 2
-    res_key_path = "C:\\Users\\16969\\Desktop\\Multi-obj-optimism\\data\\AUTO\\res_key"     # case 3
-    res_txt = "../../data/AUTO/res_txt"
-
-    exc = Doe_execute(sample_file,
-                      std_key_file,
-                      temp_key_path,
-                      res_db_path,
-                      res_key_path,
-                      res_txt,
-                      par,tar,is_progress,880)
-    exc.generate_key_file()
-    exc.process_run()        
-    exc.extract()
-
-    # test_db_file = f"{res_db_path}\\0\\MODEL0.DB"
-    # list_key = []
-    # res_save_path = f"{exc.res_key_path}\\0"
-    # os.makedirs(res_save_path,exist_ok = True)
-
-    # for step in range(0,881):
-    #     key_file = GetNewFilePath(test_db_file,res_save_path,str(step),"KEY")
-    #     list_key.append(key_file)
-    #     while not os.path.exists(key_file):
-    #         ProcessDB_TO_KEY(test_db_file,key_file,str(step))
-    # key_lines = []
-    # # 遍历获取每个key的所有内容 这里可以优化一下内存使用
-    # # TODO(MingrHu)
-    # key_file = list_key[-1]
-    # with open(key_file,'r',encoding = 'utf-8') as f:
-    #     key_lines.append(f.readlines())
-    #     val = _extractGrainStdv(key_lines,"1",False)
-    #     print(val)
-
-    input("Press Enter to exit...")  # 添加这一行
-
-# TEST
-if __name__ == "__main__":
-    run_factory_tets()
+            
 

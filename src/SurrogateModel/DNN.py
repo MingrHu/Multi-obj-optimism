@@ -1,6 +1,6 @@
 import os
 import numpy as np
-from common import (load_and_preprocess_data, split_data_with_val,
+from .common import (load_and_preprocess_data, split_data_with_val,
                     normal_max_absolute_error,build_single_output_dnn,save_model,Time)
 from keras.callbacks import EarlyStopping, ReduceLROnPlateau
 from sklearn.metrics import r2_score

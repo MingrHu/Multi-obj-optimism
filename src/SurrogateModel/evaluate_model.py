@@ -20,7 +20,7 @@ from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import PolynomialFeatures, StandardScaler
 from sklearn.svm import SVR
 
-from common import (
+from .common import (
     build_single_output_dnn,
     evaluate_model as accuracy_time_score,
     load_and_preprocess_data,
