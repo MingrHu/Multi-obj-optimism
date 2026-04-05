@@ -1,14 +1,3 @@
-# ********************************************
-#  创建时间： 2025/11/24
-#  名   称： 自动化DEFORM求解模块定义
-#  版   本： 1.0
-#  @author    Hu Mingrui
-#  说   明： 本功能负责批量产生KEY文件
-#  将KEY文件保存为DB文件 运行模拟求解器
-#  求解完成后批量提取对应的数据到指定位置
-#  ！注意！输入的所有路径请符合windows规范为了
-#  避免转义字符的影响 统一采用双斜线表示路径分隔 "\\"
-# *******************************************
 import os
 from typing import List
 from .utils import(_extractMaxStress,_extractMaxLoad,_extractGrainStdv,
@@ -181,5 +170,3 @@ class Doe_execute:
             for row_idx, row in enumerate(res_lines, start = 1):  
                 row_str = "\t".join(map(str, row))  
                 f.write(f"{row_idx}\t{row_str}\n")  
-            
-

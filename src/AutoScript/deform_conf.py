@@ -1,4 +1,4 @@
-from .auto_sp_interface import (_extractMaxStress, _extractMaxLoad, _extractGrainStdv)
+from .utils import (_extractMaxStress, _extractMaxLoad, _extractGrainStdv)
 from typing import Any
 # *********************SOME VAR DEF***********************
 # 针对DEFORM平台的一些Config定义

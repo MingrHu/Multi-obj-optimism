@@ -1,4 +1,4 @@
-from .auto_sp_interface import (Doe_sample_generate,Doe_execute)
+from .auto_script_method import (Doe_sample_generate,Doe_execute)
 
 def sample_generate_test():
     # 定义参数范围

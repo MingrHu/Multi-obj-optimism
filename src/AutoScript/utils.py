@@ -3,7 +3,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import os,statistics,subprocess,threading,time,shutil
 from pathlib import Path
-from pyDOE import lhs
+from pydoe import lhs
 from itertools import product
 from queue import Queue
 from typing import Dict, List, Tuple
