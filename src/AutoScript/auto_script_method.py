@@ -1,9 +1,12 @@
-import os
+import os,datetime
+from datetime import datetime
 from typing import List
-from .utils import(_extractMaxStress,_extractMaxLoad,_extractGrainStdv,
-GetNewFilePath,FormatFloat,ProcessKEY_TO_DB,ProcessDB_TO_KEY,
+from .utils import(GetNewFilePath,FormatFloat,ProcessKEY_TO_DB,ProcessDB_TO_KEY,
 ProcessRun_CALDB,LHSSampleGenerate,FullSampleGenerate)
 from .deform_conf import DeformConfig
+# TODO: 任务状态管理
+# 每个方法都有一个当前任务步数和状态列表
+# 任务步数从0开始 0代表init 状态只有三个值 -1 0 1 分别代表失败 进行中 完成
 
 #  @brief  采样类
 #  @return None
@@ -20,11 +23,14 @@ class Doe_sample_generate:
                  save_path:str,
                  n_samples:int = 0,
                  level_nums:List[int] = []) -> None:
-        # 采样方法
-        SAMPLE = {
-            'lhs':LHSSampleGenerate,
-            'full':FullSampleGenerate
-        }
+        self.cur_step = 0
+        self.status:List[int] = []
+        self.status.append(0)
+        # # 采样方法
+        # SAMPLE = {
+        #     'lhs':LHSSampleGenerate,
+        #     'full':FullSampleGenerate
+        # }
         if sample_method == 'lhs':
             LHSSampleGenerate(n_samples,param_ranges,save_path)
         elif sample_method == 'full':
@@ -166,7 +172,10 @@ class Doe_execute:
                 res_line.append(DeformConfig.get_target_function(tar_info)(key_lines,obj_info,in_progress))
             # 收集最终结果
             res_lines.append(res_line)
-        with open("output.txt", "w", encoding="utf-8") as f:
+        # 获取当前时间
+        now = datetime.now()
+        dt_string = now.strftime("%Y-%m-%d %H:%M:%S")
+        with open(f"{self.res_txt_path}\\{dt_string}_result.txt", "w", encoding="utf-8") as f:
             for row_idx, row in enumerate(res_lines, start = 1):  
                 row_str = "\t".join(map(str, row))  
                 f.write(f"{row_idx}\t{row_str}\n")  

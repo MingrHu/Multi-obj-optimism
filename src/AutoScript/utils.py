@@ -3,7 +3,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import os,statistics,subprocess,threading,time,shutil
 from pathlib import Path
-from pydoe import lhs
+from pyDOE import lhs
 from itertools import product
 from queue import Queue
 from typing import Dict, List, Tuple
@@ -15,7 +15,7 @@ from typing import Dict, List, Tuple
 # 全局计数器及锁
 solvernum = 0
 solvernum_lock = threading.Lock()
-# 导入环境变量后可不用输入路径
+# 导入环境变量后可不用输入绝对路径
 DEF_PRE_64_path = "DEF_PRE_64.exe" 
 DEF_ARM_CTL_path= "DEF_ARM_CTL.COM"
 
