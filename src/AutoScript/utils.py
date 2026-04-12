@@ -1,16 +1,14 @@
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-import os,statistics,subprocess,threading,time,shutil
+import os,statistics,subprocess,threading,time
 from pathlib import Path
+from datetime import datetime
 from pyDOE import lhs
 from itertools import product
 from queue import Queue
-from typing import Dict, List, Tuple
-
-# script_dir = os.path.dirname(os.path.abspath(__file__))
-# os.chdir(script_dir)
-
+from typing import Dict, List, Tuple,Any
+from Common.tools import logger
 
 # 全局计数器及锁
 solvernum = 0
@@ -19,6 +17,163 @@ solvernum_lock = threading.Lock()
 DEF_PRE_64_path = "DEF_PRE_64.exe" 
 DEF_ARM_CTL_path= "DEF_ARM_CTL.COM"
 
+
+##########################################################
+###################自定义提取函数部分########################
+def _extractMaxStress(AllLines:List[List[str]],obj:str,inprogress:bool)->str:
+    finall_res = -1.0
+    # 找首行
+    def fun(lines:List[str])->float:
+        res,pos,num = 0,-1,0
+        for row,line in enumerate(lines):
+            arry = line.split()
+            if len(arry) == 4 and arry[0] == 'STRESS' and arry[1] == obj:
+                pos = row
+                num = int(arry[2])
+                break
+        # 从首行开始遍历
+        if pos != -1 and num > 0:
+            cnt = 1
+            index = pos + 1
+            while cnt <= num:
+                arry1 = lines[index].split()
+                arry2 = lines[index + 1].split()
+                stress = [float(arry1[1]),float(arry1[2]),float(arry1[3]),
+                            float(arry1[4]),float(arry1[5]),float(arry2[0])]
+                res = max(res,calculate_von_mises(stress))
+                cnt += 1
+                index += 2
+        return res
+    if inprogress:
+        for lines in AllLines:
+            finall_res = max(fun(lines),finall_res) # type: ignore
+    else:
+        finall_res = fun(AllLines[-1])
+    return "{:.2f}".format(finall_res)
+
+def _extractMaxLoad(AllLines:List[List[str]],obj:str,inprogress:bool)->str:
+    # 模具载荷提取
+    finall_res = 0.0
+    def fun(lines:List[str])->float:
+        res = 0.0
+        for _,line in enumerate(lines):
+            arry = line.split()
+            # 根据deform的key文件关键字分布情况
+            if len(arry) == 5 and arry[0] == 'FORCE' and arry[1] == '2':
+                res = float(arry[4])
+        return res
+    if inprogress:
+        for lines in AllLines:
+            finall_res = max(fun(lines),finall_res)
+    else:
+        finall_res = fun(AllLines[-1])
+    return "{:.2f}".format(finall_res)
+
+def _extractGrainStdv(AllLines:List[List[str]],obj:str,inprogress:bool)->str:
+    finall_res = 0.0
+    # 提取锻件晶粒尺寸信息
+    def fun(lines:List[str])->float:
+        pos,num = -1,0
+        grainsize = []
+        res = 0.0
+        for index,line in enumerate(lines):
+            arry = line.split()
+            if len (arry) == 5 and arry[0] == 'USRELM' and arry[1] == '1':
+                pos,num = index + 1,int(arry[2])
+                break
+        if pos != -1 and num > 0:
+            for i in range(num):
+                arr = lines[pos + i].split()
+                grainsize.append(float(arr[3]))
+            res = statistics.stdev(grainsize)
+        return res
+    if inprogress:
+        for lines in AllLines:
+            # 有必要讨论一下晶粒的相关情况
+            # TODO(MingrHu)
+            finall_res = max(fun(lines),finall_res)
+    else:
+        finall_res = fun(AllLines[-1])
+    return "{:.2f}".format(finall_res)
+
+#  @brief 计算等效应力
+#  von-misses准则
+#  @return 
+#  @author Hu Mingrui
+#  @date   2025/06/03
+def calculate_von_mises(stress):
+    """计算等效应力 (Von Mises Stress)"""
+    sxx, syy, szz, sxy, syz, sxz = stress
+
+    return np.sqrt(0.5 * ((sxx - syy)**2 + 
+                         (syy - szz)**2 + 
+                         (szz - sxx)**2 + 
+                         6 * (sxy**2 + syz**2 + sxz**2)))
+
+
+##########################################################
+# *********************SOME VAR DEF***********************
+# 针对DEFORM平台的一些Config定义
+# 调用方式:
+# temp_key = DeformConfig.get_key_var('temp')
+# workpiece_id = DeformConfig.get_object_id('workpiece')
+# stress_func = DeformConfig.get_target_function('stress')
+class DeformConfig:
+    """
+    DEFORM 平台配置类
+    统一管理关键字、对象定义、目标函数等配置信息
+    """
+
+    # ===================== KEY文件关键字变量 =====================
+    KEYFILE_VAR_DIC = {
+        'temp': "NDTMP",
+        'speed': "MOVCTL",
+    }
+
+    # ===================== 模拟对象定义 =====================
+    OBJ_DEF = {
+        'workpiece': "1",
+        'topdie': "2",
+        'butdie': "3"
+    }
+
+    # ===================== 目标函数映射 =====================
+    # 注意：_extractMaxStress 等函数需要在类定义前已声明
+    TAR_FUNC: dict[str, Any] = {
+        'stress': _extractMaxStress,
+        'load': _extractMaxLoad,
+        'grain': _extractGrainStdv
+    }
+
+    @classmethod
+    def get_key_var(cls, key: str):
+        """
+        安全获取 KEY 文件关键字
+        :param key: 配置键名 temp/speed
+        :return: 对应关键字
+        """
+        return cls.KEYFILE_VAR_DIC.get(key)
+
+    @classmethod
+    def get_object_id(cls, obj_name: str):
+        """
+        安全获取对象 ID
+        :param obj_name: workpiece/topdie/butdie
+        :return: 对象ID字符串
+        """
+        return cls.OBJ_DEF.get(obj_name)
+
+    @classmethod
+    def get_target_function(cls, func_name: str)->Any:
+        """
+        安全获取目标函数
+        :param func_name: stress/load/grain
+        :return: 对应提取函数
+        """
+        return cls.TAR_FUNC.get(func_name)
+
+
+##########################################################
 # ************************FUNC DEF**************************
 #  @brief  功能函数 1:
 #  格式化输入数据为符合DEFROM
@@ -123,7 +278,7 @@ def ProcessKEY_TO_DB(KEY_inputpath:str,DB_savepath:str):
 #  @return 
 #  @author Hu Mingrui
 #  @date   2025/05/14
-def OpInput(process, content):
+def OpInput(process:Any, content:str):
     time.sleep(0.1)
     content += "\n"
     process.stdin.write(content)
@@ -185,7 +340,7 @@ def Solve(DB_path:str, path_dir:str):
 #  @date   2025/05/15
 #  @about  注意！本模块需要规划最大能启动多少个
 #  进程进行计算 以免过多导致计算非常缓慢
-def ProcessRun_CALDB(DB_inputpath:List,Process_Num = 12):
+def ProcessRUN_CALDB(DB_inputpath:List,Process_Num = 12):
 
     task_queue = Queue()
     for i, dbpath in enumerate(DB_inputpath):
@@ -256,100 +411,103 @@ def ProcessDB_TO_KEY(DB_file:str,KEY_file:str,step = ""):
 
     os.remove(cmd_file)
 
-###################################自定义提取函数部分###############################################
-def _extractMaxStress(AllLines:List[List[str]],obj:str,inprogress:bool)->str:
-    finall_res = -1.0
-    # 找首行
-    def fun(lines:List[str])->float:
-        res,pos,num = 0,-1,0
-        for row,line in enumerate(lines):
-            arry = line.split()
-            if len(arry) == 4 and arry[0] == 'STRESS' and arry[1] == obj:
-                pos = row
-                num = int(arry[2])
-                break
-        # 从首行开始遍历
-        if pos != -1 and num > 0:
-            cnt = 1
-            index = pos + 1
-            while cnt <= num:
-                arry1 = lines[index].split()
-                arry2 = lines[index + 1].split()
-                stress = [float(arry1[1]),float(arry1[2]),float(arry1[3]),
-                            float(arry1[4]),float(arry1[5]),float(arry2[0])]
-                res = max(res,calculate_von_mises(stress))
-                cnt += 1
-                index += 2
-        return res
-    if inprogress:
-        for lines in AllLines:
-            finall_res = max(fun(lines),finall_res) # type: ignore
-    else:
-        finall_res = fun(AllLines[-1])
-    return "{:.2f}".format(finall_res)
-
-def _extractMaxLoad(AllLines:List[List[str]],obj:str,inprogress:bool)->str:
-    # 模具载荷提取
-    finall_res = 0.0
-    def fun(lines:List[str])->float:
-        res = 0.0
-        for _,line in enumerate(lines):
-            arry = line.split()
-            # 根据deform的key文件关键字分布情况
-            if len(arry) == 5 and arry[0] == 'FORCE' and arry[1] == '2':
-                res = float(arry[4])
-        return res
-    if inprogress:
-        for lines in AllLines:
-            finall_res = max(fun(lines),finall_res)
-    else:
-        finall_res = fun(AllLines[-1])
-    return "{:.2f}".format(finall_res)
-
-def _extractGrainStdv(AllLines:List[List[str]],obj:str,inprogress:bool)->str:
-    finall_res = 0.0
-    # 提取锻件晶粒尺寸信息
-    def fun(lines:List[str])->float:
-        pos,num = -1,0
-        grainsize = []
-        res = 0.0
-        for index,line in enumerate(lines):
-            arry = line.split()
-            if len (arry) == 5 and arry[0] == 'USRELM' and arry[1] == '1':
-                pos,num = index + 1,int(arry[2])
-                break
-        if pos != -1 and num > 0:
-            for i in range(num):
-                arr = lines[pos + i].split()
-                grainsize.append(float(arr[3]))
-            res = statistics.stdev(grainsize)
-        return res
-    if inprogress:
-        for lines in AllLines:
-            # 有必要讨论一下晶粒的相关情况
-            # TODO(MingrHu)
-            finall_res = max(fun(lines),finall_res)
-    else:
-        finall_res = fun(AllLines[-1])
-    return "{:.2f}".format(finall_res)
-
-#  @brief 计算等效应力
-#  von-misses准则
+#  @brief  功能函数8：
+#  批量处理KEY文件 转换为DB文件
 #  @return 
 #  @author Hu Mingrui
-#  @date   2025/06/03
-def calculate_von_mises(stress):
-    """计算等效应力 (Von Mises Stress)"""
-    sxx, syy, szz, sxy, syz, sxz = stress
+#  @date   2026/04/09
+def ProcessKEY_TO_DB_BATCH(tmp_key_list:list[str],save_file_list:list[str])->None:
+    for i,tmp_key in enumerate(tmp_key_list):
+        ProcessKEY_TO_DB(tmp_key,save_file_list[i])
 
-    return np.sqrt(0.5 * ((sxx - syy)**2 + 
-                         (syy - szz)**2 + 
-                         (szz - sxx)**2 + 
-                         6 * (sxy**2 + syz**2 + sxz**2)))
+#  @brief  功能函数9：
+#  批量生成KEY文件
+#  @return 
+#  @author Hu Mingrui
+#  @date   2026/04/09
+def ProcessGEN_KEY_FILE(std_path:str,par:list[list[str]],tmp_key_path:str)->list[str]:
+
+    tmp_key_file:list[str] = []
+    with open(std_path,'r',encoding = 'utf-8') as key_file:
+        std_key_file = key_file.readlines()
+        for i in range(len(par)):
+            # 先跳过前两行
+            if i == 0 or i == 1:
+                continue
+            new_key_file = []
+            # 产生新key file
+            for line in std_key_file:
+                line_list = line.split()
+                if len(line_list) >= 2:
+                    for pos,data in enumerate(par[i]):
+                        # 对于每一行满足条件的key_file 遍历匹配工艺参数和部件对象
+                        # PS:注意 标准KEY文件的目标行格式必须满足每行第一个标识参数名称
+                        # 第二个标识工艺参数所属的对象 最后一个标识工艺参数值
+                        gy_par,tar_obj = par[0][pos],par[1][pos]
+                        # 寻找匹配的工艺参数和对象 必须完全匹配 匹配后才能进行工艺参数修改
+                        if DeformConfig.get_key_var(gy_par) == line_list[0] and line_list[1] == DeformConfig.get_object_id(tar_obj):
+                            # 生成这行的参数值
+                            format_data = FormatFloat(data)
+                            # 替换
+                            line = line.replace(line_list[-1],format_data)
+                            break
+                new_key_file.append(line)
+
+            save_file = GetNewFilePath(std_path,tmp_key_path,str(i - 2),"KEY")
+            with open(save_file, 'w',encoding = 'utf-8') as f:
+                f.writelines(new_key_file)
+            tmp_key_file.append(save_file)
+            logger.info(f"第{i - 1}个新生成的KEY文件已经保存!")
+        return tmp_key_file
+
+def ProcessEXTRACT_DB_FILE(res_db_file:list[str],
+                           res_key_path:str,
+                           max_step:int,
+                           par:list[list[str]],
+                           var:list[list[str]],
+                           in_progress:list[bool],
+                           res_txt_path:str)->None:
+    res_lines:list[Any] = []
+    for i,dbfile in enumerate(res_db_file):
+        logger.info(f"当前提取的文件为：{dbfile}")
+        # 创建目录
+        res_save_path = f"{res_key_path}\\{i}"
+        os.makedirs(res_save_path,exist_ok = True)
+        # 主要存放当前db生成的所有key文件
+        list_key = []
+        for step in range(0,max_step):
+            key_file = GetNewFilePath(dbfile,res_save_path,str(step),"KEY")
+            list_key.append(key_file)
+            while not os.path.exists(key_file):
+                ProcessDB_TO_KEY(dbfile,key_file,str(step))
+        res_line = par[i + 2]
+        key_lines = []
+        # 遍历获取每个key的所有内容 这里可以优化一下内存使用
+        # TODO(MingrHu)
+        for key_file in list_key:
+            with open(key_file,'r',encoding = 'utf-8') as f:
+                key_lines.append(f.readlines())
+
+        for idx in range(len(var[0])):
+            # var = [["grain","load"],["workpiece","topdie"]]
+            tar_info = var[0][idx]
+            obj_info = var[1][idx]
+            in_prog = in_progress[idx]
+            # 拿到当前目标值标签和对象等信息后开始抽取值
+            res_line.append(DeformConfig.get_target_function(tar_info)(key_lines,obj_info,in_prog))
+        # 收集最终结果
+        res_lines.append(res_line)
+            # 获取当前时间
+    now = datetime.now()
+    dt_string = now.strftime("%Y-%m-%d %H:%M:%S")
+    with open(f"{res_txt_path}\\{dt_string}_result.txt", "w", encoding="utf-8") as f:
+        for row_idx, row in enumerate(res_lines, start = 1):  
+            row_str = "\t".join(map(str, row))  
+            f.write(f"{row_idx}\t{row_str}\n")  
 
 
-
-# ************************SAMPLE DEF**************************
+##########################################################
+# ************************SAMPLE DEF**********************
 #  @brief  样本函数1:
 #  拉丁超立方采样方法
 #  @return 
@@ -412,7 +570,7 @@ def SaveResult(df: pd.DataFrame, extype: str, save_path: str) -> None:
     
     # 保存文件
     df.to_csv(f'{save_path}/IN{extype}.txt', sep='\t', index=False, header=False)
-    print(f"采样数据已保存至 {save_path}IN{extype}.txt 总计{len(df)} 个样本")
+    print(f"采样数据已保存至 {save_path}/IN{extype}.txt 总计{len(df)} 个样本")
     print("输入参数统计信息：")
     print(df.describe())
 

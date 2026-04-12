@@ -1,4 +1,5 @@
-from .auto_script_method import(Doe_sample_generate,Doe_execute)
+import os
+from auto_script_method import(Doe_sample_generate,Doe_execute)
 from typing import List, Dict
 
 # 全局任务管理字典 方便后续查询任务状态和结果
@@ -64,6 +65,10 @@ def InitExecutionTask(
                 "status": "failed",
                 "message": "未指定样本、标准键、临时键文件、结果路径或结果文件名",
             }
+        for f_path in paths_config.values():
+            target_dir = f_path if not os.path.splitext(f_path)[1] else os.path.dirname(f_path)
+            os.makedirs(target_dir, exist_ok=True)
+
         exc = Doe_execute(paths_config["smp_file"],
                           paths_config["std_key_file"],
                           paths_config["temp_key_path"],
@@ -109,5 +114,38 @@ def RunExecutionStep(task_id: str) -> Dict[str, str]:
     }
     # 返回执行结果：{"status": "success", "message": "KEY文件生成完毕"}
     
-
+def QueryExecutionStatus(task_id: str) -> Dict[str, str]:
+    """
+    查询执行任务状态
+    """
+    if task_id not in exec_task_manager:
+        return {
+            "task_id": task_id,
+            "status": "failed",
+            "message": "执行任务不存在",
+        }
+    exc = exec_task_manager[task_id]
+    return {
+        "task_id": task_id,
+        "status": f"{exc.pre_status}",
+        "message": f"执行任务状态：{exc.pre_status}",
+    }
+    
+def RunExtractData(task_id: str) -> Dict[str, str]:
+    """
+    提取数据
+    """
+    if task_id not in exec_task_manager:
+        return {
+            "task_id": task_id,
+            "status": "failed",
+            "message": "执行任务不存在",
+        }
+    exc = exec_task_manager[task_id]
+    exc.extract()
+    return {
+        "task_id": task_id,
+        "status": "success",
+        "message": "开始提取数据",
+    }
     

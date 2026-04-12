@@ -1,12 +1,13 @@
-import os,datetime
-from datetime import datetime
+import os,time,threading
 from typing import List
-from .utils import(GetNewFilePath,FormatFloat,ProcessKEY_TO_DB,ProcessDB_TO_KEY,
-ProcessRun_CALDB,LHSSampleGenerate,FullSampleGenerate)
-from .deform_conf import DeformConfig
-# TODO: 任务状态管理
-# 每个方法都有一个当前任务步数和状态列表
-# 任务步数从0开始 0代表init 状态只有三个值 -1 0 1 分别代表失败 进行中 完成
+from utils import(GetNewFilePath,ProcessKEY_TO_DB_BATCH,ProcessRUN_CALDB,LHSSampleGenerate,
+                   FullSampleGenerate,ProcessGEN_KEY_FILE,ProcessEXTRACT_DB_FILE)
+from Common.tools import logger
+
+# 任务状态定义
+Task_Status_done = 0
+Task_Status_running = 1
+Task_Status_failed = -1
 
 #  @brief  采样类
 #  @return None
@@ -23,9 +24,6 @@ class Doe_sample_generate:
                  save_path:str,
                  n_samples:int = 0,
                  level_nums:List[int] = []) -> None:
-        self.cur_step = 0
-        self.status:List[int] = []
-        self.status.append(0)
         # # 采样方法
         # SAMPLE = {
         #     'lhs':LHSSampleGenerate,
@@ -35,10 +33,11 @@ class Doe_sample_generate:
             LHSSampleGenerate(n_samples,param_ranges,save_path)
         elif sample_method == 'full':
             if  level_nums == []:
-                raise ValueError("level_nums must be provided for full sampling")
+                logger.error("level_nums must be provided for full sampling")
+                return
             FullSampleGenerate(param_ranges,save_path,level_nums)
         else:
-            raise ValueError(f"Unsupported sample method: {sample_method}")
+            logger.error(f"Unsupported sample method: {sample_method}")
 
 
 #  @brief  求解类
@@ -54,10 +53,23 @@ class Doe_sample_generate:
 #  @param  parmeter         工艺参数输入组合 固定 2 × n 第一行为n个工艺参数 第二行为n个工艺参数对应的部件序号
 #  @param  target_val       目标值 固定 2 × m 第一行为m个目标变量 第二行为m个变量实际对应的部件序号 比如workpiece对应1 topdie对应2 butdie对应3
 #  @param  is_inprogress    对应每个目标值是否通过全过程计算提取（例如有的变量需要整个工艺流程来提取 有的只需要最后一步）
-#  @param  max_step         输入设定的key文件求解过程的最大步数（用于确定和生成中间key文件）
+#  @param  max_step         输入设定的key文件求解过程的最大步数（一定要准确 用于确定和生成中间key文件）
 #  @about  根据指定的方法完成数据驱动操作
+#  @brief 输入的parmeter示例
+#  temp      temp    temp    speed
+#  workpiece topdie  butdie  topdie
+#  @brief 输入的target_var示例
+#  grain     load    stress
+#  workpiece topdie  butdie
+#  @brief 输入的样本文件内容示例:
+#  915.0    560.0    560.0    26.0
+#  877.0    370.0    370.0    45.0
+#  930.0    686.0    686.0    10.0
+#  963.0    593.0    593.0    24.0
+#  875.0    487.0    487.0    34.0
+#  923.0    668.0    668.0    19.0
+#  899.0    306.0    306.0    34.0
 class Doe_execute:    
-
     def __init__(self, 
                  sample_file: str,  # 样本文件
                  std_key_file:str,  # 模板key文件
@@ -68,9 +80,10 @@ class Doe_execute:
                  parmeter:List[List[str]],     # 工艺参数固定项 2 × n 
                  target_var:List[List[str]],   # 目标变量固定项 2 × m
                  is_inprogress:List[bool],     # 目标值是否进行全过程提取 1 × m
-                 max_step:int
+                 max_step:int,
+                 is_test:bool = True
                 ):
-        self.sp_path = sample_file
+        self.smp_path = sample_file
         self.std_path = std_key_file
         self.tmp_key_path = temp_key_path
         self.res_db_path = res_db_path
@@ -81,101 +94,111 @@ class Doe_execute:
         self.in_progress = is_inprogress
         self.max_step = max_step
         # 一些中间路径
-        self.tmp_key_file = []
-        self.res_db_file = []
+        self.tmp_key_file:list[str] = []
+        self.res_db_file:list[str] = []
 
-# 输入示例PS:
-# temp  temp    temp    speed
-#   1     2      3       2
-# 915.0	560.0   560.0	26.0
-# 877.0	370.0   370.0	45.0
-# 930.0	686.0   686.0	10.0
-# 963.0	593.0   593.0	24.0
-# 875.0	487.0   487.0	34.0
-# 923.0	668.0   668.0	19.0
-# 899.0	306.0   306.0	34.0
+        # TODO: 任务状态管理
+        # 每个方法都有一个前一个任务状态值
+        # 状态只有三个值 -1 0 1 分别代表失败 完成 进行中
+        self.pre_status:int = 0
+        self.is_test = is_test
+
     def generate_key_file(self) -> None:
-        with open(self.sp_path,'r',encoding = 'utf-8') as file:
+        if self.pre_status != Task_Status_done:
+            logger.error("can not generate key file because pre_status not done")
+            return
+        
+        # 将样本文件生成的数值填入par
+        with open(self.smp_path,'r',encoding = 'utf-8') as file:
             org_lines = file.readlines()
             for line in org_lines:
                 self.par.append(line.split())
+        # 异步生成key文件
+        def async_task():
+            try:
+                logger.info("Async generate key file start")
+                self.pre_status = Task_Status_running  # 状态运行中
+                if self.is_test:
+                    time.sleep(10)
+                    self.tmp_key_file = ["MingrHu"]
+                    self.pre_status = Task_Status_done
+                    logger.info("✅ generate key file done")
+                    return
+                
+                self.tmp_key_file = ProcessGEN_KEY_FILE(self.std_path,self.par,self.tmp_key_path)
+                self.pre_status = Task_Status_done
+                logger.info("✅ generate key file done")
             
-        with open(self.std_path,'r',encoding = 'utf-8') as key_file:
-            std_key_file = key_file.readlines()
-            for i in range(len(self.par)):
-                # 先跳过前两行
-                if i == 0 or i == 1:
-                    continue
-                new_key_file = []
-                # 产生新key file
-                for line in std_key_file:
-                    line_list = line.split()
-                    if len(line_list) >= 2:
-                        for pos,data in enumerate(self.par[i]):
-                            # 对于每一行满足条件的key_file 遍历匹配工艺参数和部件对象
-                            # PS:注意 标准KEY文件的目标行格式必须满足每行第一个标识参数名称
-                            # 第二个标识工艺参数所属的对象 最后一个标识工艺参数值
-                            gy_par,tar_obj = self.par[0][pos],self.par[1][pos]
-                            # 寻找匹配的工艺参数和对象 必须完全匹配 匹配后才能进行工艺参数修改
-                            if DeformConfig.get_key_var(gy_par) == line_list[0] and line_list[1] == DeformConfig.get_object_id(tar_obj):
-                                # 生成这行的参数值
-                                format_data = FormatFloat(data)
-                                # 替换
-                                line = line.replace(line_list[-1],format_data)
-                                break
-                    new_key_file.append(line)
-
-                save_file = GetNewFilePath(self.std_path,self.tmp_key_path,str(i - 2),"KEY")
-                with open(save_file, 'w',encoding = 'utf-8') as f:
-                    f.writelines(new_key_file)
-                self.tmp_key_file.append(save_file)
-                print(f"第{i - 1}个新生成的KEY文件已经保存!")
+            except Exception as e:
+                self.pre_status = Task_Status_failed
+                logger.error(f"❌ generate key file failed: {str(e)}")
+        
+        # 启动任务
+        thread = threading.Thread(target=async_task, daemon=True)
+        thread.start() 
     
     def process_run(self) -> None:
+        if self.pre_status != Task_Status_done:
+            logger.error("can not process run because pre_status not done")
+            return
+        
+        tmp_key_list:list[str] = []
+        save_file_list:list[str] = []
         for i,tmp_key in enumerate(self.tmp_key_file):
             os.makedirs(f"{self.res_db_path}\\{i}",exist_ok = True)
             save_file = GetNewFilePath(tmp_key,f"{self.res_db_path}\\{i}","","DB")
             self.res_db_file.append(save_file)
             if os.path.exists(save_file):
                 continue
-            ProcessKEY_TO_DB(tmp_key,save_file)
-        ProcessRun_CALDB(self.res_db_file)
+            tmp_key_list.append(tmp_key)
+            save_file_list.append(save_file)
+
+        def async_task():
+            try:
+                self.pre_status = Task_Status_running
+                logger.info("Async process run start")
+                # 批量转KEY为DB + 计算DB文件
+                if self.is_test:
+                    time.sleep(10)
+                    self.pre_status = Task_Status_done
+                    logger.info("✅ process run done")
+                    return
+
+                ProcessKEY_TO_DB_BATCH(tmp_key_list,save_file_list)
+                ProcessRUN_CALDB(self.res_db_file,24)
+                self.pre_status = Task_Status_done
+                logger.info("✅ process run done")
+            except Exception as e:
+                self.pre_status = Task_Status_failed
+                logger.error(f"❌ process run failed: {str(e)}")
+        
+        # 启动任务
+        thread = threading.Thread(target=async_task, daemon=True)
+        thread.start() 
+
 
     def extract(self) -> None:
-        res_lines = []
-        for i,dbfile in enumerate(self.res_db_file):
-            print(f"当前提取的文件为：{dbfile}")
-            # 创建目录
-            res_save_path = f"{self.res_key_path}\\{i}"
-            os.makedirs(res_save_path,exist_ok = True)
-            # 主要存放当前db生成的所有key文件
-            list_key = []
-            for step in range(0,self.max_step):
-                key_file = GetNewFilePath(dbfile,res_save_path,str(step),"KEY")
-                list_key.append(key_file)
-                while not os.path.exists(key_file):
-                    ProcessDB_TO_KEY(dbfile,key_file,str(step))
-            res_line = self.par[i + 2]
-            key_lines = []
-            # 遍历获取每个key的所有内容 这里可以优化一下内存使用
-            # TODO(MingrHu)
-            for key_file in list_key:
-                with open(key_file,'r',encoding = 'utf-8') as f:
-                    key_lines.append(f.readlines())
+        if self.pre_status != Task_Status_done:
+            logger.error("can not extract because pre_status not done")
+            return
+        def async_task():
+            try:
+                logger.info("Async extract start")
+                self.pre_status = Task_Status_running
+                if self.is_test:
+                    time.sleep(10)
+                    self.pre_status = Task_Status_done
+                    logger.info("✅ extract done")
+                    return
 
-            for idx in range(len(self.var[0])):
-                # var = [["grain","load"],["workpiece","topdie"]]
-                tar_info = self.var[0][idx]
-                obj_info = self.var[1][idx]
-                in_progress = self.in_progress[idx]
-                # 拿到当前目标值标签和对象等信息后开始抽取值
-                res_line.append(DeformConfig.get_target_function(tar_info)(key_lines,obj_info,in_progress))
-            # 收集最终结果
-            res_lines.append(res_line)
-        # 获取当前时间
-        now = datetime.now()
-        dt_string = now.strftime("%Y-%m-%d %H:%M:%S")
-        with open(f"{self.res_txt_path}\\{dt_string}_result.txt", "w", encoding="utf-8") as f:
-            for row_idx, row in enumerate(res_lines, start = 1):  
-                row_str = "\t".join(map(str, row))  
-                f.write(f"{row_idx}\t{row_str}\n")  
+                ProcessEXTRACT_DB_FILE(self.res_db_file,self.res_key_path,self.max_step,
+                                       self.par,self.var,self.in_progress,self.res_txt_path)
+                self.pre_status = Task_Status_done
+                logger.info("✅ extract done")
+            except Exception as e:
+                self.pre_status = Task_Status_failed
+                logger.error(f"❌ extract failed: {str(e)}")
+        
+        # 启动任务
+        thread = threading.Thread(target=async_task, daemon=True)
+        thread.start() 
