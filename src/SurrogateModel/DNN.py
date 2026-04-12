@@ -8,8 +8,6 @@ from sklearn.metrics import r2_score
 def dnn_run(file:str,vars_out:list[str],n_var:int,model_par:list[str] = []):
     # 1. 加载数据
     X, Y = load_and_preprocess_data(file,vars_out,n_var)
-    # 1. 加载数据
-    X, Y = load_and_preprocess_data(file,vars_out,n_var)
 
     # 2. 划分数据集并标准化
     (X_train_scaled, X_val_scaled, X_test_scaled,
