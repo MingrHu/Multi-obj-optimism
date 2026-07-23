@@ -1,65 +1,113 @@
-"""Doe_execute / Doe_sample_generate 状态机测试（is_test 分支，不启子进程）。"""
+"""ForgingTask / TaskStatus 状态机测试 (:mod:`mobo.automation.pipeline`)。
+
+用 ``dry_run=True`` 只推进状态、不真正调用 DEFORM，验证三阶段的状态转移与前置约束。
+"""
 
 import threading
 
 import pytest
 
 from mobo.automation import pipeline
-from mobo.automation.pipeline import Doe_execute, Doe_sample_generate
-
-
-@pytest.fixture(autouse=True)
-def _instant_sleep(monkeypatch):
-    """把 is_test 分支里的 time.sleep(10) 变为立即返回，加速状态机测试。"""
-    monkeypatch.setattr(pipeline.time, "sleep", lambda *_: None)
+from mobo.automation.pipeline import ForgingTask, TaskStatus, generate_sample_file
 
 
 def _join_worker_threads(before):
-    """等待 generate/process/extract 启动的后台线程结束。"""
+    """等待各阶段启动的后台线程结束。"""
     for t in threading.enumerate():
         if t not in before and t is not threading.current_thread():
             t.join(timeout=5.0)
 
 
-def _make_exec(tmp_path):
+def _make_task(tmp_path):
     smp = tmp_path / "smp.txt"
-    smp.write_text("900 500 500 30\n910 480 480 28\n", encoding="utf-8")
-    return Doe_execute(
+    smp.write_text("900 30\n910 28\n", encoding="utf-8")
+    return ForgingTask(
         sample_file=str(smp),
-        std_key_file=str(tmp_path / "model.key"),
-        temp_key_path=str(tmp_path / "temp_key"),
-        res_db_path=str(tmp_path / "res_db"),
-        res_key_path=str(tmp_path / "res_key"),
-        res_txt_path=str(tmp_path / "res_txt"),
-        parmeter=[["temp"], ["workpiece"]],
-        target_var=[["grain"], ["workpiece"]],
-        is_inprogress=[False],
+        template_key=str(tmp_path / "model.key"),
+        temp_key_dir=str(tmp_path / "temp_key"),
+        result_db_dir=str(tmp_path / "res_db"),
+        result_key_dir=str(tmp_path / "res_key"),
+        result_txt_dir=str(tmp_path / "res_txt"),
+        param_table=[["temp", "speed"], ["workpiece", "topdie"]],
+        target_table=[["grain"], ["workpiece"]],
+        in_progress=[False],
         max_step=10,
-        is_test=True,
+        dry_run=True,
     )
 
 
-def test_generate_key_file_state_machine(tmp_path):
-    exc = _make_exec(tmp_path)
-    assert exc.pre_status == pipeline.Task_Status_done  # 初始为 done
+def test_status_enum_values():
+    assert int(TaskStatus.DONE) == 0
+    assert int(TaskStatus.RUNNING) == 1
+    assert int(TaskStatus.FAILED) == -1
+
+
+def test_initial_status_is_done(tmp_path):
+    task = _make_task(tmp_path)
+    assert task.status == TaskStatus.DONE
+
+
+def test_load_samples_into_table(tmp_path):
+    task = _make_task(tmp_path)
+    task.load_samples_into_table()
+    # 表头 2 行 + 2 个样本
+    assert len(task.param_table) == 4
+    assert task.param_table[2] == ["900", "30"]
+
+
+def test_generate_keys_dry_run(tmp_path):
+    task = _make_task(tmp_path)
     before = set(threading.enumerate())
-    exc.generate_key_file()
+    task.generate_keys()
     _join_worker_threads(before)
-    assert exc.tmp_key_file == ["MingrHu"]
-    assert exc.pre_status == pipeline.Task_Status_done
+    assert task.status == TaskStatus.DONE
+    assert task.key_files == ["<dry-run>"]
 
 
-def test_process_run_requires_done(tmp_path, monkeypatch):
-    exc = _make_exec(tmp_path)
-    exc.pre_status = pipeline.Task_Status_running  # 非 done
+def test_full_pipeline_dry_run(tmp_path):
+    task = _make_task(tmp_path)
+    before = set(threading.enumerate())
+    task.generate_keys()
+    _join_worker_threads(before)
+    assert task.status == TaskStatus.DONE
+
+    task.run_solver()
+    _join_worker_threads(before)
+    assert task.status == TaskStatus.DONE
+
+    task.extract()
+    _join_worker_threads(before)
+    assert task.status == TaskStatus.DONE
+
+
+def test_stage_requires_previous_done(tmp_path, monkeypatch):
+    task = _make_task(tmp_path)
+    task.status = TaskStatus.RUNNING  # 模拟上一阶段未完成
     errors = []
     monkeypatch.setattr(pipeline.logger, "error", lambda m: errors.append(m))
-    exc.process_run()
-    assert any("pre_status not done" in e for e in errors)
+    thread = task.run_solver()
+    assert thread is None
+    assert any("上一阶段未完成" in e for e in errors)
 
 
-def test_sample_generate_unsupported_method(monkeypatch):
-    errors = []
-    monkeypatch.setattr(pipeline.logger, "error", lambda m: errors.append(m))
-    Doe_sample_generate("bogus", {"t": (0.0, 1.0)}, "/tmp/whatever", 5)
-    assert any("Unsupported sample method" in e for e in errors)
+def test_run_async_marks_failed(tmp_path):
+    task = _make_task(tmp_path)
+    before = set(threading.enumerate())
+
+    def boom():
+        raise RuntimeError("boom")
+
+    task._run_async("坏阶段", boom)
+    _join_worker_threads(before)
+    assert task.status == TaskStatus.FAILED
+
+
+def test_generate_sample_file_delegates(tmp_path, monkeypatch):
+    called = {}
+    monkeypatch.setattr(
+        pipeline, "generate_samples",
+        lambda method, pr, sd, ns, ln: called.update(method=method, sd=sd) or "out.txt",
+    )
+    out = generate_sample_file("lhs", {"t": (0.0, 1.0)}, str(tmp_path), 5)
+    assert out == "out.txt"
+    assert called["method"] == "lhs"

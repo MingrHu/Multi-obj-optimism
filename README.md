@@ -100,6 +100,91 @@ spec = registry.resolve("ring", "roundness_inner")   # -> ExtractorSpec(kind="ke
 value = spec.fn("data/KEY_FILE/RINGROLL.KEY", samples=3000)
 ```
 
+## 项目结构与文件说明
+
+### 顶层目录
+
+```
+Multi-obj-optimism/
+├── src/mobo/          # 源码（src-layout 单包，pip install -e . 后以 mobo 导入）
+├── tests/             # 单元测试（unit/）与集成测试（integration/）
+├── data/              # 数据集、训练好的模型、DEFORM KEY 文件（见下方布局）
+├── logs/              # 运行日志（DEFORM 操作日志等，不纳入版本管理）
+├── pyproject.toml     # 打包与依赖配置、pytest/coverage 配置、CLI 入口点
+├── requirements.txt   # 依赖清单（供不走 pyproject 的场景参考）
+├── setup_env.sh       # 一键环境安装脚本（建 venv + CPU 版 torch + 本包）
+├── README.md          # 本文件：总览、安装、上手、结构说明
+├── ARCHITECTURE.md    # 分层架构、模块职责表与数据流
+└── AGENTS.md          # AI 代理协作的硬约束与开发约定
+```
+
+### 源码 `src/mobo/`
+
+```
+src/mobo/
+├── __init__.py            # 包版本与顶层导出
+│
+├── common/                # 基础设施（被各子包复用）
+│   ├── paths.py           #   集中式路径解析：PROJECT_DIR/DATA_DIR/MODELS_DIR/... 与环境变量覆盖
+│   └── logging.py         #   全局 logger（单例 + 统一格式，仅 CLI 入口劫持 stdout）
+│
+├── surrogate/             # 代理模型：训练、评估、保存/加载
+│   ├── common.py          #   公共库：数据加载/预处理、划分、误差指标、模型保存
+│   ├── interface.py       #   统一训练入口 Doe_surrogateModel（按编号选模型）
+│   ├── dnn.py             #   DNN(keras) 训练：dnn_run
+│   ├── polynomial.py      #   多项式回归：prg_fun
+│   ├── svr.py             #   支持向量回归
+│   ├── random_forest.py   #   随机森林回归
+│   ├── kriging.py         #   Kriging / 高斯过程回归(GPR)
+│   ├── evaluate.py        #   K 折交叉验证评估与报告
+│   └── service.py         #   预留的对外服务接口（占位）
+│
+├── optimization/          # 多目标优化
+│   ├── ga/                #   NSGA-II 遗传算法（pymoo）
+│   │   ├── operators.py   #     自定义交叉/变异算子
+│   │   ├── problem.py     #     多目标问题定义（加载代理模型做评估）
+│   │   └── run.py         #     NSGA2_run：装配并运行、输出 Pareto 前沿
+│   └── rl/                #   强化学习优化（stable-baselines3 PPO）
+│       ├── env.py         #     ForgingEnv 优化环境（gymnasium）
+│       └── run.py         #     train_and_optimize：训练 PPO 并导出解集
+│
+├── extraction/            # 原子能力层：按「工件类型 + 目标」分派的 KEY 文件提取
+│   ├── base.py            #   ExtractorSpec/Kind：两种调用约定（key_lines / key_file）
+│   ├── registry.py        #   注册表：register_fn / resolve（缺工件专属时回退 generic）
+│   ├── deform_targets.py  #   DEFORM 目标提取原子函数：应力/载荷/晶粒（_extract*）
+│   └── ring_roundness.py  #   碾环内外圈圆度纯函数 + extract_ring_roundness 适配器
+│
+├── automation/            # DEFORM 自动化流水线（真实执行依赖 Windows DEFORM）
+│   ├── config.py          #   DeformConfig：KEY 关键字/对象 ID/目标函数映射
+│   ├── sampling.py        #   采样：LHS / 全因子（纯逻辑，可独立测试）
+│   ├── keyfile.py         #   KEY 文件文本处理：数值格式化、路径派生、generate_key_files
+│   ├── solver.py          #   DEFORM 子进程驱动（KEY↔DB）与 DeformSolver 求解调度
+│   ├── extract.py         #   结果 DB→KEY 逐步导出与数据集提取编排
+│   ├── pipeline.py        #   TaskStatus 枚举 + ForgingTask 三阶段状态机
+│   └── service.py         #   任务级服务函数（创建/初始化/推进/查询状态）
+│
+└── cli/                   # 命令行入口（对应 pyproject 的 console_scripts）
+    ├── surrogate.py       #   mobo-surrogate：代理模型交叉验证评估
+    ├── ga.py              #   mobo-ga：NSGA-II 优化
+    ├── rl.py              #   mobo-rl：PPO 强化学习优化
+    ├── ring_roundness.py  #   mobo-ring-roundness：碾环圆度提取
+    └── automation_demo.py #   DEFORM 自动化流水线调用演示（非 pytest）
+```
+
+### 测试 `tests/`
+
+```
+tests/
+├── conftest.py            # 共享 fixture 与 marker 配置
+├── unit/                  # 单元测试（快速、无外部依赖）
+│   ├── test_paths.py / test_logging.py    # common 基础设施
+│   ├── surrogate/         #   代理模型公共库与评估
+│   ├── optimization/      #   GA 算子/问题、RL 环境
+│   ├── extraction/        #   原子能力层与提取函数
+│   └── automation/        #   采样/KEY 文件/求解/提取/流水线/服务
+└── integration/           # 集成测试（依赖 data/ 真实产物，缺失自动跳过）
+```
+
 ## 数据目录布局
 
 ```

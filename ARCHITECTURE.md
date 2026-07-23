@@ -53,16 +53,19 @@
 | `extraction` | `deform_targets.py` | DEFORM 目标提取原子函数（`_extract*`）|
 | `extraction` | `ring_roundness.py` | 碾环截面圆度纯函数 + `extract_ring_roundness` 适配器 |
 | `automation` | `config.py` | `DeformConfig` 关键字/对象/目标函数映射 |
-| `automation` | `deform_utils.py` | KEY/DB 处理、求解调度、采样 |
-| `automation` | `pipeline.py` | `Doe_sample_generate` / `Doe_execute` |
-| `automation` | `service.py` | 任务级服务函数 |
+| `automation` | `sampling.py` | LHS / 全因子采样（纯逻辑）|
+| `automation` | `keyfile.py` | KEY 文件文本处理：格式化、路径派生、`generate_key_files`（纯逻辑）|
+| `automation` | `solver.py` | DEFORM 子进程驱动（KEY↔DB）与 `DeformSolver` 求解调度 |
+| `automation` | `extract.py` | 结果 DB→KEY 逐步导出与数据集提取编排 |
+| `automation` | `pipeline.py` | `TaskStatus`（枚举）/ `ForgingTask` 三阶段状态机 / `generate_sample_file` |
+| `automation` | `service.py` | 任务级服务函数（snake_case）|
 
 ## 数据流
 
 ```
-参数范围 ──(采样 automation.LHS/Full)──► 样本 smp.txt
+参数范围 ──(采样 automation.sampling: LHS/Full)──► 样本 smp.txt
                                             │
-                              (automation.Doe_execute: 生成 KEY → 转 DB → 求解)
+                              (automation.ForgingTask: 生成 KEY → 转 DB → 求解)
                                             ▼
                                      DEFORM 结果 DB/KEY
                                             │
@@ -123,7 +126,8 @@ pytest 的输出捕获。现调整为：
 `DEF_ARM_CTL.COM`，**仅能在装有 DEFORM 的 Windows 环境真实运行**。在 Linux/macOS 上：
 
 - 采样/格式化/路径等纯逻辑函数可正常使用与测试；
-- `Doe_execute` 提供 `is_test=True` 分支（走假数据），可用于状态机测试；
-- 真实子进程调用相关用例以 `@pytest.mark.deform` 标记并在非 Windows 跳过。
+- `ForgingTask` 提供 `dry_run=True` 分支（只推进状态、不真正调用 DEFORM），可用于状态机测试；
+- 真实子进程调用相关用例以 `@pytest.mark.deform` 标记并在非 Windows 跳过；
+  `solver` 相关用例通过打桩 `subprocess.Popen` 验证命令串与调度逻辑。
 
 路径拼接已从 Windows 反斜杠改为跨平台的 `os.path.join`，其余逻辑不变。

@@ -3,7 +3,7 @@
 从 ``AutoScript/utils.py`` 搬入的 :class:`DeformConfig`，统一管理 KEY 文件关键字、
 模拟对象定义与目标函数映射。其目标函数（``TAR_FUNC``）复用原子能力层中的提取
 函数（:mod:`mobo.extraction.deform_targets`），仅调整 import 来源，映射内容与
-行为保持不变，供 :func:`mobo.automation.deform_utils.ProcessEXTRACT_DB_FILE` 调用。
+行为保持不变，供 :func:`mobo.automation.extract.extract_dataset` 调用。
 """
 
 from typing import Any

@@ -64,8 +64,8 @@
   - `deform`：依赖 Windows DEFORM 的用例，非 Windows 跳过；
   - `integration`：依赖仓库 `data/` 真实产物，产物缺失时用 fixture `skip`。
 - **禁止污染仓库 `data/`**：写文件的用例一律 `monkeypatch` 路径常量或写入 `tmp_path`。
-- DEFORM 子进程用 `monkeypatch` 打桩 `subprocess.Popen`；`Doe_execute(is_test=True)`
-  走假数据分支测状态机。
+- DEFORM 子进程用 `monkeypatch` 打桩 `subprocess.Popen`；`ForgingTask(dry_run=True)`
+  只推进状态、不真正调用 DEFORM，用于状态机测试。
 - 覆盖率：`--cov=mobo`，`fail_under=60`；核心纯逻辑模块（`surrogate/common`、`ga/problem`、
   `extraction/registry`、ring 纯函数）应保持高覆盖。
 
