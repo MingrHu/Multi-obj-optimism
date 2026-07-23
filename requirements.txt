@@ -1,3 +1,13 @@
+# =============================================================================
+# 完整锁定依赖清单（用于精确复现环境）。
+#
+# 推荐安装方式见 setup_env.sh / pyproject.toml：
+#   - 核心直接依赖已在 pyproject.toml 的 [project].dependencies 声明；
+#   - torch 请从 CPU 源安装：pip install torch==2.10.0 --index-url \
+#       https://download.pytorch.org/whl/cpu （避免拉取 GPU 版与大量 CUDA 包）；
+#   - PySide6 / PySide6_Addons / PySide6_Essentials / shiboken6 为 GUI 可选依赖
+#     （pyproject 的 optional-dependencies.gui），核心功能无需安装。
+# =============================================================================
 about-time==4.2.1
 absl-py==2.3.1
 alive-progress==3.3.0

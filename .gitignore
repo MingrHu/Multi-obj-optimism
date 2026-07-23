@@ -29,4 +29,14 @@ __pycache__/
 *.swp
 .DS_Store
 data/AUTO
-src/AutoScript/AUTO_OPERATION_LOG.txt
+AUTO_OPERATION_LOG.txt
+
+# 日志与测试/覆盖率产物
+logs/
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# 代理/工具产物
+.trae/

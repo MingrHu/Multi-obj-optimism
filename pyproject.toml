@@ -1,0 +1,65 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mobo"
+version = "1.0.0"
+description = "多目标锻造工艺优化工具包：代理模型 + NSGA-II/RL 优化 + DEFORM 自动化 + 几何圆度提取"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "Hu Mingrui" }]
+license = { text = "Proprietary" }
+
+# 直接依赖（不含纯传递依赖与 GUI）。
+# 注意：torch 为 CPU 构建，请用 setup_env.sh 从 https://download.pytorch.org/whl/cpu 安装；
+# 此处仅声明版本下限，避免 pip 从 PyPI 拉取 GPU 版及大量 CUDA 包。
+dependencies = [
+    "numpy",
+    "pandas",
+    "scipy",
+    "scikit-learn",
+    "matplotlib",
+    "joblib",
+    "keras",
+    "tensorflow",
+    "pymoo",
+    "gymnasium",
+    "stable-baselines3",
+    "pyDOE",
+    "moocore",
+    "torch",
+]
+
+[project.optional-dependencies]
+gui = ["PySide6==6.11.0"]
+dev = ["pytest", "pytest-cov", "pytest-mock"]
+
+[project.scripts]
+mobo-ring-roundness = "mobo.cli.ring_roundness:main"
+mobo-ga = "mobo.cli.ga:main"
+mobo-rl = "mobo.cli.rl:main"
+mobo-surrogate = "mobo.cli.surrogate:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "slow: 耗时用例（如 keras/DNN 训练），默认跳过",
+    "deform: 依赖 Windows DEFORM 环境的用例",
+    "integration: 依赖仓库 data/ 真实产物的集成用例",
+]
+addopts = "-m 'not slow' --cov=mobo --cov-report=term-missing"
+
+[tool.coverage.run]
+source = ["mobo"]
+omit = [
+    "*/cli/*",
+    "*/automation/deform_utils.py",
+]
+
+[tool.coverage.report]
+fail_under = 60
+show_missing = true
