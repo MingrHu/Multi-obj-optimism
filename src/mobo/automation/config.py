@@ -30,6 +30,10 @@ class DeformConfig:
 
     # ===================== KEY文件关键字变量 =====================
     KEYFILE_VAR_DIC = {
+        'roll_tmp':"REFTMP",    # 碾环锻造的温度字典
+        'pressure_roll_speed_upper':"MOVCTL", # 碾环驱动辊的函数速率最大值
+        'pressure_roll_speed_low':"MOVCTL",# 碾环驱动辊的函数速率最小值
+
         'temp': "NDTMP",
         'speed': "MOVCTL",
     }
@@ -37,6 +41,11 @@ class DeformConfig:
     # ===================== 模拟对象定义 =====================
     OBJ_DEF = {
         'workpiece': "1",
+        'driving_roll':"2",
+        'pressure_roll':"3",
+        'axial_roll_1':"4",
+        'axial_roll_2':"5",
+
         'topdie': "2",
         'butdie': "3"
     }

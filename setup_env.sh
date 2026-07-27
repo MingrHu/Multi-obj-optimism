@@ -18,7 +18,7 @@
 set -euo pipefail
 
 # ---- 可配置项 ----
-VENV_DIR=".venv"
+VENV_DIR="venv"
 TORCH_VERSION="2.10.0"
 TORCH_CPU_INDEX="https://download.pytorch.org/whl/cpu"
 # PyPI 镜像（留空则使用默认源）。国内可设为 https://mirrors.aliyun.com/pypi/simple/

@@ -55,7 +55,7 @@ def _extractMaxLoad(AllLines:List[List[str]],obj:str,inprogress:bool)->str:
         for _,line in enumerate(lines):
             arry = line.split()
             # 根据deform的key文件关键字分布情况
-            if len(arry) == 5 and arry[0] == 'FORCE' and arry[1] == '2':
+            if len(arry) == 5 and arry[0] == 'FORCE' and arry[1] == obj:
                 res = float(arry[4])
         return res
     if inprogress:
@@ -74,7 +74,7 @@ def _extractGrainStdv(AllLines:List[List[str]],obj:str,inprogress:bool)->str:
         res = 0.0
         for index,line in enumerate(lines):
             arry = line.split()
-            if len (arry) == 5 and arry[0] == 'USRELM' and arry[1] == '1':
+            if len (arry) == 5 and arry[0] == 'USRELM' and arry[1] == obj:
                 pos,num = index + 1,int(arry[2])
                 break
         if pos != -1 and num > 0:
@@ -91,6 +91,28 @@ def _extractGrainStdv(AllLines:List[List[str]],obj:str,inprogress:bool)->str:
     else:
         finall_res = fun(AllLines[-1])
     return "{:.2f}".format(finall_res)
+
+
+def _extractRingRollMaxLoad(AllLines:List[List[str]],obj:str,inprogress:bool)->str:
+    # 碾环最大轧制力提取
+    finall_res = 0.0
+    def fun(lines:List[str])->float:
+        res = 0.0
+        for _,line in enumerate(lines):
+            arry = line.split()
+            # 根据deform的key文件关键字分布情况
+            if len(arry) == 5 and arry[0] == 'FORCE' and arry[1] == obj:
+                res = float(arry[4])
+        return res
+    if inprogress:
+        for lines in AllLines:
+            finall_res = max(fun(lines),finall_res)
+    else:
+        finall_res = fun(AllLines[-1])
+    return "{:.2f}".format(finall_res)
+
+
+
 
 #  @brief 计算等效应力
 #  von-misses准则
