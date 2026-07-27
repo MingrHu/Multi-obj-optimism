@@ -3,7 +3,7 @@
 统一描述「按工件类型分派的 KEY 文件目标提取器」，容纳两种异构调用约定：
 
 - ``key_lines``：输入为 KEY 文件解析出的多帧文本行，签名
-  ``(all_lines: list[list[str]], obj: str, in_progress: bool) -> str``，
+  ``(all_lines: list[list[str]], obj_id: str, in_progress: bool) -> str``，
   对应 :mod:`mobo.extraction.deform_targets` 中的 ``_extract*``。
 - ``key_file``：输入为 KEY 文件路径，签名 ``(key_path, **kwargs) -> float``，
   对应 :func:`mobo.extraction.ring_roundness.extract_ring_roundness`。
@@ -22,7 +22,7 @@ ExtractorKind = Literal["key_lines", "key_file"]
 class KeyLinesExtractor(Protocol):
     """基于 KEY 文本行的提取器协议。"""
 
-    def __call__(self, all_lines: List[List[str]], obj: str, in_progress: bool) -> str:
+    def __call__(self, all_lines: List[List[str]], obj_id: str, in_progress: bool) -> str:
         ...
 
 

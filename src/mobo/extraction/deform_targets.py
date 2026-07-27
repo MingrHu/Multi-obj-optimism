@@ -4,9 +4,6 @@
 从 KEY 文件解析出的多帧文本行中抽取标量结果。这些函数体保持 byte-for-byte 不变，
 由 :mod:`mobo.extraction` 在导入时注册到原子能力层，并由
 :class:`mobo.automation.config.DeformConfig` 继续复用。
-
-统一签名（``key_lines`` 约定）：
-    ``fn(AllLines: List[List[str]], obj: str, inprogress: bool) -> str``
 """
 
 import numpy as np
@@ -16,14 +13,14 @@ from typing import List
 
 ##########################################################
 ###################自定义提取函数部分########################
-def _extractMaxStress(AllLines:List[List[str]],obj:str,inprogress:bool)->str:
+def _extractMaxStress(AllLines:List[List[str]],obj_id:str,inprogress:bool)->str:
     finall_res = -1.0
     # 找首行
     def fun(lines:List[str])->float:
         res,pos,num = 0,-1,0
         for row,line in enumerate(lines):
             arry = line.split()
-            if len(arry) == 4 and arry[0] == 'STRESS' and arry[1] == obj:
+            if len(arry) == 4 and arry[0] == 'STRESS' and arry[1] == obj_id:
                 pos = row
                 num = int(arry[2])
                 break
@@ -47,7 +44,7 @@ def _extractMaxStress(AllLines:List[List[str]],obj:str,inprogress:bool)->str:
         finall_res = fun(AllLines[-1])
     return "{:.2f}".format(finall_res)
 
-def _extractMaxLoad(AllLines:List[List[str]],obj:str,inprogress:bool)->str:
+def _extractMaxLoad(AllLines:List[List[str]],obj_id:str,inprogress:bool)->str:
     # 模具载荷提取
     finall_res = 0.0
     def fun(lines:List[str])->float:
@@ -55,7 +52,7 @@ def _extractMaxLoad(AllLines:List[List[str]],obj:str,inprogress:bool)->str:
         for _,line in enumerate(lines):
             arry = line.split()
             # 根据deform的key文件关键字分布情况
-            if len(arry) == 5 and arry[0] == 'FORCE' and arry[1] == obj:
+            if len(arry) == 5 and arry[0] == 'FORCE' and arry[1] == obj_id:
                 res = float(arry[4])
         return res
     if inprogress:
@@ -65,7 +62,7 @@ def _extractMaxLoad(AllLines:List[List[str]],obj:str,inprogress:bool)->str:
         finall_res = fun(AllLines[-1])
     return "{:.2f}".format(finall_res)
 
-def _extractGrainStdv(AllLines:List[List[str]],obj:str,inprogress:bool)->str:
+def _extractGrainStdv(AllLines:List[List[str]],obj_id:str,inprogress:bool)->str:
     finall_res = 0.0
     # 提取锻件晶粒尺寸信息
     def fun(lines:List[str])->float:
@@ -74,7 +71,7 @@ def _extractGrainStdv(AllLines:List[List[str]],obj:str,inprogress:bool)->str:
         res = 0.0
         for index,line in enumerate(lines):
             arry = line.split()
-            if len (arry) == 5 and arry[0] == 'USRELM' and arry[1] == obj:
+            if len (arry) == 5 and arry[0] == 'USRELM' and arry[1] == obj_id:
                 pos,num = index + 1,int(arry[2])
                 break
         if pos != -1 and num > 0:
@@ -93,7 +90,7 @@ def _extractGrainStdv(AllLines:List[List[str]],obj:str,inprogress:bool)->str:
     return "{:.2f}".format(finall_res)
 
 
-def _extractRingRollMaxLoad(AllLines:List[List[str]],obj:str,inprogress:bool)->str:
+def _extractRingRollMaxLoad(AllLines:List[List[str]],obj_id:str,inprogress:bool)->str:
     # 碾环最大轧制力提取
     finall_res = 0.0
     def fun(lines:List[str])->float:
@@ -101,7 +98,7 @@ def _extractRingRollMaxLoad(AllLines:List[List[str]],obj:str,inprogress:bool)->s
         for _,line in enumerate(lines):
             arry = line.split()
             # 根据deform的key文件关键字分布情况
-            if len(arry) == 5 and arry[0] == 'FORCE' and arry[1] == obj:
+            if len(arry) == 5 and arry[0] == 'FORCE' and arry[1] == obj_id:
                 res = float(arry[4])
         return res
     if inprogress:

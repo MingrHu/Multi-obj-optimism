@@ -32,7 +32,7 @@ class DeformConfig:
     KEYFILE_VAR_DIC = {
         'roll_tmp':"REFTMP",    # 碾环锻造的温度字典
         'pressure_roll_speed_upper':"MOVCTL", # 碾环驱动辊的函数速率最大值
-        'pressure_roll_speed_low':"MOVCTL",# 碾环驱动辊的函数速率最小值
+        'pressure_roll_speed_lower':"MOVCTL",# 碾环驱动辊的函数速率最小值
 
         'temp': "NDTMP",
         'speed': "MOVCTL",

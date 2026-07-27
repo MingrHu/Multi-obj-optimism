@@ -69,7 +69,9 @@ def extract_dataset(
         row: List[Any] = list(param_table[i + 2])
         for idx, target_name in enumerate(target_names):
             extractor = DeformConfig.get_target_function(target_name)
-            row.append(extractor(frames, object_names[idx], in_progress[idx]))
+            # 提取函数按对象 ID 匹配 KEY 行（arry[1]），故先把对象名转成 ID
+            object_id = DeformConfig.get_object_id(object_names[idx])
+            row.append(extractor(frames, object_id, in_progress[idx]))
         result_rows.append(row)
 
     os.makedirs(result_dir, exist_ok=True)

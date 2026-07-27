@@ -33,8 +33,14 @@ def test_extract_dataset_writes_result(monkeypatch, tmp_path):
     )
     # read_key_frames 返回占位帧
     monkeypatch.setattr(extract, "read_key_frames", lambda files: [["frame"]])
-    # 目标提取函数返回固定值
-    monkeypatch.setattr(DeformConfig, "get_target_function", classmethod(lambda cls, name: lambda frames, obj, prog: "42.00"))
+    # 目标提取函数：记录收到的 obj 参数，返回固定值
+    received_obj = []
+
+    def fake_extractor(frames, obj, prog):
+        received_obj.append(obj)
+        return "42.00"
+
+    monkeypatch.setattr(DeformConfig, "get_target_function", classmethod(lambda cls, name: fake_extractor))
 
     param_table = [
         ["temp", "speed"],
@@ -58,3 +64,5 @@ def test_extract_dataset_writes_result(monkeypatch, tmp_path):
     content = open(out, encoding="utf-8").read()
     # 行号 + 工艺参数 + 目标值
     assert "900" in content and "30" in content and "42.00" in content
+    # 提取函数应收到对象 ID（"1"），而非对象名（"workpiece"）
+    assert received_obj == ["1"]
