@@ -86,7 +86,7 @@ class ForgingTask:
         max_step: int,
         *,
         dry_run: bool = False,
-        max_parallel: int = 12,
+        max_parallel: int = 24,
     ) -> None:
         self.sample_file = sample_file
         self.template_key = template_key
@@ -177,7 +177,10 @@ class ForgingTask:
             key_to_db_batch(key_paths, db_paths)
             DeformSolver(max_parallel=self.max_parallel).run_all(self.db_files)
 
-        return self._run_async("求解运行", work)
+        thread = self._run_async("求解运行", work)
+        if thread is not None:
+            thread.join()  # 等待求解
+        return 
 
     def extract(self) -> Optional[threading.Thread]:
         """阶段三：从结果 DB 提取目标值，汇总数据集（异步）。"""

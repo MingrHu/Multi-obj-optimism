@@ -49,7 +49,7 @@ def generate_keyfile_test() -> None:
     in_progress = []
     paths_config = {
         "smp_file": f"{PROJECT_DIR}/data/TEST/smp.txt",
-        "std_key_file": f"{PROJECT_DIR}/data/KEY_FILE/RINGROLL.KEY",
+        "std_key_file": f"{PROJECT_DIR}/data/keyfile/RINGROLL.KEY",
         "temp_key_path": f"{PROJECT_DIR}/data/TEST/temp_key",
         "res_db_path": f"{PROJECT_DIR}/data/TEST/res_db",
         "res_key_path": f"{PROJECT_DIR}/data/TEST/res_key",

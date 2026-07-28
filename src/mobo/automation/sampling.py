@@ -13,11 +13,12 @@ from __future__ import annotations
 
 import os
 from itertools import product
-from typing import Dict, List, Sequence, Tuple
+from typing import Dict, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
-from pydoe import lhs
+# windows else linux/macos = pyDOE
+from pyDOE import lhs
 
 from mobo.common.logging import logger
 
@@ -34,7 +35,7 @@ def lhs_samples(n_samples: int, param_ranges: ParamRanges) -> pd.DataFrame:
     unit = lhs(len(param_ranges), samples=n_samples)  # [0,1) 区间样本
     scaled = np.zeros_like(unit)
     for i, (_, (low, high)) in enumerate(param_ranges.items()):
-        scaled[:, i] = unit[:, i] * (high - low) + low
+        scaled[:, i] = unit[:, i] * (high - low) + low # type: ignore
     df = pd.DataFrame(scaled, columns=list(param_ranges.keys()))
     return df.round(2)
 
