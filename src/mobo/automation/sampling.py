@@ -18,7 +18,7 @@ from typing import Dict, Sequence, Tuple
 import numpy as np
 import pandas as pd
 # windows else linux/macos = pyDOE
-from pyDOE import lhs
+from pydoe import lhs
 
 from mobo.common.logging import logger
 
