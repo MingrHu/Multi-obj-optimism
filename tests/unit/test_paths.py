@@ -14,7 +14,7 @@ def test_project_dir_contains_data():
 def test_data_subdirs_derive_from_data_dir():
     assert paths.MODELS_DIR == paths.DATA_DIR / "models"
     assert paths.TEST_DIR == paths.DATA_DIR / "TEST"
-    assert paths.KEY_FILE_DIR == paths.DATA_DIR / "KEY_FILE"
+    assert paths.KEY_FILE_DIR == paths.DATA_DIR / "keyfile"
 
 
 def test_model_family_dir():

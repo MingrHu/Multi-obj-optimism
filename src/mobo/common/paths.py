@@ -53,7 +53,7 @@ DATA_DIR = _resolve_data_dir()
 LOGS_DIR = PROJECT_DIR / "logs"
 MODELS_DIR = DATA_DIR / "models"
 TEST_DIR = DATA_DIR / "TEST"
-KEY_FILE_DIR = DATA_DIR / "KEY_FILE"
+KEY_FILE_DIR = DATA_DIR / "keyfile"
 
 
 def model_family_dir(family: str) -> Path:

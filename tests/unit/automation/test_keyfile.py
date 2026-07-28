@@ -7,6 +7,8 @@
 
 import os
 
+import pytest
+
 from mobo.automation import keyfile
 
 
@@ -85,41 +87,48 @@ def test_read_key_frames(tmp_path):
     assert frames[1] == ["only\n"]
 
 
-# ---- 碾环 MOVCTL 速度多行块裁剪 ----
+# ---- 碾环 MOVCTL 速度多行块等比例缩放 ----
 
-def test_clip_abs_preserves_sign():
-    assert keyfile._clip_abs(2.2, 0.5, 1.5) == 1.5    # 超上界
-    assert keyfile._clip_abs(-0.3, 0.5, 1.5) == -0.5  # 低于下界，保号
-    assert keyfile._clip_abs(0.8, 0.5, 1.5) == 0.8    # 区间内不变
-    assert keyfile._clip_abs(-2.0, 0.5, 1.5) == -1.5  # 负数超界
+def test_scale_abs_maps_range_and_preserves_sign():
+    # 原绝对值范围 [0.2, 2.3] 映射到 [0.5, 1.5]
+    assert keyfile._scale_abs(2.3, 0.2, 2.3, 0.5, 1.5) == pytest.approx(1.5)   # 最大 -> upper
+    assert keyfile._scale_abs(0.2, 0.2, 2.3, 0.5, 1.5) == pytest.approx(0.5)   # 最小 -> lower
+    # 负数：先按绝对值缩放再贴回符号；1.25 -> 0.5 + (1.25-0.2)/2.1 = 1.0
+    assert keyfile._scale_abs(-1.25, 0.2, 2.3, 0.5, 1.5) == pytest.approx(-1.0)
 
 
-def test_clip_speed_line_replaces_only_speed_column():
-    line = "    1.0000000000E+000    2.2000000000E+000\n"
-    out = keyfile._clip_speed_line(line, 0.5, 1.5)
-    # 时间列保留，速度列被裁到 1.5
+def test_scale_abs_zero_span_maps_to_midpoint():
+    # 原范围跨度为 0（所有点绝对值相同）-> 目标区间中点，避免除零
+    assert keyfile._scale_abs(0.8, 0.8, 0.8, 0.5, 1.5) == pytest.approx(1.0)
+    assert keyfile._scale_abs(-0.8, 0.8, 0.8, 0.5, 1.5) == pytest.approx(-1.0)
+
+
+def test_scale_speed_line_replaces_only_speed_column():
+    line = "    1.0000000000E+000    2.3000000000E+000\n"
+    out = keyfile._scale_speed_line(line, 0.2, 2.3, 0.5, 1.5)
+    # 时间列保留，速度列（最大绝对值）被映射到 upper=1.5
     assert out.split()[0] == "1.0000000000E+000"
-    assert float(out.split()[1]) == 1.5
+    assert float(out.split()[1]) == pytest.approx(1.5)
     assert out.endswith("\n")
 
 
-def test_clip_speed_line_ignores_unparseable():
-    # 仅单个 token（无速度列可裁）时原样返回
+def test_scale_speed_line_ignores_unparseable():
+    # 仅单个 token（无速度列）时原样返回
     single = "onlyonetoken\n"
-    assert keyfile._clip_speed_line(single, 0.5, 1.5) == single
+    assert keyfile._scale_speed_line(single, 0.2, 2.3, 0.5, 1.5) == single
     # 速度列非数值时原样返回
     bad = "    1.0000000000E+000    NaNaN\n"
-    assert keyfile._clip_speed_line(bad, 0.5, 1.5) == bad
+    assert keyfile._scale_speed_line(bad, 0.2, 2.3, 0.5, 1.5) == bad
 
 
-def test_collect_speed_clip_specs_requires_both_bounds():
-    # 只给 lower，不生成裁剪区间
-    specs = keyfile._collect_speed_clip_specs(
+def test_collect_speed_scale_specs_requires_both_bounds():
+    # 只给 lower，不生成目标区间
+    specs = keyfile._collect_speed_scale_specs(
         ["pressure_roll_speed_lower"], ["pressure_roll"], ["0.5"]
     )
     assert specs == {}
     # lower + upper 齐全 -> 生成区间（按对象 ID 聚合，取绝对值且 lower<=upper）
-    specs = keyfile._collect_speed_clip_specs(
+    specs = keyfile._collect_speed_scale_specs(
         ["pressure_roll_speed_upper", "pressure_roll_speed_lower"],
         ["pressure_roll", "pressure_roll"],
         ["-1.5", "0.5"],
@@ -127,28 +136,28 @@ def test_collect_speed_clip_specs_requires_both_bounds():
     assert specs == {"3": (0.5, 1.5)}
 
 
-def test_clip_movctl_block_clips_m_lines_only(monkeypatch):
+def test_scale_movctl_block_scales_m_lines_only():
     lines = [
         "MOVCTL       3       1       2    0.0    1.0    0.0       3\n",  # m=3
-        "    1.0000000000E+000    2.2000000000E+000\n",   # -> 1.5
-        "    2.0000000000E+000   -3.0000000000E-001\n",   # -> -0.5
-        "    3.0000000000E+000    8.0000000000E-001\n",   # 不变
+        "    1.0000000000E+000    2.2000000000E+000\n",   # abs 2.2 (max) -> 1.5
+        "    2.0000000000E+000   -3.0000000000E-001\n",   # abs 0.3 (min) -> -0.5
+        "    3.0000000000E+000    8.0000000000E-001\n",   # abs 0.8 -> 0.5+(0.8-0.3)/1.9
         "STROKE       3    0.0\n",                          # 块外，不动
     ]
-    out = keyfile._clip_movctl_block(lines, {"3": (0.5, 1.5)})
+    out = keyfile._scale_movctl_block(lines, {"3": (0.5, 1.5)})
     assert out[0] == lines[0]                        # MOVCTL 头行（含行数 3）不变
-    assert float(out[1].split()[1]) == 1.5
-    assert float(out[2].split()[1]) == -0.5
-    assert float(out[3].split()[1]) == 0.8
+    assert float(out[1].split()[1]) == pytest.approx(1.5)
+    assert float(out[2].split()[1]) == pytest.approx(-0.5)
+    assert float(out[3].split()[1]) == pytest.approx(0.5 + (0.8 - 0.3) / (2.2 - 0.3))
     assert out[4] == lines[4]                         # STROKE 行不动
 
 
-def test_clip_movctl_block_noop_without_specs():
+def test_scale_movctl_block_noop_without_specs():
     lines = ["MOVCTL 3 1 2 0.0 1.0 0.0 3\n", "    1.0    2.2\n"]
-    assert keyfile._clip_movctl_block(lines, {}) is lines
+    assert keyfile._scale_movctl_block(lines, {}) is lines
 
 
-def test_generate_key_files_clips_speed_block(tmp_path):
+def test_generate_key_files_scales_speed_block(tmp_path):
     template = tmp_path / "RING.KEY"
     template.write_text(
         "MOVCTL       3       1       2    0.0    1.0    0.0       3\n"
@@ -167,6 +176,10 @@ def test_generate_key_files_clips_speed_block(tmp_path):
     lines = open(generated[0], encoding="utf-8").read().splitlines()
     # 头行的控制点行数 3 未被误改
     assert lines[0].split()[-1] == "3"
-    speeds = [abs(float(lines[i].split()[1])) for i in (1, 2, 3)]
-    assert all(0.5 <= s <= 1.5 for s in speeds)
+    absv = [abs(float(lines[i].split()[1])) for i in (1, 2, 3)]
+    # 缩放后绝对值应恰好铺满目标区间 [0.5, 1.5]
+    assert min(absv) == pytest.approx(0.5)
+    assert max(absv) == pytest.approx(1.5)
+    # 负数保号
+    assert float(lines[2].split()[1]) < 0
 

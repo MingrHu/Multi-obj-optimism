@@ -5,18 +5,18 @@
 - :func:`format_deform_float`：把数值格式化为 DEFORM 要求的科学计数法；
 - :func:`derive_output_path`：由源文件名派生输出路径；
 - :func:`generate_key_files`：把工艺参数写入模板 KEY，批量生成输入 KEY；
-- :func:`read_key_frames`：读取一组 KEY 文件的全部文本行。
+- :func:`read_key_frames`：读取一组 KEY 文件的全部文本行
 
 KEY 文件本质是文本文件，目标行格式为：``<关键字> <对象ID> ... <参数值>``，
 :func:`generate_key_files` 依据 :class:`~mobo.automation.config.DeformConfig` 的
-关键字/对象映射定位并替换参数值。
+关键字/对象映射定位并替换参数值
 """
 
 from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Dict, List, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 from mobo.common.logging import logger
 from .config import DeformConfig
@@ -96,14 +96,15 @@ def _apply_params_to_line(line: str, param_names: Sequence[str], object_names: S
     return line
 
 
-def _collect_speed_clip_specs(
+def _collect_speed_scale_specs(
     param_names: Sequence[str],
     object_names: Sequence[str],
     values: Sequence[str],
 ) -> Dict[str, Tuple[float, float]]:
-    """从一个样本中收集碾环速度裁剪区间，按对象 ID 聚合。
+    """从一个样本中收集碾环速度缩放目标区间，按对象 ID 聚合。
 
-    仅当同一对象同时提供 ``*_speed_lower`` 与 ``*_speed_upper`` 时才生成裁剪区间。
+    仅当同一对象同时提供 ``pressure_roll_speed_lower`` 与 ``pressure_roll_speed_upper``
+    时才生成目标区间。
 
     :param param_names: 参数名序列
     :param object_names: 参数对应对象名序列
@@ -132,49 +133,73 @@ def _collect_speed_clip_specs(
     return specs
 
 
-def _clip_abs(value: float, lower: float, upper: float) -> float:
-    """把数值的绝对值裁剪到 ``[lower, upper]`` 区间，保留原符号。
-
-    :param value: 原始速度值（可正可负）
-    :param lower: 绝对值下界（非负）
-    :param upper: 绝对值上界（非负）
-    :return: 裁剪后的速度值
-    """
-    sign = -1.0 if value < 0 else 1.0
-    clipped = min(max(abs(value), lower), upper)
-    return sign * clipped
-
-
-def _clip_speed_line(line: str, lower: float, upper: float) -> str:
-    """裁剪单个控制点行的速度列（第 2 列），保留原时间列与行内空白格式。
+def _parse_speed(line: str) -> Optional[float]:
+    """解析控制点行的速度列（第 2 列，即行内最后一个数）。
 
     :param line: 形如 ``    <时间>    <速度>\\n`` 的控制点行
-    :param lower: 速度绝对值下界
-    :param upper: 速度绝对值上界
-    :return: 速度被裁剪后的行；解析失败则原样返回
+    :return: 速度浮点值；无法解析则返回 None
     """
-    body, newline = (line[:-1], "\n") if line.endswith("\n") else (line, "")
-    head, sep, tail = body.rpartition(" ")
+    body = line[:-1] if line.endswith("\n") else line
+    _, sep, tail = body.rpartition(" ")
     if not sep or not tail.strip():
-        return line
+        return None
     try:
-        speed = float(tail)
+        return float(tail)
     except ValueError:
+        return None
+
+
+def _scale_abs(value: float, src_min: float, src_max: float,
+               lower: float, upper: float) -> float:
+    """把速度的**绝对值**从原范围 ``[src_min, src_max]`` 线性映射到 ``[lower, upper]``
+    :param value: 原始速度值（可正可负）
+    :param src_min: 原始速度绝对值的最小值（非负）
+    :param src_max: 原始速度绝对值的最大值（非负）
+    :param lower: 目标绝对值下界（非负）
+    :param upper: 目标绝对值上界（非负）
+    :return: 缩放后的速度值（保留原符号）
+    """
+    sign = -1.0 if value < 0 else 1.0
+    span = src_max - src_min
+    if span <= 0:
+        scaled_abs = (lower + upper) / 2.0
+    else:
+        ratio = (abs(value) - src_min) / span
+        scaled_abs = lower + ratio * (upper - lower)
+    return sign * scaled_abs
+
+
+def _scale_speed_line(line: str, src_min: float, src_max: float,
+                      lower: float, upper: float) -> str:
+    """按绝对值范围缩放单个控制点行的速度列，保留原时间列与行内空白格式。
+
+    :param line: 形如 ``    <时间>    <速度>\\n`` 的控制点行
+    :param src_min: 原始速度绝对值的最小值
+    :param src_max: 原始速度绝对值的最大值
+    :param lower: 目标绝对值下界
+    :param upper: 目标绝对值上界
+    :return: 速度被缩放后的行；解析失败则原样返回
+    """
+    speed = _parse_speed(line)
+    if speed is None:
         return line
-    clipped = _clip_abs(speed, lower, upper)
-    # 用格式化后的裁剪值替换速度列，保留原时间列与列间空白
-    return head + sep + format_deform_float(str(clipped)) + newline
+    body, newline = (line[:-1], "\n") if line.endswith("\n") else (line, "")
+    head, sep, _ = body.rpartition(" ")
+    scaled = _scale_abs(speed, src_min, src_max, lower, upper)
+    # 用格式化后的缩放值替换速度列，保留原时间列与列间空白
+    return head + sep + format_deform_float(str(scaled)) + newline
 
 
-def _clip_movctl_block(lines: List[str], specs: Dict[str, Tuple[float, float]]) -> List[str]:
-    """对 ``MOVCTL <对象ID> ... <m>`` 之后的 m 行控制点做速度裁剪。
+def _scale_movctl_block(lines: List[str], specs: Dict[str, Tuple[float, float]]) -> List[str]:
+    """对 ``MOVCTL <对象ID> ... <m>`` 之后的 m 行控制点做速度等比例缩放。
 
-    定位每个待裁剪对象的 ``MOVCTL`` 行，读取其行尾整数 ``m`` 作为控制点行数，
-    再把紧随其后的 m 行速度按 ``specs`` 的区间裁剪。
+    定位每个待缩放对象的 ``MOVCTL`` 行，读取其行尾整数 ``m`` 作为控制点行数，先扫描
+    这 m 行得到原始速度的绝对值范围 ``[src_min, src_max]``，再把每行速度绝对值线性
+    映射到 ``specs`` 给出的目标区间（保号）。
 
-    :param lines: KEY 文件全部文本行（会返回裁剪后的新列表，不原地修改入参）
+    :param lines: KEY 文件全部文本行（会返回缩放后的新列表，不原地修改入参）
     :param specs: ``{对象ID: (lower, upper)}``
-    :return: 裁剪后的文本行列表
+    :return: 缩放后的文本行列表
     """
     if not specs:
         return lines
@@ -195,12 +220,26 @@ def _clip_movctl_block(lines: List[str], specs: Dict[str, Tuple[float, float]]) 
         if count <= 0:
             continue
 
+        # 第一趟：扫描该块内所有可解析速度的绝对值范围
+        block_speeds = []
+        for offset in range(1, count + 1):
+            j = idx + offset
+            if j >= len(result):
+                break
+            speed = _parse_speed(result[j])
+            if speed is not None:
+                block_speeds.append(abs(speed))
+        if not block_speeds:
+            continue
+        src_min, src_max = min(block_speeds), max(block_speeds)
+
+        # 第二趟：按范围等比例缩放每行速度
         lower, upper = specs[object_id]
         for offset in range(1, count + 1):
             j = idx + offset
             if j >= len(result):
                 break
-            result[j] = _clip_speed_line(result[j], lower, upper)
+            result[j] = _scale_speed_line(result[j], src_min, src_max, lower, upper)
     return result
 
 
@@ -208,12 +247,8 @@ def generate_key_files(template_path: str, param_table: List[List[str]], save_di
     """把工艺参数写入模板 KEY，批量生成输入 KEY 文件。
 
     ``param_table`` 前两行为固定表头：第 0 行是参数名、第 1 行是对象名；从第 2 行起
-    每行是一个样本的参数取值。为每个样本生成一个 KEY 文件。
-
-    处理分两趟：先对每行做单值替换（:func:`_apply_params_to_line`），再对碾环
-    ``MOVCTL`` 速度控制点做多行块裁剪（:func:`_clip_movctl_block`），后者由样本中的
-    ``*_speed_lower`` / ``*_speed_upper`` 参数给出裁剪区间。
-
+    每行是一个样本的参数取值。为每个样本生成一个 KEY 文件
+    
     :param template_path: 模板 KEY 文件路径
     :param param_table: 参数表 ``[[参数名...], [对象名...], [样本1值...], ...]``
     :param save_dir: 生成的 KEY 文件保存目录
@@ -231,9 +266,9 @@ def generate_key_files(template_path: str, param_table: List[List[str]], save_di
             _apply_params_to_line(line, param_names, object_names, values)
             for line in template_lines
         ]
-        # 碾环 MOVCTL 速度控制点块裁剪（无相关参数时零行为变化）
-        clip_specs = _collect_speed_clip_specs(param_names, object_names, values)
-        new_lines = _clip_movctl_block(new_lines, clip_specs)
+        # 碾环 MOVCTL 速度控制点等比例缩放（无相关参数时零行为变化）
+        scale_specs = _collect_speed_scale_specs(param_names, object_names, values)
+        new_lines = _scale_movctl_block(new_lines, scale_specs)
         out_path = derive_output_path(template_path, save_dir, str(sample_idx), "KEY")
         with open(out_path, "w", encoding="utf-8") as f:
             f.writelines(new_lines)
