@@ -41,8 +41,8 @@ def sample_generate_test() -> None:
 def generate_keyfile_test() -> None:
     """演示：初始化执行任务并等待 KEY 文件生成完成。"""
     # 测试碾环
-    param_table = [["roll_tmp", "roll_tmp", "roll_tmp", "pressure_roll_speed_upper","pressure_roll_speed_lower"],
-                   ["workpiece", "driving_roll", "pressure_roll", "pressure_roll", "pressure_roll"],]
+    param_table = [["roll_tmp", "roll_tmp", "roll_tmp", "pressure_roll_speed_upper","pressure_roll_speed_lower","driving_roll_rad_speed"],
+                   ["workpiece", "driving_roll", "pressure_roll", "pressure_roll", "pressure_roll", "driving_roll"]]
     # target_table = [["grain", "load"],
     #                 ["workpiece", "topdie"]]
     target_table = [[]]
