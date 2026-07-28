@@ -19,7 +19,7 @@ import numpy as np
 import pandas as pd
 
 # if windows/macos use pyDOE else use pydoe
-from pydoe import lhs
+from pyDOE import lhs
 
 from mobo.common.logging import logger
 
@@ -92,22 +92,24 @@ def generate_full_factorial(param_ranges: ParamRanges, level_nums: Sequence[int]
     return df.round(2)
 
 
-def save_samples(df: pd.DataFrame, method_tag: str, save_dir: str) -> str:
+def save_samples(task_id:str,df: pd.DataFrame, method_tag: str, save_dir: str) -> str:
     """把样本保存为制表符分隔、无表头的 txt 文件。
 
+    :param task_id: 任务id
     :param df: 样本 DataFrame
     :param method_tag: 采样方法标识（用于文件名 ``IN<tag>.txt``）
     :param save_dir: 保存目录（不存在则创建）
     :return: 输出文件完整路径
     """
     os.makedirs(save_dir, exist_ok=True)
-    out_path = os.path.join(save_dir, f"IN{method_tag}.txt")
+    out_path = os.path.join(save_dir, f"{task_id}-{method_tag}.txt")
     df.to_csv(out_path, sep="\t", index=False, header=False)
     logger.info(f"采样数据已保存至 {out_path}，共 {len(df)} 个样本")
     return out_path
 
 
 def generate_samples(
+    task_id:str,
     method: str,
     param_ranges: ParamRanges,
     save_dir: str,
@@ -116,6 +118,7 @@ def generate_samples(
 ) -> str:
     """按方法生成并保存样本。
 
+    :param task_id: 任务id   
     :param method: 采样方法，``"lhs"`` 或 ``"full"``
     :param param_ranges: 参数区间字典
     :param save_dir: 保存目录
@@ -126,12 +129,12 @@ def generate_samples(
     """
     if method == "lhs":
         df = generate_lhs(n_samples, param_ranges)
-        return save_samples(df, "lhs", save_dir)
+        return save_samples(task_id,df, "lhs", save_dir)
     if method == "full":
         if not level_nums:
             raise ValueError("full 采样必须提供 level_nums")
         df = generate_full_factorial(param_ranges, level_nums)
-        return save_samples(df, "fullfactorial", save_dir)
+        return save_samples(task_id,df, "fullfactorial", save_dir)
     raise ValueError(f"不支持的采样方法: {method}")
 
 

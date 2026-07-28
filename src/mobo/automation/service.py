@@ -55,7 +55,7 @@ def create_sampling_task(
     if n_samples == 0:
         return {}
     try:
-        out_path = generate_sample_file(method, param_ranges, save_dir, n_samples, level_nums)
+        out_path = generate_sample_file(task_id,method, param_ranges, save_dir, n_samples, level_nums)
         _sampling_done[task_id] = out_path
         return _result(task_id, True, f"成功使用 {method} 方法生成样本")
     except Exception as exc:

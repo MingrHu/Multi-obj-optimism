@@ -34,14 +34,16 @@ class TaskStatus(IntEnum):
 
 
 def generate_sample_file(
+    task_id:str,
     method: str,
     param_ranges: ParamRanges,
     save_dir: str,
     n_samples: int = 0,
     level_nums: Sequence[int] = (),
 ) -> str:
-    """生成工艺参数样本文件（LHS 或全因子）。
-
+    """生成工艺参数样本文件（LHS 或全因子）
+    
+    :param task_id: 任务id
     :param method: ``"lhs"`` 或 ``"full"``
     :param param_ranges: 参数区间字典
     :param save_dir: 保存目录
@@ -49,7 +51,7 @@ def generate_sample_file(
     :param level_nums: 全因子各参数水平数
     :return: 样本文件路径
     """
-    return generate_samples(method, param_ranges, save_dir, n_samples, level_nums)
+    return generate_samples(task_id,method, param_ranges, save_dir, n_samples, level_nums)
 
 
 class ForgingTask:
