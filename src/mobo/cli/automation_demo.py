@@ -29,13 +29,15 @@ def _wait_until_done(task_id: str, poll_interval: float = 3.0) -> None:
 def sample_generate_test() -> None:
     """演示：用 LHS 生成工艺参数样本。"""
     param_ranges = {
-        "temp1": (875.0, 965.0),  # 工件温度范围 (℃)
-        "temp2": (300.0, 700.0),  # 上模具温度范围 (℃)
-        "temp3": (300.0, 700.0),  # 下模具温度范围 (℃)
-        "speed": (10.0, 50.0),    # 锻造速度范围 (mm/s)
+        "roll_tmp": (940.0, 1020.0),  # 碾环工件温度范围 (℃)
+        "driving_roll_tmp": (200.0, 260.0),  # 驱动辊具温度范围 (℃)
+        "pressure_roll_tmp": (200.0, 260.0),  # 压力辊具温度范围 (℃)
+        "pressure_roll_speed_upper": (2.0, 2.3),    # 锻造上限速度范围 (mm/s)
+        "pressure_roll_speed_lower": (0.2, 1.9),    # 锻造下限速度范围 (mm/s)
+        "driving_roll_rad_speed": (0.5, 1.5),    # 驱动辊角速度范围 (rad/s)
     }
     save_dir = f"{PROJECT_DIR}/data/TEST"
-    print(create_sampling_task("1001", save_dir, "lhs", param_ranges, 1000))
+    print(create_sampling_task(_TASK_ID, save_dir, "lhs", param_ranges, 200))
 
 
 def generate_keyfile_test() -> None:
@@ -73,7 +75,7 @@ def extra_data_test() -> None:
 
 
 if __name__ == "__main__":
-    # sample_generate_test()
+    sample_generate_test()
     # generate_keyfile_test()
     # run_process_test()
     # extra_data_test()

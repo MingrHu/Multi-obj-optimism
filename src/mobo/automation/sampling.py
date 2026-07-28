@@ -17,7 +17,9 @@ from typing import Dict, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
-from pyDOE import lhs
+
+# if windows/macos use pyDOE else use pydoe
+from pydoe import lhs
 
 from mobo.common.logging import logger
 
@@ -62,7 +64,9 @@ def generate_lhs(n_samples: int, param_ranges: ParamRanges) -> pd.DataFrame:
     combined = pd.concat([df, boundary], ignore_index=True).drop_duplicates(
         subset=list(param_ranges.keys())
     )
-    return combined.applymap(lambda x: f"{x:.2f}") # type: ignore
+    # 替换 applymap
+    combined = combined.apply(lambda col: col.map(lambda x: f"{x:.2f}"))
+    return combined
 
 
 def generate_full_factorial(param_ranges: ParamRanges, level_nums: Sequence[int]) -> pd.DataFrame:
