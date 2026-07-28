@@ -152,7 +152,10 @@ class ForgingTask:
                 return
             self.key_files = generate_key_files(self.template_key, self.param_table, self.temp_key_dir)
 
-        return self._run_async("生成 KEY 文件", work)
+        thread = self._run_async("生成 KEY 文件", work)
+        if thread is not None:
+            thread.join()  # 等待 KEY 文件生成完成，避免后续阶段找不到文件
+        return
 
     def run_solver(self) -> Optional[threading.Thread]:
         """阶段二：KEY→DB 转换并提交求解（异步）。"""

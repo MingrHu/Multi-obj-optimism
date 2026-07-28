@@ -85,6 +85,7 @@ def init_execution_task(
         if any(not paths_config.get(k) for k in _REQUIRED_PATH_KEYS):
             return _result(task_id, False, "未指定样本、模板 KEY、临时/结果路径等必填项")
 
+        # 确保路径存在
         for path in paths_config.values():
             target_dir = path if not os.path.splitext(path)[1] else os.path.dirname(path)
             os.makedirs(target_dir, exist_ok=True)
@@ -106,7 +107,7 @@ def init_execution_task(
         )
         _execution_tasks[task_id] = task
         task.generate_keys()
-        return _result(task_id, True, "执行任务初始化成功")
+        return _result(task_id, True, "执行任务初始化成功，KEY 文件生成完成")        
     except Exception as exc:
         logger.error(f"执行任务初始化失败：{exc}")
         return _result(task_id, False, f"执行任务初始化失败：{exc}")

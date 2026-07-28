@@ -1,12 +1,5 @@
-"""DEFORM 自动化流水线演示脚本。
-
-从 ``AutoScript/auto_script_test.py`` 搬入的手写 demo（非 pytest），演示
-采样 → 初始化 → 求解 → 提取的完整调用链。使用 :mod:`mobo.automation.service`
-的服务接口，路径统一取自 :mod:`mobo.common.paths`。
-
-平台边界：真实执行依赖 Windows 平台的 DEFORM 环境；此脚本主要用于演示接口。
-非 Windows 环境下 :class:`~mobo.automation.pipeline.ForgingTask` 支持 ``dry_run``
-仅推进状态，服务层默认走真实调用，故此脚本在无 DEFORM 时会在求解阶段报错。
+"""
+    DEFORM 自动化流水线演示脚本
 """
 
 import time
@@ -21,7 +14,7 @@ from mobo.automation.service import (
 from mobo.common.paths import PROJECT_DIR
 
 # 用于示例的固定任务 ID
-_TASK_ID = "2026-04-10-demo"
+_TASK_ID = "2026-07-28-demo"
 
 
 def _wait_until_done(task_id: str, poll_interval: float = 3.0) -> None:
@@ -47,21 +40,23 @@ def sample_generate_test() -> None:
 
 def generate_keyfile_test() -> None:
     """演示：初始化执行任务并等待 KEY 文件生成完成。"""
-    param_table = [["temp", "temp", "temp", "speed"],
-                   ["workpiece", "topdie", "butdie", "topdie"]]
-    target_table = [["grain", "load"],
-                    ["workpiece", "topdie"]]
-    in_progress = [False, True]
+    # 测试碾环
+    param_table = [["roll_tmp", "roll_tmp", "roll_tmp", "pressure_roll_speed_upper","pressure_roll_speed_lower"],
+                   ["workpiece", "driving_roll", "pressure_roll", "pressure_roll", "pressure_roll"],]
+    # target_table = [["grain", "load"],
+    #                 ["workpiece", "topdie"]]
+    target_table = [[]]
+    in_progress = []
     paths_config = {
-        "smp_file": f"{PROJECT_DIR}/data/AUTO/smp.txt",
-        "std_key_file": f"{PROJECT_DIR}/data/AUTO/MODEL.KEY",
-        "temp_key_path": f"{PROJECT_DIR}/data/AUTO/temp_key",
-        "res_db_path": f"{PROJECT_DIR}/data/AUTO/res_db",
-        "res_key_path": f"{PROJECT_DIR}/data/AUTO/res_key",
-        "res_txt_path": f"{PROJECT_DIR}/data/AUTO/res_txt",
+        "smp_file": f"{PROJECT_DIR}/data/TEST/smp.txt",
+        "std_key_file": f"{PROJECT_DIR}/data/KEY_FILE/RINGROLL.KEY",
+        "temp_key_path": f"{PROJECT_DIR}/data/TEST/temp_key",
+        "res_db_path": f"{PROJECT_DIR}/data/TEST/res_db",
+        "res_key_path": f"{PROJECT_DIR}/data/TEST/res_key",
+        "res_txt_path": f"{PROJECT_DIR}/data/TEST/res_txt",
     }
 
-    print(init_execution_task(_TASK_ID, paths_config, param_table, target_table, in_progress, 100))
+    print(init_execution_task(_TASK_ID, paths_config, param_table, target_table, in_progress, 3400))
     _wait_until_done(_TASK_ID)
 
 
@@ -81,4 +76,4 @@ if __name__ == "__main__":
     # sample_generate_test()
     generate_keyfile_test()
     run_process_test()
-    extra_data_test()
+    # extra_data_test()
