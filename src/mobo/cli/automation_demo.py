@@ -1,8 +1,10 @@
 """
     DEFORM 自动化流水线演示脚本
-"""
 
-import time
+    每一步都只需 ``_TASK_ID`` 即可独立调用：``init_execution_task`` 会把路径、参数表、
+    目标表等必要输入落盘到 ``data/tasks/<task_id>/state.json``；之后 ``run_process_test`` /
+    ``extra_data_test`` 仅凭 task_id 就能从磁盘续跑，无需重新传入这些参数。
+"""
 
 from mobo.automation.service import (
     create_sampling_task,
@@ -17,13 +19,9 @@ from mobo.common.paths import PROJECT_DIR
 _TASK_ID = "2026-07-28-demo"
 
 
-def _wait_until_done(task_id: str, poll_interval: float = 3.0) -> None:
-    """轮询任务状态直到底层 TaskStatus 回到 DONE（``status == "0"``）。"""
-    while True:
-        status = query_execution_status(task_id)
-        if status["status"] == "0":
-            break
-        time.sleep(poll_interval)
+def _print_status(task_id: str) -> None:
+    """打印当前任务状态（从 state.json 读取）。"""
+    print(query_execution_status(task_id))
 
 
 def sample_generate_test() -> None:
@@ -41,16 +39,15 @@ def sample_generate_test() -> None:
 
 
 def generate_keyfile_test() -> None:
-    """演示：初始化执行任务并等待 KEY 文件生成完成。"""
+    """演示：初始化执行任务（落盘输入参数并生成 KEY 文件）。"""
     # 测试碾环
     # 1 输入参数表
     param_table = [["roll_tmp", "roll_tmp", "roll_tmp", "pressure_roll_speed_upper","pressure_roll_speed_lower","driving_roll_rad_speed"],
                    ["workpiece", "driving_roll", "pressure_roll", "pressure_roll", "pressure_roll", "driving_roll"]]
-    # 2 提取目标表
-    # target_table = [["grain", "load"],   # 目标
-    #                 ["workpiece", "topdie"]   # 对象
-    #                 ["1","x"]]    # select_component
-    target_table = [[]]
+    # 2 提取目标表：第 0 行目标名、第 1 行对象名、第 2 行 select_component（分量）
+    target_table = [["load", "grain_morph"],
+                    ["workpiece", "workpiece"],
+                    [2, 0]]
     in_progress = [False, False]
     paths_config = {
         "smp_file": f"{PROJECT_DIR}/data/TEST/smp.txt",
@@ -62,22 +59,20 @@ def generate_keyfile_test() -> None:
     }
 
     print(init_execution_task(_TASK_ID, paths_config, param_table, target_table, in_progress, 3400))
-    _wait_until_done(_TASK_ID)
 
 
 def run_process_test() -> None:
-    """演示：推进求解阶段并等待完成。"""
+    """演示：仅凭 task_id 推进求解阶段（参数从 state.json 续跑）。"""
     print(run_execution_step(_TASK_ID))
-    _wait_until_done(_TASK_ID)
 
 
 def extra_data_test() -> None:
-    """演示：推进数据提取阶段并等待完成。"""
+    """演示：仅凭 task_id 推进数据提取阶段（参数从 state.json 续跑）。"""
     print(run_extract_data(_TASK_ID))
-    _wait_until_done(_TASK_ID)
 
 
 if __name__ == "__main__":
+    # 每一步可单独运行，只要 _TASK_ID 一致即可接着上一步继续
     # sample_generate_test()
     # generate_keyfile_test()
     # run_process_test()

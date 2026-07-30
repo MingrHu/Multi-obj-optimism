@@ -51,7 +51,7 @@ def extract_dataset(
     :param key_export_dir: 逐步 KEY 导出的根目录
     :param max_step: 每个 DB 的最大步数
     :param param_table: 参数表（前两行为表头，其后每行对应一个样本的工艺参数）
-    :param target_table: 目标表 ``[[目标名...], [对象名...]]``
+    :param target_table: 目标表 ``[[目标名...], [对象名...], [select_component...]]``
     :param in_progress: 每个目标是否走全过程提取
     :param result_dir: 数据集输出目录
     :return: 输出数据集文件完整路径

@@ -54,6 +54,7 @@ LOGS_DIR = PROJECT_DIR / "logs"
 MODELS_DIR = DATA_DIR / "models"
 TEST_DIR = DATA_DIR / "TEST"
 KEY_FILE_DIR = DATA_DIR / "keyfile"
+TASKS_DIR = DATA_DIR / "tasks"
 
 
 def model_family_dir(family: str) -> Path:
@@ -65,6 +66,15 @@ def model_family_dir(family: str) -> Path:
     return MODELS_DIR / family
 
 
+def task_dir(task_id: str) -> Path:
+    """返回指定任务 ID 的持久化目录 ``TASKS_DIR/<task_id>``。
+
+    :param task_id: 任务 ID
+    :return: 任务目录路径
+    """
+    return TASKS_DIR / task_id
+
+
 __all__ = [
     "PACKAGE_DIR",
     "PROJECT_DIR",
@@ -73,5 +83,7 @@ __all__ = [
     "MODELS_DIR",
     "TEST_DIR",
     "KEY_FILE_DIR",
+    "TASKS_DIR",
     "model_family_dir",
+    "task_dir",
 ]

@@ -30,6 +30,7 @@ __pycache__/
 .DS_Store
 data/AUTO
 data/TEST/
+data/tasks/
 AUTO_OPERATION_LOG.txt
 
 # 日志与测试/覆盖率产物

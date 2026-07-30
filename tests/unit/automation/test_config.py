@@ -17,20 +17,20 @@ def test_get_object_id():
 
 
 def test_get_target_function_lines_adapter_delegates(monkeypatch):
-    # 文本类目标：适配器只用 frames 调底层函数（应力/载荷/晶粒）
+    # 文本类目标：适配器把 frames 与 select_component 透传给底层函数
     import mobo.automation.config as config
 
     seen = {}
 
-    def fake_stress(frames, obj_id, in_progress):
-        seen.update(frames=frames, obj_id=obj_id, in_progress=in_progress)
+    def fake_stress(frames, obj_id, in_progress, select_component):
+        seen.update(frames=frames, obj_id=obj_id, in_progress=in_progress,
+                    select_component=select_component)
         return "3.14"
 
-    monkeypatch.setattr(config, "_extractMaxStress", fake_stress)
-    # partial 已在 import 期绑定原函数，这里直接验证适配器语义
-    result = config._lines_target(fake_stress, ["k0.KEY"], [["line"]], "1", True)
+    result = config._lines_target(fake_stress, ["k0.KEY"], [["line"]], "1", True, 2)
     assert result == "3.14"
-    assert seen == {"frames": [["line"]], "obj_id": "1", "in_progress": True}
+    assert seen == {"frames": [["line"]], "obj_id": "1", "in_progress": True,
+                    "select_component": 2}
 
 
 def test_get_target_function_roundness_adapter(monkeypatch):
@@ -50,6 +50,7 @@ def test_get_target_function_roundness_adapter(monkeypatch):
 
 
 def test_target_function_registry_has_all():
-    for name in ("stress", "load", "grain", "roundness_inner", "roundness_outer"):
+    for name in ("stress", "load", "grain", "grain_morph",
+                 "roundness_inner", "roundness_outer"):
         assert DeformConfig.get_target_function(name) is not None
     assert DeformConfig.get_target_function("missing") is None

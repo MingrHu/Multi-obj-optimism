@@ -22,7 +22,8 @@ ExtractorKind = Literal["key_lines", "key_file"]
 class KeyLinesExtractor(Protocol):
     """基于 KEY 文本行的提取器协议。"""
 
-    def __call__(self, all_lines: List[List[str]], obj_id: str, in_progress: bool) -> str:
+    def __call__(self, all_lines: List[List[str]], obj_id: str, in_progress: bool,
+                 select_component=None) -> str:
         ...
 
 

@@ -1,9 +1,8 @@
 """DEFORM KEY 文件目标提取原子函数。
 
-从 ``AutoScript/utils.py`` 原样搬入的自定义提取函数：按目标（应力/载荷/晶粒）
-从 KEY 文件解析出的多帧文本行中抽取标量结果。这些函数体保持 byte-for-byte 不变，
-由 :mod:`mobo.extraction` 在导入时注册到原子能力层，并由
-:class:`mobo.automation.config.DeformConfig` 继续复用。
+按目标（应力/载荷/晶粒）从 KEY 文件解析出的多帧文本行中抽取标量结果。统一签名
+``fn(AllLines, obj_id, inprogress, select_component)``，其中 ``select_component``
+用于选取存在多分量的目标（如载荷方向、晶粒组织分量）。
 """
 
 import numpy as np
@@ -13,7 +12,7 @@ from typing import List
 
 ##########################################################
 ###################自定义提取函数部分########################
-def _extractMaxStress(AllLines:List[List[str]],obj_id:str,inprogress:bool)->str:
+def _extractMaxStress(AllLines:List[List[str]],obj_id:str,inprogress:bool,select_component=None)->str:
     finall_res = -1.0
     # 找首行
     def fun(lines:List[str])->float:
@@ -44,25 +43,17 @@ def _extractMaxStress(AllLines:List[List[str]],obj_id:str,inprogress:bool)->str:
         finall_res = fun(AllLines[-1])
     return "{:.2f}".format(finall_res)
 
-def _extractMaxLoad(AllLines:List[List[str]],obj_id:str,inprogress:bool,dim:int=4)->str:
-    # 模具载荷提取
-    # dim: 2=x,3=y,4=z, -2=合力(√(Fx²+Fy²+Fz²))
+def _extractMaxLoad(AllLines:List[List[str]],obj_id:str,inprogress:bool,select_component=0)->str:
+    # 载荷提取：FORCE obj fx [fy] [fz]，select_component 选取分量索引(0=x,1=y,2=z)
+    idx = int(select_component)
     finall_res = 0.0
     def fun(lines:List[str])->float:
         for line in lines:
             arry=line.split()
-             # 根据deform的key文件关键字分布情况
-            if len(arry)==5 and arry[0]=='FORCE' and arry[1]==obj_id:
-                fx,fy,fz=map(float,arry[2:5])
-                if dim==2:
-                    return fx
-                elif dim==3:
-                    return fy
-                elif dim==4 or dim == -1:
-                    return fz
-                elif dim==-2:return (fx**2+fy**2+fz**2)**0.5
+            if len(arry)>=3 and arry[0]=='FORCE' and arry[1]==obj_id:
+                comps=list(map(float,arry[2:]))
+                return comps[idx] if 0<=idx<len(comps) else 0.0
         return 0.0
-
     if inprogress:
         for lines in AllLines:
             finall_res=max(fun(lines),finall_res)
@@ -70,9 +61,10 @@ def _extractMaxLoad(AllLines:List[List[str]],obj_id:str,inprogress:bool,dim:int=
         finall_res=fun(AllLines[-1])
     return f"{finall_res:.2f}"
 
-def _extractGrainStdv(AllLines:List[List[str]],obj_id:str,inprogress:bool)->str:
+def _extractUsrGrainStdv(AllLines:List[List[str]],obj_id:str,inprogress:bool,select_component=3)->str:
+    # 自定义晶粒模型时才用 USRELM；select_component 为每单元行的列索引
+    col = int(select_component)
     finall_res = 0.0
-    # 提取锻件晶粒尺寸信息
     def fun(lines:List[str])->float:
         pos,num = -1,0
         grainsize = []
@@ -85,13 +77,42 @@ def _extractGrainStdv(AllLines:List[List[str]],obj_id:str,inprogress:bool)->str:
         if pos != -1 and num > 0:
             for i in range(num):
                 arr = lines[pos + i].split()
-                grainsize.append(float(arr[3]))
+                grainsize.append(float(arr[col]))
             res = statistics.stdev(grainsize)
         return res
     if inprogress:
         for lines in AllLines:
-            # 有必要讨论一下晶粒的相关情况
-            # TODO(MingrHu)
+            finall_res = max(fun(lines),finall_res)
+    else:
+        finall_res = fun(AllLines[-1])
+    return "{:.2f}".format(finall_res)
+
+def _extractGrainMorph(AllLines:List[List[str]],obj_id:str,inprogress:bool,select_component=0)->str:
+    # GRAIN obj num_units vals_per_unit ...，每单元 vals_per_unit 个晶粒组织信息
+    # select_component 选取单元内第几个分量，跨单元求标准差
+    comp = int(select_component)
+    finall_res = 0.0
+    def fun(lines:List[str])->float:
+        pos,num,per = -1,0,0
+        for index,line in enumerate(lines):
+            arry = line.split()
+            if len(arry) >= 4 and arry[0] == 'GRAIN' and arry[1] == obj_id:
+                pos,num,per = index + 1,int(arry[2]),int(arry[3])
+                break
+        if pos == -1 or num <= 0 or per <= 0:
+            return 0.0
+        values = []
+        i = pos
+        for _ in range(num):
+            unit = lines[i].split()[1:]
+            i += 1
+            while len(unit) < per:
+                unit += lines[i].split()
+                i += 1
+            values.append(float(unit[comp]))
+        return statistics.stdev(values) if len(values) > 1 else 0.0
+    if inprogress:
+        for lines in AllLines:
             finall_res = max(fun(lines),finall_res)
     else:
         finall_res = fun(AllLines[-1])

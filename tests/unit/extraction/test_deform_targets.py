@@ -1,14 +1,14 @@
 """deform_targets 原子提取函数与 von Mises 数值测试。"""
 
-import math
+import statistics
 
-import numpy as np
 import pytest
 
 from mobo.extraction.deform_targets import (
-    _extractGrainStdv,
+    _extractGrainMorph,
     _extractMaxLoad,
     _extractMaxStress,
+    _extractUsrGrainStdv,
     calculate_von_mises,
 )
 
@@ -23,42 +23,67 @@ def test_calculate_von_mises_hydrostatic():
     assert calculate_von_mises([5, 5, 5, 0, 0, 0]) == pytest.approx(0.0)
 
 
-def test_extract_max_load_last_frame():
-    frame = [
-        "some header line",
-        "FORCE 2 0 0 123456.0",
-        "other",
-    ]
-    # obj_id 为对象 ID 字符串，需与 FORCE 行的第 2 列 (arry[1]) 一致
-    result = _extractMaxLoad([frame], obj_id="2", inprogress=False)
-    assert result == "123456.00"
+def test_extract_max_load_selects_component():
+    frame = ["FORCE 2 10.0 20.0 30.0"]
+    assert _extractMaxLoad([frame], obj_id="2", inprogress=False, select_component=0) == "10.00"
+    assert _extractMaxLoad([frame], obj_id="2", inprogress=False, select_component=2) == "30.00"
+
+
+def test_extract_max_load_variable_components():
+    # 只有 x 分量时，越界分量返回 0
+    frame = ["FORCE 2 15.0"]
+    assert _extractMaxLoad([frame], obj_id="2", inprogress=False, select_component=0) == "15.00"
+    assert _extractMaxLoad([frame], obj_id="2", inprogress=False, select_component=2) == "0.00"
 
 
 def test_extract_max_load_inprogress_takes_max():
-    f1 = ["FORCE 2 0 0 100.0"]
-    f2 = ["FORCE 2 0 0 250.0"]
-    f3 = ["FORCE 2 0 0 180.0"]
-    result = _extractMaxLoad([f1, f2, f3], obj_id="2", inprogress=True)
+    f1 = ["FORCE 2 100.0 0 0"]
+    f2 = ["FORCE 2 250.0 0 0"]
+    f3 = ["FORCE 2 180.0 0 0"]
+    result = _extractMaxLoad([f1, f2, f3], obj_id="2", inprogress=True, select_component=0)
     assert result == "250.00"
 
 
-def test_extract_grain_stdv():
-    # USRELM 1 3 -> 随后 3 行，arr[3] 为晶粒尺寸；obj_id 为对象 ID (arry[1])
+def test_extract_usr_grain_stdv():
+    # USRELM 1 3 -> 随后 3 行，select_component 选列（默认 3）
     frame = [
         "USRELM 1 3 x x",
         "1 a b 10.0",
         "2 a b 20.0",
         "3 a b 30.0",
     ]
-    result = _extractGrainStdv([frame], obj_id="1", inprogress=False)
-    import statistics
+    result = _extractUsrGrainStdv([frame], obj_id="1", inprogress=False, select_component=3)
     expected = statistics.stdev([10.0, 20.0, 30.0])
     assert float(result) == pytest.approx(expected, rel=1e-6)
 
 
+def test_extract_grain_morph_selects_component():
+    # GRAIN 1 2 16 -> 2 个单元，每单元 16 个值（跨多行），comp 选单元内分量
+    frame = [
+        "GRAIN 1 2 16 0.0",
+        "1 1.0 40 40 0 0",
+        "0 0 0 0 4.0",
+        "0 0 0 0 0",
+        "9.0",
+        "2 2.0 40 40 0 0",
+        "0 0 0 0 4.0",
+        "0 0 0 0 0",
+        "1.0",
+    ]
+    # 单元内索引 0 -> [1.0, 2.0]
+    r0 = _extractGrainMorph([frame], obj_id="1", inprogress=False, select_component=0)
+    assert r0 == "{:.2f}".format(statistics.stdev([1.0, 2.0]))
+    # 单元内索引 15 -> [9.0, 1.0]
+    r15 = _extractGrainMorph([frame], obj_id="1", inprogress=False, select_component=15)
+    assert r15 == "{:.2f}".format(statistics.stdev([9.0, 1.0]))
+
+
+def test_extract_grain_morph_missing_block():
+    assert _extractGrainMorph([["nothing here"]], obj_id="1", inprogress=False) == "0.00"
+
+
 def test_extract_max_stress():
     # STRESS <obj> <num>=1 <x> -> 1 对数据行
-    # arry1: 索引1..5 为 sxx..syz，arry2[0] 为 sxz
     frame = [
         "STRESS 1 1 x",
         "id 10.0 0.0 0.0 0.0 0.0",

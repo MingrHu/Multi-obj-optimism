@@ -51,7 +51,7 @@ markers = [
     "deform: 依赖 Windows DEFORM 环境的用例",
     "integration: 依赖仓库 data/ 真实产物的集成用例",
 ]
-addopts = "-m 'not slow' --cov=mobo --cov-report=term-missing"
+addopts = "-m 'not slow' --cov=mobo --cov-report=term-missing --import-mode=importlib"
 
 [tool.coverage.run]
 source = ["mobo"]

@@ -36,8 +36,8 @@ def test_extract_dataset_writes_result(monkeypatch, tmp_path):
     # 目标提取函数：记录收到的统一签名参数，返回固定值
     received = []
 
-    def fake_extractor(key_files, frames, obj, prog):
-        received.append((obj, frames))
+    def fake_extractor(key_files, frames, obj, prog, select_component):
+        received.append((obj, frames, select_component))
         return "42.00"
 
     monkeypatch.setattr(DeformConfig, "get_target_function", classmethod(lambda cls, name: fake_extractor))
@@ -47,7 +47,7 @@ def test_extract_dataset_writes_result(monkeypatch, tmp_path):
         ["workpiece", "topdie"],
         ["900", "30"],  # 样本 0
     ]
-    target_table = [["grain"], ["workpiece"]]
+    target_table = [["grain"], ["workpiece"], [3]]
     db_files = [str(tmp_path / "res" / "model.DB")]
     os.makedirs(os.path.dirname(db_files[0]), exist_ok=True)
 
@@ -64,8 +64,8 @@ def test_extract_dataset_writes_result(monkeypatch, tmp_path):
     content = open(out, encoding="utf-8").read()
     # 行号 + 工艺参数 + 目标值
     assert "900" in content and "30" in content and "42.00" in content
-    # 提取函数应收到对象 ID（"1"），而非对象名（"workpiece"）
-    assert received == [("1", [["frame"]])]
+    # 提取函数应收到对象 ID（"1"）与 select_component（3）
+    assert received == [("1", [["frame"]], 3)]
 
 
 def test_extract_dataset_routes_roundness(monkeypatch, tmp_path):
@@ -84,7 +84,7 @@ def test_extract_dataset_routes_roundness(monkeypatch, tmp_path):
     )
 
     param_table = [["temp"], ["workpiece"], ["900"]]
-    target_table = [["roundness_inner"], ["workpiece"]]
+    target_table = [["roundness_inner"], ["workpiece"], [None]]
     db_files = [str(tmp_path / "res" / "model.DB")]
     os.makedirs(os.path.dirname(db_files[0]), exist_ok=True)
 

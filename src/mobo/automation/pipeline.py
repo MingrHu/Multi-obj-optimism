@@ -9,7 +9,7 @@ from __future__ import annotations
 import os
 import threading
 from enum import IntEnum
-from typing import Callable, List, Optional, Sequence
+from typing import Callable, List, Optional, Sequence, Tuple
 
 from mobo.common.logging import logger
 from .extract import extract_dataset
@@ -57,7 +57,7 @@ class ForgingTask:
     :param result_key_dir: 结果 KEY（逐步导出）保存目录
     :param result_txt_dir: 数据集输出目录
     :param param_table: 工艺参数固定表头 ``[[参数名...], [对象名...]]``（2×n）
-    :param target_table: 目标固定表头 ``[[目标名...], [对象名...]]``（2×m）
+    :param target_table: 目标固定表头 ``[[目标名...], [对象名...], [select_component...]]``（3×m）
     :param in_progress: 每个目标是否走全过程提取（1×m）
     :param max_step: KEY 求解过程最大步数
     :param dry_run: 为 True 时只推进状态、不真正调用 DEFORM（用于非 Windows/测试）
@@ -145,19 +145,28 @@ class ForgingTask:
             thread.join()  # 等待 KEY 文件生成完成，避免后续阶段找不到文件
         return
 
-    def run_solver(self) -> Optional[threading.Thread]:
-        """阶段二：KEY→DB 转换并提交求解（异步）。"""
-        key_paths: List[str] = []
-        db_paths: List[str] = []
+    def prepare_db_files(self) -> List[Tuple[str, str]]:
+        """按结果 DB 目录约定重建 ``db_files``（确定性文件名，支持续跑）。
+
+        每个输入 KEY 对应 ``result_db_dir/<i>/<stem>.DB``；已生成的直接复用。
+        :return: 未生成 DB 的 (key_path, db_path) 列表，供 KEY→DB 转换使用
+        """
+        self.db_files = []
+        pending: List[Tuple[str, str]] = []
         for i, key_file in enumerate(self.key_files):
             db_dir = os.path.join(self.result_db_dir, str(i))
             os.makedirs(db_dir, exist_ok=True)
             db_file = derive_output_path(key_file, db_dir, "", "DB")
             self.db_files.append(db_file)
-            if os.path.exists(db_file):
-                continue
-            key_paths.append(key_file)
-            db_paths.append(db_file)
+            if not os.path.exists(db_file):
+                pending.append((key_file, db_file))
+        return pending
+
+    def run_solver(self) -> Optional[threading.Thread]:
+        """阶段二：KEY→DB 转换并提交求解（异步）。"""
+        pending = self.prepare_db_files()
+        key_paths = [k for k, _ in pending]
+        db_paths = [d for _, d in pending]
 
         def work() -> None:
             if self.dry_run:

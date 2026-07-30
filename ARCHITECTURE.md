@@ -38,17 +38,20 @@
 
 | 子包 | 模块 | 职责 |
 |---|---|---|
-| `common` | `paths.py` | 集中式路径解析（`PROJECT_DIR/DATA_DIR/MODELS_DIR/TEST_DIR/KEY_FILE_DIR`）+ 环境变量覆盖 |
+| `common` | `paths.py` | 集中式路径解析（`PROJECT_DIR/DATA_DIR/MODELS_DIR/TEST_DIR/KEY_FILE_DIR/TASKS_DIR`）+ 环境变量覆盖 |
 | `common` | `logging.py` | `GlobalLogger` 单例；显式 stdout 重定向 |
+| `common` | `task_store.py` | 任务状态持久化（`data/tasks/<id>/state.json`），三流程共用，支持仅凭 ID 续跑 |
 | `surrogate` | `common.py` | 数据加载/划分/标准化、指标、`save_model`、`Time`、DNN 构建 |
 | `surrogate` | `dnn/polynomial/svr/random_forest/kriging.py` | 五种代理模型训练入口 |
 | `surrogate` | `interface.py` | `Doe_surrogateModel` 统一训练接口 |
 | `surrogate` | `evaluate.py` | `SurrogateModelEvaluator` K 折交叉验证与报告 |
+| `surrogate` | `service.py` | `train_surrogate`/`query_model_status`：`model_id` 主键，req/resp 落盘 |
 | `optimization/ga` | `problem.py` | `SurrogateOptimizationProblem`（pymoo 问题）|
 | `optimization/ga` | `operators.py` | `AdaptiveSBX` 自适应交叉、Pareto 结果读写 |
 | `optimization/ga` | `run.py` | `NSGA2_run` 运行入口 |
 | `optimization/rl` | `env.py` | `ForgingEnv`（Gymnasium 环境）|
 | `optimization/rl` | `run.py` | `train_and_optimize`（PPO）|
+| `optimization` | `service.py` | `run_optimization`/`query_optimization_status`：`opt_` 主键，结果落盘 |
 | `extraction` | `base.py` / `registry.py` | 原子能力层类型与注册/分派 |
 | `extraction` | `deform_targets.py` | DEFORM 目标提取原子函数（`_extract*`）|
 | `extraction` | `ring_roundness.py` | 碾环截面圆度纯函数 + `extract_ring_roundness` 适配器 |
@@ -58,7 +61,7 @@
 | `automation` | `solver.py` | DEFORM 子进程驱动（KEY↔DB）与 `DeformSolver` 求解调度 |
 | `automation` | `extract.py` | 结果 DB→KEY 逐步导出与数据集提取编排 |
 | `automation` | `pipeline.py` | `TaskStatus`（枚举）/ `ForgingTask` 三阶段状态机 / `generate_sample_file` |
-| `automation` | `service.py` | 任务级服务函数（snake_case）|
+| `automation` | `service.py` | 任务级服务函数：state.json 落盘 + 仅凭 task_id 从磁盘重建续跑 |
 
 ## 数据流
 
