@@ -40,7 +40,7 @@
 |---|---|---|
 | `common` | `paths.py` | 集中式路径解析（`PROJECT_DIR/DATA_DIR/MODELS_DIR/TEST_DIR/KEY_FILE_DIR/TASKS_DIR`）+ 环境变量覆盖 |
 | `common` | `logging.py` | `GlobalLogger` 单例；显式 stdout 重定向 |
-| `common` | `task_store.py` | 任务状态持久化（`data/tasks/<id>/state.json`），三流程共用，支持仅凭 ID 续跑 |
+| `common` | `task_store.py` | 任务状态持久化（`data/tasks/<id>/state.json`），三流程共用；`history` 完整记录阶段转移（只追加不覆盖），`resolve_req` 三路解析续跑参数（记录 > 传入 > 报错） |
 | `surrogate` | `common.py` | 数据加载/划分/标准化、指标、`save_model`、`Time`、DNN 构建 |
 | `surrogate` | `dnn/polynomial/svr/random_forest/kriging.py` | 五种代理模型训练入口 |
 | `surrogate` | `interface.py` | `Doe_surrogateModel` 统一训练接口 |

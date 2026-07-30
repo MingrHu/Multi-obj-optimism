@@ -41,6 +41,9 @@ _PARAM_ORDER = {
     "DNN": ["epochs", "batch_size", "verbose", "patience"],
 }
 
+# 训练续跑所需的参数键（三路解析：记录 > 传入 > 报错）
+_REQUIRED_TRAIN_KEYS = ("data_file", "vars_out", "n_vars", "model_index", "biz_params")
+
 
 def _new_model_id() -> str:
     return "tr_" + datetime.now().strftime("%Y%m%d_%H%M_%S%f")[:-3]
@@ -52,14 +55,17 @@ def _to_model_par(family: str, biz_params: Dict[str, Any]) -> List[str]:
 
 
 def train_surrogate(
-    data_file: str,
-    vars_out: List[str],
-    n_vars: int,
-    model_index: int,
+    data_file: Optional[str] = None,
+    vars_out: Optional[List[str]] = None,
+    n_vars: Optional[int] = None,
+    model_index: Optional[int] = None,
     biz_params: Optional[Dict[str, Any]] = None,
     model_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """训练一个代理模型并把请求/响应落盘到 state.json。
+
+    输入参数走三路解析：优先用 ``model_id`` 记录里的 req，缺失时用本次传入值并
+    回填记录，两者都没有则报错。
 
     :param data_file: 数据集文件（绝对路径）
     :param vars_out: 变量名列表（前 n_vars 为输入，其余为目标）
@@ -69,17 +75,22 @@ def train_surrogate(
     :param model_id: 复用已有 model_id（None 则新建）
     :return: 协议 resp 字典（code/msg/model_id/data）
     """
-    biz_params = biz_params or {}
+    model_id = model_id or _new_model_id()
+    try:
+        req = task_store.resolve_req(model_id, _KIND, {
+            "data_file": data_file, "vars_out": vars_out, "n_vars": n_vars,
+            "model_index": model_index, "biz_params": biz_params or {},
+        }, _REQUIRED_TRAIN_KEYS)
+    except ValueError as exc:
+        return {"code": 1, "msg": f"续跑参数缺失：{exc}", "model_id": model_id, "data": {}}
+
+    model_index = req["model_index"]
     if model_index not in _INDEX_MAP:
         return {"code": 1, "msg": f"不支持的 model_index：{model_index}", "model_id": model_id, "data": {}}
 
     which_model, family = _INDEX_MAP[model_index]
-    model_id = model_id or _new_model_id()
-
-    task_store.init_state(model_id, _KIND, {
-        "data_file": data_file, "vars_out": vars_out, "n_vars": n_vars,
-        "model_index": model_index, "biz_params": biz_params,
-    })
+    data_file, vars_out, n_vars = req["data_file"], req["vars_out"], req["n_vars"]
+    biz_params = req["biz_params"] or {}
     task_store.update(model_id, stage="train", status="running")
 
     try:

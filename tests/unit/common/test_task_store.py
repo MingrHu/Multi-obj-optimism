@@ -50,3 +50,38 @@ def test_save_refreshes_updated_at():
     task_store.update("t1", stage="optimize")
     assert task_store.load("t1")["created_at"] == created
     assert "updated_at" in task_store.load("t1")
+
+
+def test_history_accumulates_not_overwrites():
+    task_store.init_state("t1", "automation", {})
+    task_store.update("t1", stage="generate_keys", status="finished")
+    task_store.update("t1", stage="run_solver", status="finished")
+    task_store.update("t1", data={"x": 1})  # 无 stage/status，不追加记录
+    stages = [h["stage"] for h in task_store.load("t1")["history"]]
+    assert stages == ["init", "generate_keys", "run_solver"]
+
+
+def test_resolve_req_prefers_record():
+    task_store.init_state("t1", "automation", {"a": 1})
+    # 记录里已有 a，传入的 a 被忽略；b 记录没有则采用传入并回填
+    resolved = task_store.resolve_req("t1", "automation", {"a": 999, "b": 2}, ["a", "b"])
+    assert resolved == {"a": 1, "b": 2}
+    assert task_store.load("t1")["req"] == {"a": 1, "b": 2}
+
+
+def test_resolve_req_uses_provided_when_no_record():
+    resolved = task_store.resolve_req("t1", "automation", {"a": 1, "b": 2}, ["a", "b"])
+    assert resolved == {"a": 1, "b": 2}
+    # 任务不存在时用传入参数初始化记录
+    assert task_store.load("t1")["req"] == {"a": 1, "b": 2}
+
+
+def test_resolve_req_missing_raises():
+    task_store.init_state("t1", "automation", {"a": 1})
+    with pytest.raises(ValueError):
+        task_store.resolve_req("t1", "automation", {}, ["a", "b"])
+
+
+def test_resolve_req_none_counts_as_missing():
+    with pytest.raises(ValueError):
+        task_store.resolve_req("t1", "automation", {"a": None}, ["a"])

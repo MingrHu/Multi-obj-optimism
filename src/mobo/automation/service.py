@@ -11,7 +11,7 @@
 from __future__ import annotations
 
 import os
-from typing import Dict, List
+from typing import Any, Dict, List, Optional
 
 from mobo.common import task_store
 from mobo.common.logging import logger
@@ -29,18 +29,28 @@ _REQUIRED_PATH_KEYS = (
     "res_txt_path",
 )
 
+# 执行任务续跑所需的参数键（三路解析：记录 > 传入 > 报错）
+_REQUIRED_EXEC_KEYS = (
+    "paths_config",
+    "param_table",
+    "target_table",
+    "in_progress",
+    "max_step",
+)
+
 
 def _result(task_id: str, ok: bool, message: str) -> Dict[str, str]:
     """构造统一的服务返回结构。"""
     return {"task_id": task_id, "status": "success" if ok else "failed", "message": message}
 
 
-def _rebuild_task(task_id: str) -> ForgingTask:
-    """按落盘的 req 从磁盘目录重建 ForgingTask（中间产物由确定性文件名推导）。"""
-    state = task_store.load(task_id)
-    if state is None:
-        raise FileNotFoundError(f"执行任务不存在：{task_id}")
-    req = state["req"]
+def _rebuild_task(task_id: str, provided: Optional[Dict[str, Any]] = None) -> ForgingTask:
+    """按参数从磁盘目录重建 ForgingTask（中间产物由确定性文件名推导）。
+
+    参数走三路解析：优先用任务记录里的 req，缺失时用本次传入值并回填记录，
+    两者都没有则报错。
+    """
+    req = task_store.resolve_req(task_id, _KIND, provided or {}, _REQUIRED_EXEC_KEYS)
     paths = req["paths_config"]
     task = ForgingTask(
         sample_file=paths["smp_file"],
@@ -105,39 +115,41 @@ def init_execution_task(
             target_dir = path if not os.path.splitext(path)[1] else os.path.dirname(path)
             os.makedirs(target_dir, exist_ok=True)
 
-        # 落盘续跑所需的全部输入参数
-        task_store.init_state(task_id, _KIND, {
+        # 三路解析并落盘续跑所需的全部输入参数（记录已有则沿用，缺失则回填）
+        task = _rebuild_task(task_id, {
             "paths_config": paths_config,
             "param_table": param_table,
             "target_table": target_table,
             "in_progress": in_progress,
             "max_step": max_step,
         })
-
-        task = _rebuild_task(task_id)
         task.generate_keys()
         task_store.update(task_id, stage="generate_keys", status="finished",
                           data={"key_file_count": len(task.key_files)})
         return _result(task_id, True, "执行任务初始化成功，KEY 文件生成完成")
     except Exception as exc:
         logger.error(f"执行任务初始化失败：{exc}")
-        task_store.update(task_id, stage="generate_keys", status="failed")
+        if task_store.exists(task_id):
+            task_store.update(task_id, stage="generate_keys", status="failed")
         return _result(task_id, False, f"执行任务初始化失败：{exc}")
 
 
-def run_execution_step(task_id: str) -> Dict[str, str]:
-    """推进求解阶段（仅凭 task_id 从磁盘重建任务）。"""
-    if not task_store.exists(task_id):
-        return _result(task_id, False, "执行任务不存在")
+def run_execution_step(task_id: str, **overrides: Any) -> Dict[str, str]:
+    """推进求解阶段。
+
+    优先从任务记录续跑；记录缺失的参数可用 ``overrides`` 补齐（会回填记录），
+    记录与传入都没有则报错。
+    """
     try:
-        task = _rebuild_task(task_id)
+        task = _rebuild_task(task_id, overrides)
         task.run_solver()
         task_store.update(task_id, stage="run_solver", status="finished",
                           data={"db_file_count": len(task.db_files)})
         return _result(task_id, True, "计算任务运行完成")
     except Exception as exc:
         logger.error(f"求解运行失败：{exc}")
-        task_store.update(task_id, stage="run_solver", status="failed")
+        if task_store.exists(task_id):
+            task_store.update(task_id, stage="run_solver", status="failed")
         return _result(task_id, False, f"求解运行失败：{exc}")
 
 
@@ -153,12 +165,14 @@ def query_execution_status(task_id: str) -> Dict[str, str]:
     }
 
 
-def run_extract_data(task_id: str) -> Dict[str, str]:
-    """推进数据提取阶段（仅凭 task_id 从磁盘重建任务）。"""
-    if not task_store.exists(task_id):
-        return _result(task_id, False, "执行任务不存在")
+def run_extract_data(task_id: str, **overrides: Any) -> Dict[str, str]:
+    """推进数据提取阶段。
+
+    优先从任务记录续跑；记录缺失的参数可用 ``overrides`` 补齐（会回填记录），
+    记录与传入都没有则报错。
+    """
     try:
-        task = _rebuild_task(task_id)
+        task = _rebuild_task(task_id, overrides)
         task.prepare_db_files()  # 按结果 DB 目录约定重建 db_files
         task.extract()
         task_store.update(task_id, stage="extract", status="finished",
@@ -166,7 +180,8 @@ def run_extract_data(task_id: str) -> Dict[str, str]:
         return _result(task_id, True, "数据提取完成")
     except Exception as exc:
         logger.error(f"数据提取失败：{exc}")
-        task_store.update(task_id, stage="extract", status="failed")
+        if task_store.exists(task_id):
+            task_store.update(task_id, stage="extract", status="failed")
         return _result(task_id, False, f"数据提取失败：{exc}")
 
 

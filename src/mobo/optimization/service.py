@@ -23,6 +23,9 @@ from mobo.optimization.rl.run import train_and_optimize
 
 _KIND = "optimization"
 
+# 优化续跑所需的参数键（三路解析：记录 > 传入 > 报错）
+_REQUIRED_OPT_KEYS = ("optimizer",)
+
 
 def _new_task_id() -> str:
     return "opt_" + datetime.now().strftime("%Y%m%d_%H%M_%S%f")[:-3]
@@ -30,20 +33,28 @@ def _new_task_id() -> str:
 
 def run_optimization(
     req: Optional[Dict[str, Any]] = None,
-    optimizer: str = "nsga2",
+    optimizer: Optional[str] = None,
     task_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """运行多目标优化并把请求/响应落盘到 state.json。
+
+    输入参数走三路解析：优先用 ``task_id`` 记录里的 req，缺失时用本次传入值并
+    回填记录，两者都没有则报错。
 
     :param req: 协议输入参数（model_id/objective_names/constraints 等，用于溯源）
     :param optimizer: ``"nsga2"``（GA）或 ``"rl"``（PPO）
     :param task_id: 复用已有 task_id（None 则新建）
     :return: 协议 resp 字典（code/msg/task_id/data）
     """
-    req = req or {}
     task_id = task_id or _new_task_id()
+    try:
+        resolved = task_store.resolve_req(
+            task_id, _KIND, {**(req or {}), "optimizer": optimizer}, _REQUIRED_OPT_KEYS
+        )
+    except ValueError as exc:
+        return {"code": 1, "msg": f"续跑参数缺失：{exc}", "task_id": task_id, "data": {}}
 
-    task_store.init_state(task_id, _KIND, {"optimizer": optimizer, **req})
+    optimizer = resolved["optimizer"]
     task_store.update(task_id, stage="optimize", status="running")
 
     try:
@@ -62,7 +73,7 @@ def run_optimization(
         cost = round(time.time() - started, 2)
 
         data = {
-            "task_info": {"model_id": req.get("model_id"), "optimizer": optimizer,
+            "task_info": {"model_id": resolved.get("model_id"), "optimizer": optimizer,
                           "run_time_sec": cost},
             "file_resource": file_resource,
         }

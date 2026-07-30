@@ -86,3 +86,28 @@ def test_query_model_status():
     assert resp["code"] == 0
     assert resp["data"]["status"] == "finished"
     assert service.query_model_status("nope")["code"] == 1
+
+
+def test_train_resumes_from_record():
+    """先落盘参数，再仅凭 model_id 续跑（不重传参数）。"""
+    service.train_surrogate("d.txt", ["1", "grain"], 1, model_index=0, model_id="tr_r")
+    _FakeDoe.calls = []
+    # 只传 model_id，参数从记录读取
+    resp = service.train_surrogate(model_id="tr_r")
+    assert resp["code"] == 0
+    assert _FakeDoe.calls == [(2, [])]
+
+
+def test_train_missing_params_reports_error():
+    """无记录且未传必要参数 -> code 1。"""
+    resp = service.train_surrogate(model_id="tr_missing")
+    assert resp["code"] == 1
+    assert "缺失" in resp["msg"]
+
+
+def test_train_record_takes_precedence():
+    """已有记录时，重传的参数不覆盖记录里的值。"""
+    service.train_surrogate("d.txt", ["1", "grain"], 1, model_index=0, model_id="tr_p")
+    service.train_surrogate("other.txt", model_index=4, model_id="tr_p")
+    assert task_store.load("tr_p")["req"]["data_file"] == "d.txt"
+    assert task_store.load("tr_p")["req"]["model_index"] == 0

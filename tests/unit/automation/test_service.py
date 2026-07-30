@@ -124,3 +124,44 @@ def test_query_execution_status_reads_state(monkeypatch, tmp_path):
     res = service.query_execution_status("t1")
     assert res["status"] == "finished"
     assert "generate_keys" in res["message"]
+
+
+def test_state_history_accumulates(monkeypatch, tmp_path):
+    """完整记录各阶段的状态转移，而非覆盖。"""
+    monkeypatch.setattr(service, "ForgingTask", _FakeTask)
+    service.init_execution_task(
+        "t1", _paths(tmp_path), [["temp"], ["workpiece"]], [["grain"], ["workpiece"]], [False], 100
+    )
+    service.run_execution_step("t1")
+    service.run_extract_data("t1")
+    stages = [h["stage"] for h in task_store.load("t1")["history"]]
+    assert stages == ["init", "generate_keys", "run_solver", "extract"]
+
+
+def test_run_without_record_needs_params(monkeypatch, tmp_path):
+    """无任务记录且不传参 -> 报错；补齐传参 -> 成功并落盘。"""
+    monkeypatch.setattr(service, "ForgingTask", _FakeTask)
+    # 既无记录也无传入参数
+    assert service.run_execution_step("fresh")["status"] == "failed"
+
+    # 传入参数补齐则可续跑，并回填记录
+    res = service.run_execution_step(
+        "fresh",
+        paths_config=_paths(tmp_path),
+        param_table=[["temp"], ["workpiece"]],
+        target_table=[["grain"], ["workpiece"]],
+        in_progress=[False],
+        max_step=100,
+    )
+    assert res["status"] == "success"
+    assert task_store.load("fresh")["req"]["max_step"] == 100
+
+
+def test_record_takes_precedence_over_overrides(monkeypatch, tmp_path):
+    """已有记录时，传入的 overrides 不覆盖记录里的参数。"""
+    monkeypatch.setattr(service, "ForgingTask", _FakeTask)
+    service.init_execution_task(
+        "t1", _paths(tmp_path), [["temp"], ["workpiece"]], [["grain"], ["workpiece"]], [False], 100
+    )
+    service.run_execution_step("t1", max_step=999)
+    assert task_store.load("t1")["req"]["max_step"] == 100

@@ -60,3 +60,28 @@ def test_query_optimization_status(_fake_optimizers):
     assert resp["code"] == 0
     assert resp["data"]["status"] == "finished"
     assert service.query_optimization_status("nope")["code"] == 1
+
+
+def test_run_resumes_from_record(_fake_optimizers):
+    """先落盘 optimizer/model_id，再仅凭 task_id 续跑（不重传）。"""
+    service.run_optimization({"model_id": "tr_1"}, optimizer="rl", task_id="opt_r")
+    resp = service.run_optimization(task_id="opt_r")
+    assert resp["code"] == 0
+    # optimizer 从记录读取，仍走 rl 分支并保留 model_id 溯源
+    assert _fake_optimizers == ["rl", "rl"]
+    assert resp["data"]["task_info"]["model_id"] == "tr_1"
+
+
+def test_run_missing_optimizer_reports_error():
+    """无记录且未传 optimizer -> code 1。"""
+    resp = service.run_optimization(task_id="opt_missing")
+    assert resp["code"] == 1
+    assert "缺失" in resp["msg"]
+
+
+def test_run_record_takes_precedence(_fake_optimizers):
+    """已有记录时，重传的 optimizer 不覆盖记录里的值。"""
+    service.run_optimization({}, optimizer="nsga2", task_id="opt_pre")
+    service.run_optimization(optimizer="rl", task_id="opt_pre")
+    # 记录里的 optimizer 仍是 nsga2，两次都走 nsga2
+    assert _fake_optimizers == ["nsga2", "nsga2"]

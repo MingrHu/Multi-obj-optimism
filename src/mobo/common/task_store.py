@@ -15,7 +15,8 @@ state.json 结构（约定，字段按流程可选）::
         "status": "running" | "finished" | "failed",
         "stage": "<当前阶段名>",
         "req": { ... },        # 原始输入参数（用于续跑）
-        "data": { ... }        # 阶段产物 / 结果（含文件路径、指标等）
+        "data": { ... },       # 阶段产物 / 结果（含文件路径、指标等）
+        "history": [ ... ]     # 完整的阶段/状态转移记录（只追加，不覆盖）
     }
 """
 
@@ -25,7 +26,7 @@ import json
 import os
 import tempfile
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Iterable, Optional
 
 from mobo.common.paths import task_dir
 
@@ -98,6 +99,7 @@ def init_state(task_id: str, kind: str, req: Dict[str, Any]) -> Dict[str, Any]:
         "stage": "init",
         "req": req,
         "data": {},
+        "history": [{"stage": "init", "status": "running", "at": now}],
     }
     save(state)
     return state
@@ -105,6 +107,9 @@ def init_state(task_id: str, kind: str, req: Dict[str, Any]) -> Dict[str, Any]:
 
 def update(task_id: str, **fields: Any) -> Dict[str, Any]:
     """更新任务状态的顶层字段（``data``/``req`` 做浅合并）并落盘。
+
+    每次更新都会把本次的 ``stage``/``status`` 作为一条记录追加到 ``history``，
+    保留完整的转移轨迹，而不是覆盖历史。
 
     :param task_id: 任务 ID
     :param fields: 待更新字段，如 ``status`` / ``stage`` / ``data`` / ``req``
@@ -121,8 +126,52 @@ def update(task_id: str, **fields: Any) -> Dict[str, Any]:
             state[key] = merged
         else:
             state[key] = value
+    # 追加一条转移记录（完整记录，不覆盖）
+    if "stage" in fields or "status" in fields:
+        history = list(state.get("history") or [])
+        history.append({
+            "stage": state.get("stage"),
+            "status": state.get("status"),
+            "at": _now(),
+        })
+        state["history"] = history
     save(state)
     return state
+
+
+def resolve_req(task_id: str, kind: str, provided: Dict[str, Any],
+                required: Iterable[str]) -> Dict[str, Any]:
+    """三路解析续跑所需参数：优先用任务记录，其次用传入参数，否则报错。
+
+    合并规则：任务记录 ``req`` 里已有的键沿用记录值；记录没有的传入键采用传入值
+    并回填记录（保证记录完整）。``required`` 中的键若在记录与传入里都缺失则报错。
+    非 required 的传入键（如溯源用的 ``model_id``）也会一并回填/返回。
+    不存在的任务会用可用的传入参数初始化。
+
+    :param task_id: 任务 ID
+    :param kind: 流程类型（任务不存在时用于初始化）
+    :param provided: 本次调用传入的参数（值为 None 视为未提供）
+    :param required: 续跑必需的参数键
+    :return: 合并后的完整 req 字典（记录值优先）
+    :raises ValueError: 某个必需参数在记录与传入中都缺失
+    """
+    provided = {k: v for k, v in (provided or {}).items() if v is not None}
+    state = load(task_id)
+    stored = dict(state.get("req") or {}) if state is not None else {}
+
+    # 记录优先合并；记录缺失的传入键需要回填
+    resolved = {**provided, **stored}
+    backfill = {k: v for k, v in provided.items() if k not in stored}
+
+    missing = [k for k in required if k not in resolved]
+    if missing:
+        raise ValueError(f"续跑缺少必要参数（记录与传入均无）：{', '.join(missing)}")
+
+    if state is None:
+        init_state(task_id, kind, resolved)
+    elif backfill:
+        update(task_id, req=backfill)
+    return resolved
 
 
 __all__ = [
@@ -132,4 +181,5 @@ __all__ = [
     "save",
     "init_state",
     "update",
+    "resolve_req",
 ]
