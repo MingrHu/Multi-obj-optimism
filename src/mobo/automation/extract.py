@@ -56,23 +56,24 @@ def extract_dataset(
     :param result_dir: 数据集输出目录
     :return: 输出数据集文件完整路径
     """
-    target_names, object_names = target_table[0], target_table[1]
+    target_names, object_names,select_component  = target_table[0], target_table[1],target_table[2]
     result_rows: List[List[Any]] = []
 
     for i, db_file in enumerate(db_files):
         logger.info(f"当前提取的文件为：{db_file}")
         step_dir = os.path.join(key_export_dir, str(i))
+        # 导出key文件
         key_files = _export_all_steps(db_file, step_dir, max_step)
         frames = read_key_frames(key_files)
 
         # 样本工艺参数（param_table 前两行为表头，样本从第 2 行起）
         row: List[Any] = list(param_table[i + 2])
         for idx, target_name in enumerate(target_names):
+            # 1 提取函数
             extractor = DeformConfig.get_target_function(target_name)
-            # 统一签名 fn(key_files, frames, obj_id, in_progress)：文本类用 frames，
-            # 几何类（圆度）用 key_files；对象名先转成 ID。
+            # 2 提取对象
             object_id = DeformConfig.get_object_id(object_names[idx])
-            row.append(extractor(key_files, frames, object_id, in_progress[idx]))
+            row.append(extractor(key_files, frames, object_id, in_progress[idx],select_component[idx]))
         result_rows.append(row)
 
     os.makedirs(result_dir, exist_ok=True)

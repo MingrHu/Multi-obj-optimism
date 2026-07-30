@@ -1,14 +1,7 @@
-"""DEFORM 自动化流水线。
-
+"""
+DEFORM 自动化流水线。
 编排「采样 → 生成 KEY → 求解 → 提取数据集」的完整流程。核心是 :class:`ForgingTask`
 任务类（取代旧的 ``Doe_execute``），每个阶段异步执行并维护 :class:`TaskStatus` 状态。
-
-相较旧实现的改进（不改变对 DEFORM 的调用语义）：
-- 用 :class:`TaskStatus` 枚举取代裸整数 0/1/-1；
-- 采样从「伪类」改为直接调用 :func:`mobo.automation.sampling.generate_samples`；
-- 三个阶段共用 :meth:`ForgingTask._run_async` 执行器，消除重复的线程/状态样板；
-- ``dry_run`` 语义清晰（仅推进状态、不真正调用 DEFORM），取代含糊的 ``is_test``；
-  且不再无谓 ``sleep(10)``。
 """
 
 from __future__ import annotations
@@ -55,10 +48,7 @@ def generate_sample_file(
 
 
 class ForgingTask:
-    """锻造工艺 DOE 求解任务。
-
-    维护「生成 KEY → 求解 → 提取」三阶段的异步执行与状态。任一阶段仅在上一阶段
-    ``DONE`` 时才可启动。
+    """锻造工艺 DOE 求解任务
 
     :param sample_file: 样本文件路径（工艺参数取值，每行一个样本）
     :param template_key: 模板 KEY 文件路径
@@ -110,11 +100,7 @@ class ForgingTask:
         self.status: TaskStatus = TaskStatus.DONE
 
     def _run_async(self, name: str, work: Callable[[], None]) -> Optional[threading.Thread]:
-        """在后台线程执行一个阶段，并维护状态转移。
-
-        仅当当前状态为 ``DONE`` 时才启动；执行期间置 ``RUNNING``，成功置 ``DONE``，
-        异常置 ``FAILED``。
-
+        """在后台线程执行一个阶段，并维护状态转移
         :param name: 阶段名称（用于日志）
         :param work: 阶段实际工作（无参可调用）
         :return: 启动的线程；若前置状态不满足则返回 None

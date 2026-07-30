@@ -43,13 +43,14 @@ def sample_generate_test() -> None:
 def generate_keyfile_test() -> None:
     """演示：初始化执行任务并等待 KEY 文件生成完成。"""
     # 测试碾环
+    # 1 输入参数表
     param_table = [["roll_tmp", "roll_tmp", "roll_tmp", "pressure_roll_speed_upper","pressure_roll_speed_lower","driving_roll_rad_speed"],
                    ["workpiece", "driving_roll", "pressure_roll", "pressure_roll", "pressure_roll", "driving_roll"]]
-    # target_table = [["grain", "load"],
-    #                 ["workpiece", "topdie"]]
-    # 碾环内/外圈圆度也走统一的提取流程（对象为 workpiece 环件）
-    target_table = [["roundness_inner", "roundness_outer"],
-                    ["workpiece", "workpiece"]]
+    # 2 提取目标表
+    # target_table = [["grain", "load"],   # 目标
+    #                 ["workpiece", "topdie"]   # 对象
+    #                 ["1","x"]]    # select_component
+    target_table = [[]]
     in_progress = [False, False]
     paths_config = {
         "smp_file": f"{PROJECT_DIR}/data/TEST/smp.txt",

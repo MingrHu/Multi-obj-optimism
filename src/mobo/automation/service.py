@@ -1,5 +1,4 @@
 """DEFORM 自动化服务层。
-
 面向任务的服务接口：抽样、初始化执行任务、逐阶段推进、查询状态、提取数据。
 通过任务字典管理 :class:`~mobo.automation.pipeline.ForgingTask` 实例，返回统一的
 ``{"task_id", "status", "message"}`` 结构（``status`` 取 ``"success"``/``"failed"``，

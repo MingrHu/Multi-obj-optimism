@@ -44,23 +44,31 @@ def _extractMaxStress(AllLines:List[List[str]],obj_id:str,inprogress:bool)->str:
         finall_res = fun(AllLines[-1])
     return "{:.2f}".format(finall_res)
 
-def _extractMaxLoad(AllLines:List[List[str]],obj_id:str,inprogress:bool)->str:
+def _extractMaxLoad(AllLines:List[List[str]],obj_id:str,inprogress:bool,dim:int=4)->str:
     # 模具载荷提取
+    # dim: 2=x,3=y,4=z, -2=合力(√(Fx²+Fy²+Fz²))
     finall_res = 0.0
     def fun(lines:List[str])->float:
-        res = 0.0
-        for _,line in enumerate(lines):
-            arry = line.split()
-            # 根据deform的key文件关键字分布情况
-            if len(arry) == 5 and arry[0] == 'FORCE' and arry[1] == obj_id:
-                res = float(arry[4])
-        return res
+        for line in lines:
+            arry=line.split()
+             # 根据deform的key文件关键字分布情况
+            if len(arry)==5 and arry[0]=='FORCE' and arry[1]==obj_id:
+                fx,fy,fz=map(float,arry[2:5])
+                if dim==2:
+                    return fx
+                elif dim==3:
+                    return fy
+                elif dim==4 or dim == -1:
+                    return fz
+                elif dim==-2:return (fx**2+fy**2+fz**2)**0.5
+        return 0.0
+
     if inprogress:
         for lines in AllLines:
-            finall_res = max(fun(lines),finall_res)
+            finall_res=max(fun(lines),finall_res)
     else:
-        finall_res = fun(AllLines[-1])
-    return "{:.2f}".format(finall_res)
+        finall_res=fun(AllLines[-1])
+    return f"{finall_res:.2f}"
 
 def _extractGrainStdv(AllLines:List[List[str]],obj_id:str,inprogress:bool)->str:
     finall_res = 0.0
@@ -90,26 +98,7 @@ def _extractGrainStdv(AllLines:List[List[str]],obj_id:str,inprogress:bool)->str:
     return "{:.2f}".format(finall_res)
 
 
-def _extractRingRollMaxLoad(AllLines:List[List[str]],obj_id:str,inprogress:bool)->str:
-    # 碾环最大轧制力提取
-    finall_res = 0.0
-    def fun(lines:List[str])->float:
-        res = 0.0
-        for _,line in enumerate(lines):
-            arry = line.split()
-            # 根据deform的key文件关键字分布情况
-            if len(arry) == 5 and arry[0] == 'FORCE' and arry[1] == obj_id:
-                res = float(arry[4])
-        return res
-    if inprogress:
-        for lines in AllLines:
-            finall_res = max(fun(lines),finall_res)
-    else:
-        finall_res = fun(AllLines[-1])
-    return "{:.2f}".format(finall_res)
-
-
-
+########################Helper#######################
 
 #  @brief 计算等效应力
 #  von-misses准则
