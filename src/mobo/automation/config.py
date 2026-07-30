@@ -1,18 +1,38 @@
 """DEFORM 平台配置。
 
 从 ``AutoScript/utils.py`` 搬入的 :class:`DeformConfig`，统一管理 KEY 文件关键字、
-模拟对象定义与目标函数映射。其目标函数（``TAR_FUNC``）复用原子能力层中的提取
-函数（:mod:`mobo.extraction.deform_targets`），仅调整 import 来源，映射内容与
-行为保持不变，供 :func:`mobo.automation.extract.extract_dataset` 调用。
+模拟对象定义与目标函数映射。其目标函数（``TAR_FUNC``）通过适配器复用原子能力层的
+提取函数：文本类（应力/载荷/晶粒，:mod:`mobo.extraction.deform_targets`）与几何类
+（碾环内/外圈圆度，:func:`mobo.extraction.ring_roundness.extract_ring_roundness`），
+统一为 ``fn(key_files, frames, obj_id, in_progress)`` 供
+:func:`mobo.automation.extract.extract_dataset` 调用；底层算法函数体保持不变。
 """
 
-from typing import Any
+from functools import partial
+from typing import Any, List
 
 from mobo.extraction.deform_targets import (
     _extractGrainStdv,
     _extractMaxLoad,
     _extractMaxStress,
 )
+from mobo.extraction.ring_roundness import extract_ring_roundness
+
+
+# ===================== 目标提取适配器 =====================
+# 统一签名：fn(key_files, frames, obj_id, in_progress) -> str，供
+# mobo.automation.extract.extract_dataset 逐目标调用。
+def _lines_target(extract_fn, key_files: List[str], frames: List[List[str]],
+                  obj_id: str, in_progress: bool) -> str:
+    """key_lines 约定：只用逐帧文本行计算（应力/载荷/晶粒）。"""
+    return extract_fn(frames, obj_id, in_progress)
+
+
+def _roundness_target(which: str, key_files: List[str], frames: List[List[str]],
+                      obj_id: str, in_progress: bool) -> str:
+    """key_file 约定：用最终步 KEY 文件几何计算内/外圈圆度。"""
+    value = extract_ring_roundness(key_files[-1], which=which, object_id=int(obj_id))
+    return "{:.6f}".format(value)
 
 
 ##########################################################
@@ -52,11 +72,14 @@ class DeformConfig:
     }
 
     # ===================== 目标函数映射 =====================
-    # 注意：_extractMaxStress 等函数需要在类定义前已声明
+    # 统一签名 fn(key_files, frames, obj_id, in_progress) -> str
+    # stress/load/grain 走逐帧文本行；roundness_* 走 KEY 文件几何计算。
     TAR_FUNC: dict[str, Any] = {
-        'stress': _extractMaxStress,
-        'load': _extractMaxLoad,
-        'grain': _extractGrainStdv
+        'stress': partial(_lines_target, _extractMaxStress),
+        'load': partial(_lines_target, _extractMaxLoad),
+        'grain': partial(_lines_target, _extractGrainStdv),
+        'roundness_inner': partial(_roundness_target, "inner"),
+        'roundness_outer': partial(_roundness_target, "outer"),
     }
 
     @classmethod
@@ -80,8 +103,8 @@ class DeformConfig:
     @classmethod
     def get_target_function(cls, func_name: str)->Any:
         """
-        安全获取目标函数
-        :param func_name: stress/load/grain
-        :return: 对应提取函数
+        安全获取目标函数（统一签名 fn(key_files, frames, obj_id, in_progress)）
+        :param func_name: stress/load/grain/roundness_inner/roundness_outer
+        :return: 对应提取适配器
         """
         return cls.TAR_FUNC.get(func_name)

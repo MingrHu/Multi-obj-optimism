@@ -47,8 +47,10 @@ def generate_keyfile_test() -> None:
                    ["workpiece", "driving_roll", "pressure_roll", "pressure_roll", "pressure_roll", "driving_roll"]]
     # target_table = [["grain", "load"],
     #                 ["workpiece", "topdie"]]
-    target_table = [[]]
-    in_progress = []
+    # 碾环内/外圈圆度也走统一的提取流程（对象为 workpiece 环件）
+    target_table = [["roundness_inner", "roundness_outer"],
+                    ["workpiece", "workpiece"]]
+    in_progress = [False, False]
     paths_config = {
         "smp_file": f"{PROJECT_DIR}/data/TEST/smp.txt",
         "std_key_file": f"{PROJECT_DIR}/data/keyfile/RINGROLL.KEY",

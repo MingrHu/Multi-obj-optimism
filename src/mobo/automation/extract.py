@@ -1,9 +1,9 @@
 """结果数据集提取。
 
-将求解得到的 DB 文件逐步导出为 KEY 文件，再按目标（应力/载荷/晶粒）调用
+将求解得到的 DB 文件逐步导出为 KEY 文件，再按目标调用
 :class:`~mobo.automation.config.DeformConfig` 映射的提取函数，汇总为数据集 txt。
-
-提取函数本身位于原子能力层 :mod:`mobo.extraction.deform_targets`，本模块只做编排。
+目标含文本类（应力/载荷/晶粒，逐帧解析）与几何类（碾环内/外圈圆度，按 KEY 文件
+几何计算），统一由 ``TAR_FUNC`` 的适配器处理，本模块只做编排。
 """
 
 from __future__ import annotations
@@ -69,9 +69,10 @@ def extract_dataset(
         row: List[Any] = list(param_table[i + 2])
         for idx, target_name in enumerate(target_names):
             extractor = DeformConfig.get_target_function(target_name)
-            # 提取函数按对象 ID 匹配 KEY 行（arry[1]）故先把对象名转成 ID
+            # 统一签名 fn(key_files, frames, obj_id, in_progress)：文本类用 frames，
+            # 几何类（圆度）用 key_files；对象名先转成 ID。
             object_id = DeformConfig.get_object_id(object_names[idx])
-            row.append(extractor(frames, object_id, in_progress[idx]))
+            row.append(extractor(key_files, frames, object_id, in_progress[idx]))
         result_rows.append(row)
 
     os.makedirs(result_dir, exist_ok=True)
