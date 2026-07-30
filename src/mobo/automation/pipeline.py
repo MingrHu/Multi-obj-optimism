@@ -200,7 +200,10 @@ class ForgingTask:
                 self.result_txt_dir,
             )
 
-        return self._run_async("提取数据", work)
+        thread = self._run_async("提取数据", work)
+        if thread is not None:
+            thread.join()  # 等待提取
+        return 
 
 
 __all__ = ["TaskStatus", "generate_sample_file", "ForgingTask"]

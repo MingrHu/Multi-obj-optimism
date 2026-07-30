@@ -75,7 +75,7 @@ def extra_data_test() -> None:
 
 
 if __name__ == "__main__":
-    sample_generate_test()
-    generate_keyfile_test()
-    run_process_test()
-    # extra_data_test()
+    # sample_generate_test()
+    # generate_keyfile_test()
+    # run_process_test()
+    extra_data_test()
