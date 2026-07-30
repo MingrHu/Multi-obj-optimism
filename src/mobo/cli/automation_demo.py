@@ -46,9 +46,9 @@ def generate_keyfile_test() -> None:
                    ["workpiece", "driving_roll", "pressure_roll", "pressure_roll", "pressure_roll", "driving_roll"]]
     # 2 提取目标表：第 0 行目标名、第 1 行对象名、第 2 行 select_component（分量）
     target_table = [["load", "grain_morph"],
-                    ["workpiece", "workpiece"],
-                    [2, 0]]
-    in_progress = [False, False]
+                    ["driving_roll", "workpiece"],
+                    [2, 1]]
+    in_progress = [True, False]
     paths_config = {
         "smp_file": f"{PROJECT_DIR}/data/TEST/smp.txt",
         "std_key_file": f"{PROJECT_DIR}/data/keyfile/RINGROLL.KEY",
@@ -74,6 +74,6 @@ def extra_data_test() -> None:
 if __name__ == "__main__":
     # 每一步可单独运行，只要 _TASK_ID 一致即可接着上一步继续
     # sample_generate_test()
-    # generate_keyfile_test()
+    generate_keyfile_test()
     # run_process_test()
-    extra_data_test()
+    # extra_data_test()

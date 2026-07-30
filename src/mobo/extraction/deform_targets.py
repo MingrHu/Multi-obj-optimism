@@ -87,7 +87,7 @@ def _extractUsrGrainStdv(AllLines:List[List[str]],obj_id:str,inprogress:bool,sel
         finall_res = fun(AllLines[-1])
     return "{:.2f}".format(finall_res)
 
-def _extractGrainMorph(AllLines:List[List[str]],obj_id:str,inprogress:bool,select_component=0)->str:
+def _extractGrainMorph(AllLines:List[List[str]],obj_id:str,inprogress:bool,select_component=1)->str:
     # GRAIN obj num_units vals_per_unit ...，每单元 vals_per_unit 个晶粒组织信息
     # select_component 选取单元内第几个分量，跨单元求标准差
     comp = int(select_component)
