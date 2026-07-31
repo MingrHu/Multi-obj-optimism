@@ -48,6 +48,7 @@ def _paths(tmp_path):
         "res_db_path": str(tmp_path / "res_db"),
         "res_key_path": str(tmp_path / "res_key"),
         "res_txt_path": str(tmp_path / "res_txt"),
+        "process_info_file": str(tmp_path / "process_info.json"),
     }
 
 
@@ -165,3 +166,19 @@ def test_record_takes_precedence_over_overrides(monkeypatch, tmp_path):
     )
     service.run_execution_step("t1", max_step=999)
     assert task_store.load("t1")["req"]["max_step"] == 100
+
+
+def test_process_info_file_passed_to_task(monkeypatch, tmp_path):
+    """paths_config 里的 process_info_file 会透传给 ForgingTask（供求解续跑）。"""
+    captured = {}
+
+    class _Capture(_FakeTask):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            captured.update(kwargs)
+
+    monkeypatch.setattr(service, "ForgingTask", _Capture)
+    service.init_execution_task(
+        "t1", _paths(tmp_path), [["temp"], ["workpiece"]], [["grain"], ["workpiece"]], [False], 100
+    )
+    assert captured["process_info_file"] == str(tmp_path / "process_info.json")

@@ -60,6 +60,7 @@ class ForgingTask:
     :param target_table: 目标固定表头 ``[[目标名...], [对象名...], [select_component...]]``（3×m）
     :param in_progress: 每个目标是否走全过程提取（1×m）
     :param max_step: KEY 求解过程最大步数
+    :param process_info_file: 求解过程信息记录文件路径（记录各 DB 是否求解完成，支持中断续跑）
     :param dry_run: 为 True 时只推进状态、不真正调用 DEFORM（用于非 Windows/测试）
     :param key_files: 内存记录的生成批量key文件
     :param db_files: 内存记录的结果DB文件
@@ -79,7 +80,7 @@ class ForgingTask:
         target_table: List[List[str]],
         in_progress: List[bool],
         max_step: int,
-        process_info_file:str,
+        process_info_file: str = "",
         *,
         dry_run: bool = False,
         max_parallel: int = 24,
@@ -180,7 +181,8 @@ class ForgingTask:
             if self.dry_run:
                 return
             key_to_db_batch(key_paths, db_paths)
-            DeformSolver(max_parallel=self.max_parallel).run_all(self.db_files)
+            DeformSolver(max_parallel=self.max_parallel,
+                         process_info_file=self.process_info_file).run_all(self.db_files)
 
         thread = self._run_async("求解运行", work)
         if thread is not None:

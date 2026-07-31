@@ -63,7 +63,7 @@ def _rebuild_task(task_id: str, provided: Optional[Dict[str, Any]] = None) -> Fo
         target_table=[list(row) for row in req["target_table"]],
         in_progress=list(req["in_progress"]),
         max_step=req["max_step"],
-        process_info_file=paths["process_info_file"]
+        process_info_file=paths.get("process_info_file", ""),
     )
     # 从临时 KEY 目录恢复已生成的输入 KEY（文件名确定，直接扫目录）
     temp_dir = paths["temp_key_path"]

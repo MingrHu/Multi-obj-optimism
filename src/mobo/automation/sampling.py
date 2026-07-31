@@ -18,8 +18,11 @@ from typing import Dict, Sequence, Tuple
 import numpy as np
 import pandas as pd
 
-# if windows/macos use pyDOE else use pydoe
-from pydoe import lhs
+# 包名在不同平台/发行版下大小写不一（Windows/macOS 为 pyDOE，部分 Linux 为 pydoe）
+try:
+    from pyDOE import lhs
+except ImportError:  # pragma: no cover
+    from pydoe import lhs   # type: ignore
 
 from mobo.common.logging import logger
 

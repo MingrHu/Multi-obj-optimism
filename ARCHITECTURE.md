@@ -58,7 +58,7 @@
 | `automation` | `config.py` | `DeformConfig` 关键字/对象/目标函数映射 |
 | `automation` | `sampling.py` | LHS / 全因子采样（纯逻辑）|
 | `automation` | `keyfile.py` | KEY 文件文本处理：格式化、路径派生、`generate_key_files`（纯逻辑）|
-| `automation` | `solver.py` | DEFORM 子进程驱动（KEY↔DB）与 `DeformSolver` 求解调度 |
+| `automation` | `solver.py` | DEFORM 子进程驱动（KEY↔DB）与 `DeformSolver` 求解调度；求解进度落盘到 `process_info_file`（记录各 DB 是否完成），支持中断后仅凭进度文件续跑 |
 | `automation` | `extract.py` | 结果 DB→KEY 逐步导出与数据集提取编排 |
 | `automation` | `pipeline.py` | `TaskStatus`（枚举）/ `ForgingTask` 三阶段状态机 / `generate_sample_file` |
 | `automation` | `service.py` | 任务级服务函数：state.json 落盘 + 仅凭 task_id 从磁盘重建续跑 |

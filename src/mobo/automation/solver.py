@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import tempfile
@@ -117,6 +118,117 @@ class DeformSolver:
         with self._lock:
             return self._running
 
+    def _load_progress(self) -> dict:
+        """读取求解进度文件；不存在或损坏则返回空进度。
+
+        进度 schema::
+
+            {
+                "total": int,           # DB 总数
+                "completed": int,       # 已完成数
+                "created_at": str,      # 进度文件首次初始化时间
+                "updated_at": str,      # 最近一次写入时间
+                "db_files": [
+                    {
+                        "db_path": str,
+                        "done": bool,
+                        "started_at": str,   # 该 DB 开始求解时间
+                        "finished_at": str,  # 该 DB 求解完成时间
+                    },
+                    ...
+                ]
+            }
+        """
+        empty = {"total": 0, "completed": 0, "created_at": "", "updated_at": "", "db_files": []}
+        if not self.process_info_file or not os.path.exists(self.process_info_file):
+            return empty
+        try:
+            with open(self.process_info_file, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, OSError):
+            return empty
+
+    def _init_progress(self, db_paths: List[str]) -> dict:
+        """按待求解 DB 列表初始化/合并进度。
+
+        保留已有条目的 ``done`` 与时间戳（``started_at``/``finished_at``），
+        并保留首次初始化的 ``created_at``（续跑时不刷新）。
+        """
+        prev = self._load_progress()
+        prev_items = {it["db_path"]: it for it in prev.get("db_files", [])}
+        now = time.strftime("%Y-%m-%d %H:%M:%S")
+
+        db_files = []
+        for p in db_paths:
+            old = prev_items.get(p, {})
+            db_files.append({
+                "db_path": p,
+                "done": bool(old.get("done")),
+                "started_at": old.get("started_at", ""),
+                "finished_at": old.get("finished_at", ""),
+            })
+        progress = {
+            "total": len(db_files),
+            "completed": sum(1 for it in db_files if it["done"]),
+            "created_at": prev.get("created_at") or now,
+            "updated_at": now,
+            "db_files": db_files,
+        }
+        self._save_progress(progress)
+        return progress
+
+    def _save_progress(self, progress: dict) -> None:
+        """原子写入求解进度（tempfile + os.replace）。"""
+        if not self.process_info_file:
+            return
+        directory = os.path.dirname(self.process_info_file) or "."
+        os.makedirs(directory, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(prefix=".process_", suffix=".json", dir=directory, text=True)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(progress, f, ensure_ascii=False, indent=2)
+            os.replace(tmp, self.process_info_file)
+        finally:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+
+    def _mark_started(self, db_path: str) -> None:
+        """记录某个 DB 的开始求解时间（线程安全落盘）。"""
+        if not self.process_info_file:
+            return
+        with self._lock:
+            progress = self._load_progress()
+            for item in progress.get("db_files", []):
+                if item["db_path"] == db_path:
+                    item["started_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+            progress["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+            self._save_progress(progress)
+
+    def _mark_done(self, db_path: str) -> None:
+        """把某个 DB 标记为完成、记录结束时间并刷新完成计数（线程安全落盘）。"""
+        if not self.process_info_file:
+            return
+        with self._lock:
+            progress = self._load_progress()
+            for item in progress.get("db_files", []):
+                if item["db_path"] == db_path:
+                    item["done"] = True
+                    item["finished_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+            progress["completed"] = sum(1 for it in progress["db_files"] if it["done"])
+            progress["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+            self._save_progress(progress)
+
+    def pending_db_files(self, db_paths: List[str]) -> List[str]:
+        """据进度文件返回仍需求解的 DB 文件（已完成的跳过）。
+
+        无进度文件时视为全部待求解；用于续跑时恢复求解队列。
+        """
+        done = {
+            item["db_path"] for item in self._load_progress().get("db_files", [])
+            if item.get("done")
+        }
+        return [p for p in db_paths if p not in done]
+
     @staticmethod
     def _feed_stdin(process: Any, content: str) -> None:
         """向子进程标准输入写入一行（附带 DEFORM 需要的短暂延时）"""
@@ -124,8 +236,14 @@ class DeformSolver:
         process.stdin.write(content + "\n")
         process.stdin.flush()
 
-    def _solve_one(self, db_path: str, work_dir: str) -> None:
-        """在独立线程中提交单个 DB 的求解"""
+    def _solve_one(self, db_path: str, work_dir: str, db_key: str = "") -> None:
+        """在独立线程中提交单个 DB 的求解
+
+        :param db_path: 喂给 DEFORM 的求解目标（去扩展名）
+        :param work_dir: 工作目录
+        :param db_key: 进度文件中记录的完整 DB 路径（完成后据此标记 done）
+        """
+        self._mark_started(db_key or db_path)
         try:
             process = subprocess.Popen(
                 DEF_ARM_CTL,
@@ -140,27 +258,39 @@ class DeformSolver:
             if process.stdin:
                 process.stdin.close()
             logger.info(f"当前任务计算完成！请查看 {db_path} 结果")
+            self._mark_done(db_key or db_path)
         except Exception as exc:
             logger.error(f"求解进程出错: {exc}")
         finally:
             with self._lock:
                 self._running -= 1
 
-    def submit(self, db_path: str, work_dir: str) -> None:
-        """异步提交一个求解任务"""
+    def submit(self, db_path: str, work_dir: str, db_key: str = "") -> None:
+        """异步提交一个求解任务
+
+        :param db_key: 进度文件中记录的完整 DB 路径（用于完成标记）
+        """
         with self._lock:
             self._running += 1
             logger.info(f"当前正在计算的任务有：{self._running} 个")
-        thread = threading.Thread(target=self._solve_one, args=(db_path, work_dir), daemon=True)
+        thread = threading.Thread(
+            target=self._solve_one, args=(db_path, work_dir, db_key), daemon=True
+        )
         thread.start()
 
     def run_all(self, db_paths: List[str]) -> None:
         """按最大并行数调度求解全部 DB 文件，直至全部完成。
 
+        据进度文件跳过已完成的 DB（支持任务被中断后仅凭进度文件续跑），
+        并在每个 DB 求解完成时把进度落盘。
+
         :param db_paths: 待求解的 DB 文件路径列表
         """
+        self._init_progress(db_paths)
+        pending = self.pending_db_files(db_paths)
+
         task_queue: Queue = Queue()
-        for i, db_path in enumerate(db_paths):
+        for i, db_path in enumerate(pending):
             task_queue.put((i + 1, db_path))
 
         while True:
@@ -179,7 +309,7 @@ class DeformSolver:
             stem = os.path.splitext(os.path.basename(db_path))[0]
             solve_target = os.path.join(work_dir, stem)
 
-            self.submit(solve_target, work_dir)
+            self.submit(solve_target, work_dir, db_key=db_path)
             logger.info(f"开始计算第 {file_num} 个，结果 DB 将保存至 {work_dir}")
             # 防止过快提交导致计数尚未更新
             time.sleep(5)

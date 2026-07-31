@@ -93,10 +93,83 @@ def test_deform_solver_run_all_schedules_each(monkeypatch):
     monkeypatch.setattr(solver.time, "sleep", lambda *_: None)
     s = solver.DeformSolver(max_parallel=2)
     submitted = []
-    monkeypatch.setattr(s, "submit", lambda target, work_dir: submitted.append((target, work_dir)))
+    monkeypatch.setattr(s, "submit", lambda target, work_dir, db_key="": submitted.append((target, work_dir)))
 
     s.run_all(["/res/0/model.DB", "/res/1/model.DB"])
     assert len(submitted) == 2
     # solve_target 去掉扩展名，work_dir 为其所在目录
     targets = [t for t, _ in submitted]
     assert targets[0].endswith("model") and not targets[0].endswith(".DB")
+
+
+def test_progress_init_and_mark_done(tmp_path):
+    pf = str(tmp_path / "process_info.json")
+    s = solver.DeformSolver(process_info_file=pf)
+    dbs = ["/res/0/m.DB", "/res/1/m.DB"]
+    prog = s._init_progress(dbs)
+    assert prog["total"] == 2 and prog["completed"] == 0
+    assert prog["created_at"]  # 初始化即写入起始时间
+    # 标记开始/完成后落盘、计数刷新、时间戳记录
+    s._mark_started("/res/0/m.DB")
+    s._mark_done("/res/0/m.DB")
+    import json
+    saved = json.loads((tmp_path / "process_info.json").read_text())
+    assert saved["completed"] == 1
+    item0 = next(it for it in saved["db_files"] if it["db_path"] == "/res/0/m.DB")
+    assert item0["done"] and item0["started_at"] and item0["finished_at"]
+    done = [it["db_path"] for it in saved["db_files"] if it["done"]]
+    assert done == ["/res/0/m.DB"]
+
+
+def test_created_at_stable_across_reinit(tmp_path):
+    """created_at 只在首次初始化写入，续跑重新 init 不刷新。"""
+    pf = str(tmp_path / "process_info.json")
+    s = solver.DeformSolver(process_info_file=pf)
+    dbs = ["/res/0/m.DB"]
+    first = s._init_progress(dbs)["created_at"]
+    second = s._init_progress(dbs)["created_at"]
+    assert first == second
+
+
+def test_pending_db_files_skips_completed(tmp_path):
+    pf = str(tmp_path / "process_info.json")
+    s = solver.DeformSolver(process_info_file=pf)
+    dbs = ["/res/0/m.DB", "/res/1/m.DB", "/res/2/m.DB"]
+    s._init_progress(dbs)
+    s._mark_done("/res/1/m.DB")
+    # 续跑时只返回未完成的
+    assert s.pending_db_files(dbs) == ["/res/0/m.DB", "/res/2/m.DB"]
+
+
+def test_init_progress_preserves_prior_done(tmp_path):
+    pf = str(tmp_path / "process_info.json")
+    s = solver.DeformSolver(process_info_file=pf)
+    dbs = ["/res/0/m.DB", "/res/1/m.DB"]
+    s._init_progress(dbs)
+    s._mark_done("/res/0/m.DB")
+    # 再次 init（模拟重启进入 run_all）应保留已完成标记
+    prog = s._init_progress(dbs)
+    assert prog["completed"] == 1
+
+
+def test_run_all_resumes_only_pending(monkeypatch, tmp_path):
+    monkeypatch.setattr(solver.time, "sleep", lambda *_: None)
+    pf = str(tmp_path / "process_info.json")
+    s = solver.DeformSolver(max_parallel=2, process_info_file=pf)
+    dbs = ["/res/0/m.DB", "/res/1/m.DB"]
+    s._init_progress(dbs)
+    s._mark_done("/res/0/m.DB")  # 模拟中断前已完成 0
+
+    submitted = []
+    monkeypatch.setattr(s, "submit",
+                        lambda target, work_dir, db_key="": submitted.append(db_key))
+    s.run_all(dbs)
+    # 只重新提交未完成的 1
+    assert submitted == ["/res/1/m.DB"]
+
+
+def test_progress_noop_without_file():
+    """未配置 process_info_file 时进度操作为空操作，不报错。"""
+    s = solver.DeformSolver()
+    s._mark_done("/x.DB")  # 不应抛异常
+    assert s.pending_db_files(["/x.DB"]) == ["/x.DB"]
