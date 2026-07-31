@@ -61,7 +61,10 @@ class ForgingTask:
     :param in_progress: 每个目标是否走全过程提取（1×m）
     :param max_step: KEY 求解过程最大步数
     :param dry_run: 为 True 时只推进状态、不真正调用 DEFORM（用于非 Windows/测试）
-    :param max_parallel: 求解最大并行进程数
+    :param key_files: 内存记录的生成批量key文件
+    :param db_files: 内存记录的结果DB文件
+    :param process_num: 当前已经运行完成的db数量
+
     """
 
     def __init__(
@@ -76,6 +79,7 @@ class ForgingTask:
         target_table: List[List[str]],
         in_progress: List[bool],
         max_step: int,
+        process_info_file:str,
         *,
         dry_run: bool = False,
         max_parallel: int = 24,
@@ -96,6 +100,9 @@ class ForgingTask:
         # 中间产物
         self.key_files: List[str] = []
         self.db_files: List[str] = []
+
+        # 任务运行时信息存放路径
+        self.process_info_file = process_info_file
 
         self.status: TaskStatus = TaskStatus.DONE
 
@@ -164,7 +171,7 @@ class ForgingTask:
         return pending
 
     def run_solver(self) -> Optional[threading.Thread]:
-        """阶段二：KEY→DB 转换并提交求解（异步）。"""
+        """阶段二：KEY→DB 转换并提交求解（异步）"""
         pending = self.prepare_db_files()
         key_paths = [k for k, _ in pending]
         db_paths = [d for _, d in pending]

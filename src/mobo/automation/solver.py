@@ -95,35 +95,37 @@ def db_to_key(db_path: str, key_path: str, step: str = "") -> None:
 
 
 class DeformSolver:
-    """DEFORM 求解调度器，封装并发求解计数。
+    """DEFORM 求解调度器，封装并发求解计数
 
     通过 ``DEF_ARM_CTL.COM`` 异步提交 DB 求解任务，并限制同时运行的进程数，
-    取代原实现中裸露在模块级的全局计数器与锁。
+    取代原实现中裸露在模块级的全局计数器与锁
     """
 
-    def __init__(self, max_parallel: int = 12) -> None:
+    def __init__(self, max_parallel: int = 12,process_info_file:str = "") -> None:
         """
         :param max_parallel: 最大并行求解进程数
+        :param process_info_file: 求解过程信息记录文件位置
         """
         self.max_parallel = max_parallel
+        self.process_info_file = process_info_file
         self._running = 0
         self._lock = threading.Lock()
 
     @property
     def running(self) -> int:
-        """当前正在运行的求解进程数。"""
+        """当前正在运行的求解进程数"""
         with self._lock:
             return self._running
 
     @staticmethod
     def _feed_stdin(process: Any, content: str) -> None:
-        """向子进程标准输入写入一行（附带 DEFORM 需要的短暂延时）。"""
+        """向子进程标准输入写入一行（附带 DEFORM 需要的短暂延时）"""
         time.sleep(0.1)
         process.stdin.write(content + "\n")
         process.stdin.flush()
 
     def _solve_one(self, db_path: str, work_dir: str) -> None:
-        """在独立线程中提交单个 DB 的求解。"""
+        """在独立线程中提交单个 DB 的求解"""
         try:
             process = subprocess.Popen(
                 DEF_ARM_CTL,
@@ -145,7 +147,7 @@ class DeformSolver:
                 self._running -= 1
 
     def submit(self, db_path: str, work_dir: str) -> None:
-        """异步提交一个求解任务（占用一个并发名额）。"""
+        """异步提交一个求解任务"""
         with self._lock:
             self._running += 1
             logger.info(f"当前正在计算的任务有：{self._running} 个")

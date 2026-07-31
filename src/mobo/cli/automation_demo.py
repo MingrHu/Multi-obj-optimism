@@ -56,6 +56,7 @@ def generate_keyfile_test() -> None:
         "res_db_path": f"{PROJECT_DIR}/data/TEST/res_db",
         "res_key_path": f"{PROJECT_DIR}/data/TEST/res_key",
         "res_txt_path": f"{PROJECT_DIR}/data/TEST/res_txt",
+        "process_info_file":f"{PROJECT_DIR}/data/TEST/process_info.txt"
     }
 
     print(init_execution_task(_TASK_ID, paths_config, param_table, target_table, in_progress, 3400))
