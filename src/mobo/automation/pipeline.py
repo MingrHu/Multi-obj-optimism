@@ -153,6 +153,7 @@ class ForgingTask:
         """
         self.db_files = []
         pending: List[Tuple[str, str]] = []
+        # 根据生成的key文件的名称重建结果db文件的路径
         for i, key_file in enumerate(self.key_files):
             db_dir = os.path.join(self.result_db_dir, str(i))
             os.makedirs(db_dir, exist_ok=True)

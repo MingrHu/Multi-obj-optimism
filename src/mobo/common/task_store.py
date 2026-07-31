@@ -107,9 +107,7 @@ def init_state(task_id: str, kind: str, req: Dict[str, Any]) -> Dict[str, Any]:
 
 def update(task_id: str, **fields: Any) -> Dict[str, Any]:
     """更新任务状态的顶层字段（``data``/``req`` 做浅合并）并落盘。
-
-    每次更新都会把本次的 ``stage``/``status`` 作为一条记录追加到 ``history``，
-    保留完整的转移轨迹，而不是覆盖历史。
+    每次更新都会把本次的 ``stage``/``status`` 作为一条记录追加到 ``history``
 
     :param task_id: 任务 ID
     :param fields: 待更新字段，如 ``status`` / ``stage`` / ``data`` / ``req``
@@ -126,7 +124,7 @@ def update(task_id: str, **fields: Any) -> Dict[str, Any]:
             state[key] = merged
         else:
             state[key] = value
-    # 追加一条转移记录（完整记录，不覆盖）
+    # 追加一条转移记录
     if "stage" in fields or "status" in fields:
         history = list(state.get("history") or [])
         history.append({

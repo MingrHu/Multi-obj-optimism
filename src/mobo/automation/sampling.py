@@ -19,7 +19,7 @@ import numpy as np
 import pandas as pd
 
 # if windows/macos use pyDOE else use pydoe
-from pyDOE import lhs
+from pydoe import lhs
 
 from mobo.common.logging import logger
 
