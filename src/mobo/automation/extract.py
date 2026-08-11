@@ -79,9 +79,11 @@ def extract_dataset(
     os.makedirs(result_dir, exist_ok=True)
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     out_path = os.path.join(result_dir, f"{timestamp}_result.txt")
+    # 每行 = 工艺参数列 + 目标列（制表符分隔，无行号列、无表头），
+    # 与 surrogate.load_and_preprocess_data 的 (sep='\t', header=None) 读取约定对齐
     with open(out_path, "w", encoding="utf-8") as f:
-        for row_idx, row in enumerate(result_rows, start=1):
-            f.write(f"{row_idx}\t" + "\t".join(map(str, row)) + "\n")
+        for row in result_rows:
+            f.write("\t".join(map(str, row)) + "\n")
     return out_path
 
 

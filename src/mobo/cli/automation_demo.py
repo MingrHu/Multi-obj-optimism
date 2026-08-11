@@ -7,6 +7,7 @@
 """
 
 from mobo.automation.service import (
+    align_result_db_dirs,
     create_sampling_task,
     init_execution_task,
     query_execution_status,
@@ -69,12 +70,14 @@ def run_process_test() -> None:
 
 def extra_data_test() -> None:
     """演示：仅凭 task_id 推进数据提取阶段（参数从 state.json 续跑）。"""
+    # 提取前先按任务信息校正结果 DB 目录序号（历史乱序自动纠正，已对齐则无改动）
+    print(align_result_db_dirs(_TASK_ID))
     print(run_extract_data(_TASK_ID))
 
 
 if __name__ == "__main__":
     # 每一步可单独运行，只要 _TASK_ID 一致即可接着上一步继续
     # sample_generate_test()
-    generate_keyfile_test()
+    # generate_keyfile_test()
     # run_process_test()
-    # extra_data_test()
+    extra_data_test()

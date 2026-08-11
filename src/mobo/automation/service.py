@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from mobo.common import task_store
@@ -44,6 +45,17 @@ def _result(task_id: str, ok: bool, message: str) -> Dict[str, str]:
     return {"task_id": task_id, "status": "success" if ok else "failed", "message": message}
 
 
+def _key_sample_index(key_path: str, template_stem: str) -> int:
+    """从输入 KEY 文件名解析样本序号（generate_key_files 用 <模板名><序号>.KEY 命名）。
+
+    剥去模板主名前缀后取剩余部分的整数序号；无法解析时返回一个极大值，使其排到
+    末尾而不打乱正常样本的相对顺序。
+    """
+    stem = Path(key_path).stem
+    suffix = stem[len(template_stem):] if stem.startswith(template_stem) else stem
+    return int(suffix) if suffix.isdigit() else 2 ** 63 - 1
+
+
 def _rebuild_task(task_id: str, provided: Optional[Dict[str, Any]] = None) -> ForgingTask:
     """按参数从磁盘目录重建 ForgingTask（中间产物由确定性文件名推导）。
 
@@ -65,13 +77,67 @@ def _rebuild_task(task_id: str, provided: Optional[Dict[str, Any]] = None) -> Fo
         max_step=req["max_step"],
         process_info_file=paths.get("process_info_file", ""),
     )
-    # 从临时 KEY 目录恢复已生成的输入 KEY（文件名确定，直接扫目录）
+    # 从临时 KEY 目录恢复已生成的输入 KEY（文件名形如 <模板名><样本序号>.KEY）。
     temp_dir = paths["temp_key_path"]
     if os.path.isdir(temp_dir):
+        template_stem = Path(paths["std_key_file"]).stem
         task.key_files = sorted(
-            os.path.join(temp_dir, f) for f in os.listdir(temp_dir) if f.endswith(".KEY")
+            (os.path.join(temp_dir, f) for f in os.listdir(temp_dir) if f.endswith(".KEY")),
+            key=lambda p: _key_sample_index(p, template_stem),
         )
     return task
+
+
+def align_result_db_dirs(task_id: str, apply: bool = True) -> Dict[str, str]:
+    """校正结果 DB 目录序号，使其与真实样本号（即 KEY 顺序）对齐
+    :param task_id: 任务 ID（据 state.json 重建任务信息）
+    :param apply: True 真正重命名；False 仅返回将要改动的目录数（预演）
+    """
+    try:
+        task = _rebuild_task(task_id)
+        res_db = task.result_db_dir
+        if not os.path.isdir(res_db):
+            return _result(task_id, False, f"结果 DB 目录不存在：{res_db}")
+        template_stem = Path(task.template_key).stem
+
+        # 逐目录读实际 DB 名解析真实样本号，构造 {旧目录号: 真实样本号}
+        plan: Dict[str, int] = {}
+        seen: Dict[int, str] = {}
+        for name in os.listdir(res_db):
+            sub_dir = os.path.join(res_db, name)
+            if not os.path.isdir(sub_dir):
+                continue
+            dbs = [f for f in os.listdir(sub_dir) if f.endswith(".DB")]
+            if len(dbs) != 1:
+                continue  # 无 DB 或多个 DB，无法判定，跳过
+            sample_idx = _key_sample_index(dbs[0], template_stem)
+            if sample_idx == 2 ** 63 - 1:
+                continue  # 文件名解析不出样本号，跳过
+            if sample_idx in seen:
+                return _result(task_id, False,
+                               f"样本号 {sample_idx} 被目录 {seen[sample_idx]}/ 与 {name}/ 同时占用，已中止")
+            seen[sample_idx] = name
+            plan[name] = sample_idx
+
+        changes = {old: new for old, new in plan.items() if old != str(new)}
+        if not changes:
+            return _result(task_id, True, "结果 DB 目录已对齐，无需改动")
+        if not apply:
+            return _result(task_id, True, f"预演：{len(changes)} 个目录需重命名（未改动磁盘）")
+
+        # 两阶段重命名，规避 4→2 与 2→10 这类环状占用冲突
+        tmp_map: Dict[str, int] = {}
+        for i, (old_name, new_i) in enumerate(changes.items()):
+            tmp_name = f".__align_tmp_{i}__"
+            os.rename(os.path.join(res_db, old_name), os.path.join(res_db, tmp_name))
+            tmp_map[tmp_name] = new_i
+        for tmp_name, new_i in tmp_map.items():
+            os.rename(os.path.join(res_db, tmp_name), os.path.join(res_db, str(new_i)))
+
+        return _result(task_id, True, f"已对齐 {len(changes)} 个结果 DB 目录到真实样本号")
+    except Exception as exc:
+        logger.error(f"结果 DB 目录对齐失败：{exc}")
+        return _result(task_id, False, f"结果 DB 目录对齐失败：{exc}")
 
 
 def create_sampling_task(
@@ -174,6 +240,9 @@ def run_extract_data(task_id: str, **overrides: Any) -> Dict[str, str]:
     """
     try:
         task = _rebuild_task(task_id, overrides)
+        # 续跑重建时 param_table 仅含 2 行表头（样本行未落盘 req），从样本文件补回，
+        # 顺序与 generate_keys 一致：文件第 i 行 -> <模板名>i.KEY -> db_files[i] -> param_table[i+2]
+        task.load_samples_into_table()
         task.prepare_db_files()  # 按结果 DB 目录约定重建 db_files
         task.extract()
         task_store.update(task_id, stage="extract", status="finished",
@@ -192,4 +261,5 @@ __all__ = [
     "run_execution_step",
     "query_execution_status",
     "run_extract_data",
+    "align_result_db_dirs",
 ]

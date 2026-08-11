@@ -16,6 +16,7 @@
 from .config import DeformConfig
 from .pipeline import ForgingTask, TaskStatus, generate_sample_file
 from .service import (
+    align_result_db_dirs,
     create_sampling_task,
     init_execution_task,
     query_execution_status,
@@ -33,4 +34,5 @@ __all__ = [
     "query_execution_status",
     "run_execution_step",
     "run_extract_data",
+    "align_result_db_dirs",
 ]
