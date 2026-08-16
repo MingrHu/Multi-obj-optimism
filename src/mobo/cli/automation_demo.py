@@ -71,7 +71,7 @@ def run_process_test() -> None:
 def extra_data_test() -> None:
     """演示：仅凭 task_id 推进数据提取阶段（参数从 state.json 续跑）。"""
     # 提取前先按任务信息校正结果 DB 目录序号（历史乱序自动纠正，已对齐则无改动）
-    print(align_result_db_dirs(_TASK_ID))
+    # print(align_result_db_dirs(_TASK_ID))
     print(run_extract_data(_TASK_ID))
 
 

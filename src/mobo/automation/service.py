@@ -128,7 +128,7 @@ def align_result_db_dirs(task_id: str, apply: bool = True) -> Dict[str, str]:
         # 两阶段重命名，规避 4→2 与 2→10 这类环状占用冲突
         tmp_map: Dict[str, int] = {}
         for i, (old_name, new_i) in enumerate(changes.items()):
-            tmp_name = f".__align_tmp_{i}__"
+            tmp_name = f".__align_tmp_{i}__hmr"
             os.rename(os.path.join(res_db, old_name), os.path.join(res_db, tmp_name))
             tmp_map[tmp_name] = new_i
         for tmp_name, new_i in tmp_map.items():

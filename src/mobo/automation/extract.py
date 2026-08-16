@@ -58,32 +58,32 @@ def extract_dataset(
     """
     target_names, object_names,select_component  = target_table[0], target_table[1],target_table[2]
     result_rows: List[List[Any]] = []
-
-    for i, db_file in enumerate(db_files):
-        logger.info(f"当前提取的文件为：{db_file}")
-        step_dir = os.path.join(key_export_dir, str(i))
-        # 导出key文件
-        key_files = _export_all_steps(db_file, step_dir, max_step)
-        frames = read_key_frames(key_files)
-
-        # 样本工艺参数（param_table 前两行为表头，样本从第 2 行起）
-        row: List[Any] = list(param_table[i + 2])
-        for idx, target_name in enumerate(target_names):
-            # 1 提取函数
-            extractor = DeformConfig.get_target_function(target_name)
-            # 2 提取对象
-            object_id = DeformConfig.get_object_id(object_names[idx])
-            row.append(extractor(key_files, frames, object_id, in_progress[idx],select_component[idx]))
-        result_rows.append(row)
-
+    # 新建数据集
     os.makedirs(result_dir, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    timestamp = datetime.now().strftime("%Y-%m-%d %H_%M_%S")
     out_path = os.path.join(result_dir, f"{timestamp}_result.txt")
+
     # 每行 = 工艺参数列 + 目标列（制表符分隔，无行号列、无表头），
     # 与 surrogate.load_and_preprocess_data 的 (sep='\t', header=None) 读取约定对齐
     with open(out_path, "w", encoding="utf-8") as f:
-        for row in result_rows:
+        for i, db_file in enumerate(db_files):
+            logger.info(f"当前提取的文件为：{db_file}")
+            step_dir = os.path.join(key_export_dir, str(i))
+            # 导出key文件
+            key_files = _export_all_steps(db_file, step_dir, max_step)
+            frames = read_key_frames(key_files)
+
+            # 样本工艺参数（param_table 前两行为表头，样本从第 2 行起）
+            row: List[Any] = list(param_table[i + 2])
+            for idx, target_name in enumerate(target_names):
+                # 1 提取函数
+                extractor = DeformConfig.get_target_function(target_name)
+                # 2 提取对象
+                object_id = DeformConfig.get_object_id(object_names[idx])
+                row.append(extractor(key_files, frames, object_id, in_progress[idx],select_component[idx]))
+            # 追加
             f.write("\t".join(map(str, row)) + "\n")
+
     return out_path
 
 
