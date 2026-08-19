@@ -6,7 +6,7 @@
 """
 
 import numpy as np
-import statistics
+import statistics,os
 from typing import List
 
 
@@ -115,7 +115,12 @@ def _extractGrainMorph(AllLines:List[List[str]],obj_id:str,inprogress:bool,selec
         for lines in AllLines:
             finall_res = max(fun(lines),finall_res)
     else:
-        finall_res = fun(AllLines[-1])
+        # 硬编码 测试 TODO 后续再改动
+        valid_fin_idx = -1
+        for idx,key_file in enumerate(AllLines):
+            if len(key_file) > 10000:
+                valid_fin_idx = idx 
+        finall_res = fun(AllLines[valid_fin_idx])
     return "{:.2f}".format(finall_res)
 
 

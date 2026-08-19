@@ -7,7 +7,6 @@
 """
 
 from mobo.automation.service import (
-    align_result_db_dirs,
     create_sampling_task,
     init_execution_task,
     query_execution_status,

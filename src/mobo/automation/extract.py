@@ -68,21 +68,29 @@ def extract_dataset(
     with open(out_path, "w", encoding="utf-8") as f:
         for i, db_file in enumerate(db_files):
             logger.info(f"当前提取的文件为：{db_file}")
-            step_dir = os.path.join(key_export_dir, str(i))
-            # 导出key文件
-            key_files = _export_all_steps(db_file, step_dir, max_step)
-            frames = read_key_frames(key_files)
+            try:
+                step_dir = os.path.join(key_export_dir, str(i))
+                # 导出key文件
+                key_files = _export_all_steps(db_file, step_dir, max_step)
+                frames = read_key_frames(key_files)
 
-            # 样本工艺参数（param_table 前两行为表头，样本从第 2 行起）
-            row: List[Any] = list(param_table[i + 2])
-            for idx, target_name in enumerate(target_names):
-                # 1 提取函数
-                extractor = DeformConfig.get_target_function(target_name)
-                # 2 提取对象
-                object_id = DeformConfig.get_object_id(object_names[idx])
-                row.append(extractor(key_files, frames, object_id, in_progress[idx],select_component[idx]))
-            # 追加
-            f.write("\t".join(map(str, row)) + "\n")
+                # 样本工艺参数（param_table 前两行为表头，样本从第 2 行起）
+                row: List[Any] = list(param_table[i + 2])
+                for idx, target_name in enumerate(target_names):
+                    # 1 提取函数
+                    extractor = DeformConfig.get_target_function(target_name)
+                    # 2 提取对象
+                    object_id = DeformConfig.get_object_id(object_names[idx])
+                    row.append(extractor(key_files, frames, object_id, in_progress[idx],select_component[idx]))
+                line = "\t".join(map(str, row)) + "\n"
+                logger.info(line)
+                # 追加
+                f.write(line)
+                f.flush()
+            except Exception as e:
+                logger.error(f"数据提取失败！！！:{str(e)}")
+                continue
+
 
     return out_path
 
