@@ -68,8 +68,8 @@ def status_test() -> None:
 
 if __name__ == "__main__":
     # 首次使用按顺序执行前四步；中断后可直接重新执行求解或提取。
-    # sample_generate_test(n_samples=200)
-    # generate_keyfile_test()
+    sample_generate_test(n_samples=250)
+    generate_keyfile_test()
     # run_process_test()
     # extra_data_test()
-    status_test()
+    # status_test()
