@@ -196,7 +196,28 @@ def _atomic_json(path: str, value: Dict[str, Any]) -> None:
 
 
 class MultiOperationTask:
-    """一个样本使用同一 DB 依次换模；不同样本可并行。"""
+    """DEFORM 多工步连续换模批处理任务。
+
+    同一个样本的各工步共用一个结果 DB 并按顺序执行；不同样本之间可并行。
+    每个工步完成后保存终态 KEY 和可选的 DB 检查点，任务状态按样本、工步和
+    ``preparing/solving/completed`` 阶段原子落盘，进程中断后可据此继续运行。
+
+    :param task_id: 任务唯一标识，同时写入多工步状态文件
+    :param sample_file: 无表头、制表符分隔的联合样本文件；每行对应一个样本
+    :param operations: 按执行顺序排列的工步配置。每项包含 ``template_key``，并可包含
+        ``name``、``parameters``、``inherit_materials``、``enable_grain`` 和
+        ``position_offset``
+    :param work_dir: 运行产物根目录；每个样本使用 ``<work_dir>/<sample_index>/``
+    :param max_parallel_samples: 最大并行样本数；同一样本内部的工步仍然串行
+    :param keep_checkpoints: 是否在每个工步完成后保存 ``checkpoint_<n>.DB``
+    :param dry_run: 为 True 时不调用 DEFORM，只生成文件并推进状态，用于测试
+    :param state_file: 逐样本、逐工步恢复状态文件；未指定时保存到工作目录
+    :param on_sample_completed: 单个样本全部工步完成后的可选回调，参数为样本序号；
+        增量数据集功能通过该回调接入
+
+    :ivar samples: 从 ``sample_file`` 加载的联合样本二维列表
+    :ivar state: 当前多工步状态，包括任务状态及每个样本、工步的阶段和产物路径
+    """
 
     def __init__(self, task_id: str, sample_file: str, operations: Sequence[Operation],
                  work_dir: str, max_parallel_samples: int = 1,
