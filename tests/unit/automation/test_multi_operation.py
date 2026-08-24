@@ -165,6 +165,29 @@ def test_dry_run_completes_and_rebuild_skips_completed_operations(tmp_path):
     assert rebuilt.run()["status"] == "completed"
 
 
+def test_resume_reprepares_solving_operation_when_result_db_is_missing(tmp_path):
+    operations = _operations(tmp_path)
+    samples = tmp_path / "samples.txt"
+    samples.write_text("910\t810\n", encoding="utf-8")
+    work_dir = tmp_path / "runs"
+    task = MultiOperationTask("multi", str(samples), operations, str(work_dir), dry_run=True)
+    sample_state = task.state["samples"]["0"]
+    sample_state["status"] = "failed"
+    sample_state["operations"]["1"].update({
+        "status": "failed",
+        "phase": "failed",
+        "failed_phase": "solving",
+    })
+    task._save()
+
+    assert not (work_dir / "0" / "result.DB").exists()
+    result = task.run()
+
+    assert result["status"] == "completed"
+    assert (work_dir / "0" / "result.DB").exists()
+    assert result["samples"]["0"]["operations"]["1"]["attempts"] == 1
+
+
 def test_explicit_state_file_can_live_outside_run_directory(tmp_path):
     operations = _operations(tmp_path)
     samples = tmp_path / "samples.txt"

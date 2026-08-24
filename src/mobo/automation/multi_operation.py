@@ -399,7 +399,8 @@ class MultiOperationTask:
                 # preparing 可安全重做；solving 阶段则复用已经生成的 DB 继续提交。
                 phase = op_state.get("phase", "pending")
                 if phase in {"pending", "preparing"} or (
-                        phase == "failed" and op_state.get("failed_phase") == "preparing"):
+                        phase == "failed" and op_state.get("failed_phase") == "preparing"
+                ) or not os.path.exists(db_path):
                     self._set_operation(sample_index, operation_index, status="running",
                                         phase="preparing", error="",
                                         attempts=int(op_state.get("attempts", 0)) + 1)
@@ -411,6 +412,10 @@ class MultiOperationTask:
                         self._prepare_transition(sample_index, operation_index, operation_dir,
                                                  db_path, previous_terminal)
                     self._set_operation(sample_index, operation_index, phase="prepared")
+                if not os.path.exists(db_path):
+                    raise FileNotFoundError(
+                        f"工步 {operation_index} 准备完成后未生成结果 DB: {db_path}"
+                    )
                 self._set_operation(sample_index, operation_index, status="running", phase="solving")
                 if not self.dry_run:
                     solve_db_sync(db_path)
