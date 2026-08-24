@@ -4,6 +4,7 @@ import hashlib
 from pathlib import Path
 
 import mobo.automation.multi_operation as multi_operation_module
+import pytest
 from mobo.automation.multi_operation import (
     MultiOperationTask,
     _has_grain_state,
@@ -154,6 +155,11 @@ def test_dry_run_completes_and_rebuild_skips_completed_operations(tmp_path):
     task = MultiOperationTask("multi", str(samples), operations, str(work_dir), dry_run=True)
     result = task.run()
     assert result["status"] == "completed"
+    assert result["total"] == 1
+    assert result["completed"] == 1
+    assert result["running"] == 0
+    assert result["failed"] == 0
+    assert result["pending"] == 0
     assert all(item["status"] == "completed"
                for item in result["samples"]["0"]["operations"].values())
     transition = work_dir / "0" / "op2" / "transition.KEY"
@@ -186,6 +192,53 @@ def test_resume_reprepares_solving_operation_when_result_db_is_missing(tmp_path)
     assert result["status"] == "completed"
     assert (work_dir / "0" / "result.DB").exists()
     assert result["samples"]["0"]["operations"]["1"]["attempts"] == 1
+
+
+def test_initial_db_failure_updates_sample_and_summary(tmp_path, monkeypatch):
+    operations = _operations(tmp_path)
+    samples = tmp_path / "samples.txt"
+    samples.write_text("910\t810\n", encoding="utf-8")
+    task = MultiOperationTask(
+        "multi", str(samples), operations, str(tmp_path / "runs"), dry_run=False
+    )
+    monkeypatch.setattr(multi_operation_module, "key_to_db", lambda *_: None)
+
+    with pytest.raises(FileNotFoundError, match="KEY 转 DB 后未生成"):
+        task.prepare_initial_db_files()
+
+    operation = task.state["samples"]["0"]["operations"]["1"]
+    assert operation["status"] == "failed"
+    assert operation["failed_phase"] == "preparing"
+    assert task.state["failed"] == 1
+    assert task.state["completed"] == 0
+
+
+def test_sample_callback_runs_only_after_all_operations_complete(tmp_path):
+    operations = _operations(tmp_path)
+    samples = tmp_path / "samples.txt"
+    samples.write_text("910\t810\n", encoding="utf-8")
+    callback_states = []
+    task = None
+
+    def on_completed(sample_index):
+        sample_state = task.state["samples"][str(sample_index)]
+        callback_states.append({
+            "sample_status": sample_state["status"],
+            "operation_statuses": [
+                item["status"] for item in sample_state["operations"].values()
+            ],
+        })
+
+    task = MultiOperationTask(
+        "multi", str(samples), operations, str(tmp_path / "runs"),
+        dry_run=True, on_sample_completed=on_completed,
+    )
+    task.run()
+
+    assert callback_states == [{
+        "sample_status": "completed",
+        "operation_statuses": ["completed", "completed"],
+    }]
 
 
 def test_explicit_state_file_can_live_outside_run_directory(tmp_path):

@@ -248,7 +248,10 @@ class MultiOperationTask:
     def _load_or_init_state(self) -> Dict[str, Any]:
         if os.path.exists(self.state_file):
             with open(self.state_file, "r", encoding="utf-8") as f:
-                return json.load(f)
+                state = json.load(f)
+            self._refresh_summary(state)
+            _atomic_json(self.state_file, state)
+            return state
         samples = {}
         for sample_index in range(len(self.samples)):
             samples[str(sample_index)] = {
@@ -257,14 +260,26 @@ class MultiOperationTask:
                                               "attempts": 0, "error": ""}
                                for i in range(1, len(self.operations) + 1)},
             }
-        state = {"version": 1, "task_id": self.task_id, "status": "pending",
+        state = {"version": 2, "task_id": self.task_id, "status": "pending",
                  "created_at": _now(), "updated_at": _now(), "samples": samples}
+        self._refresh_summary(state)
         _atomic_json(self.state_file, state)
         return state
+
+    @staticmethod
+    def _refresh_summary(state: Dict[str, Any]) -> None:
+        """刷新与单工步进度文件一致的样本总数及完成数汇总。"""
+        statuses = [item.get("status", "pending") for item in state["samples"].values()]
+        state["total"] = len(statuses)
+        state["completed"] = statuses.count("completed")
+        state["running"] = statuses.count("running")
+        state["failed"] = statuses.count("failed")
+        state["pending"] = statuses.count("pending")
 
     def _save(self) -> None:
         with self._lock:
             self.state["updated_at"] = _now()
+            self._refresh_summary(self.state)
             _atomic_json(self.state_file, self.state)
 
     def _set_operation(self, sample_index: int, operation_index: int, **fields: Any) -> None:
@@ -273,6 +288,7 @@ class MultiOperationTask:
             item["current_operation"] = operation_index
             item["operations"][str(operation_index)].update(fields)
             self.state["updated_at"] = _now()
+            self._refresh_summary(self.state)
             _atomic_json(self.state_file, self.state)
 
     def _values(self, sample_index: int, operation_index: int) -> List[str]:
@@ -303,11 +319,53 @@ class MultiOperationTask:
                 generated.append(output_path)
         return generated
 
+    def prepare_initial_db_files(self) -> List[str]:
+        """串行把每个未完成样本的工步1参数化 KEY 转换为初始 DB。"""
+        generated = self.prepare_parameterized_keys()
+        first_keys = generated[::len(self.operations)]
+        db_files: List[str] = []
+        for sample_index, key_path in enumerate(first_keys):
+            sample_state = self.state["samples"][str(sample_index)]
+            op_state = sample_state["operations"]["1"]
+            db_path = os.path.join(self.work_dir, str(sample_index), "result.DB")
+            db_files.append(db_path)
+            if sample_state.get("status") == "completed" or os.path.exists(db_path):
+                continue
+            self._set_operation(
+                sample_index, 1, status="pending", phase="preparing", error="",
+                attempts=int(op_state.get("attempts", 0)) + 1,
+            )
+            try:
+                if self.dry_run:
+                    Path(db_path).touch()
+                else:
+                    key_to_db(key_path, db_path)
+                if not os.path.exists(db_path):
+                    raise FileNotFoundError(
+                        f"工步 1 KEY 转 DB 后未生成结果文件: {db_path}"
+                    )
+            except Exception as exc:
+                self._set_operation(
+                    sample_index, 1, status="failed", phase="failed",
+                    failed_phase="preparing", error=str(exc),
+                )
+                sample_state["status"] = "failed"
+                self.state["status"] = "failed"
+                self._save()
+                raise
+            self._set_operation(
+                sample_index, 1, status="pending", phase="prepared", error=""
+            )
+        return db_files
+
     def _prepare_first(self, sample_index: int, operation_dir: str, db_path: str) -> None:
         operation = self.operations[0]
         params = _parameters(operation)
         key_path = os.path.join(operation_dir, "operation.KEY")
-        if params:
+        parameterized = os.path.join(operation_dir, "parameterized_template.KEY")
+        if os.path.exists(parameterized):
+            shutil.copy2(parameterized, key_path)
+        elif params:
             names, objects, values = _expanded_parameter_values(
                 params, self._values(sample_index, 1)
             )
@@ -327,14 +385,18 @@ class MultiOperationTask:
         params = _parameters(operation)
         values = self._values(sample_index, operation_index)
         names, objects, expanded_values = _expanded_parameter_values(params, values)
-        parts = split_operation_key(operation["template_key"], operation_dir)
-        for path in parts.values():
-            with open(path, "r", encoding="utf-8") as f:
-                rendered = apply_parameters(
-                    f.readlines(), names, objects, expanded_values
-                )
-            with open(path, "w", encoding="utf-8") as f:
-                f.writelines(rendered)
+        parameterized = os.path.join(operation_dir, "parameterized_template.KEY")
+        if os.path.exists(parameterized):
+            parts = split_operation_key(parameterized, operation_dir)
+        else:
+            parts = split_operation_key(operation["template_key"], operation_dir)
+            for path in parts.values():
+                with open(path, "r", encoding="utf-8") as f:
+                    rendered = apply_parameters(
+                        f.readlines(), names, objects, expanded_values
+                    )
+                with open(path, "w", encoding="utf-8") as f:
+                    f.writelines(rendered)
         _prepare_transition_simulation(
             parts["simulation"],
             inherit_materials=bool(operation.get("inherit_materials", False)),
@@ -460,6 +522,7 @@ class MultiOperationTask:
 
     def run(self) -> Dict[str, Any]:
         """运行或续跑全部样本，已完成工步不会重复执行。"""
+        self.prepare_initial_db_files()
         self.state["status"] = "running"
         self._save()
         # 一边计算一边生成

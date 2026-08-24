@@ -11,6 +11,9 @@ def test_init_does_not_pass_service_options_to_task(monkeypatch, tmp_path):
                      max_parallel_samples, keep_checkpoints, dry_run, state_file):
             captured.update(locals())
 
+        def prepare_parameterized_keys(self):
+            return ["op1.KEY", "op2.KEY"]
+
     monkeypatch.setattr(service, "MultiOperationTask", FakeTask)
     monkeypatch.setattr(service.task_store, "init_state", lambda *args, **kwargs: {})
     monkeypatch.setattr(
@@ -24,5 +27,6 @@ def test_init_does_not_pass_service_options_to_task(monkeypatch, tmp_path):
     )
 
     assert result["stage"] == "initialized"
+    assert result["data"]["key_file_count"] == 2
     assert "incremental" not in captured
     assert "incremental_result_dir" not in captured

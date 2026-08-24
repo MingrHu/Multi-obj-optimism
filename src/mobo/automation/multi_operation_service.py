@@ -61,8 +61,10 @@ def init_multi_operation_task(task_id: str, sample_file: str,
         dry_run=req["dry_run"],
         state_file=req["state_file"],
     )
+    key_files = task.prepare_parameterized_keys()
     return task_store.update(task_id, stage="initialized", status="running",
-                             data={"workflow_state": task.state_file})
+                             data={"workflow_state": task.state_file,
+                                   "key_file_count": len(key_files)})
 
 
 def _rebuild(task_id: str, provided: Optional[Dict[str, Any]] = None) -> MultiOperationTask:
