@@ -35,7 +35,7 @@ def create_multi_operation_sampling_task(task_id: str, operations: Sequence[Oper
 
 def init_multi_operation_task(task_id: str, sample_file: str,
                               operations: Sequence[Operation], work_dir: str,
-                              max_parallel_samples: int = 1,
+                              max_parallel_samples: int = 24,
                               keep_checkpoints: bool = True,
                               dry_run: bool = False) -> Dict[str, Any]:
     """初始化多工步计算任务；全部续跑参数写入 state.json。"""

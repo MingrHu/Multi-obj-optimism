@@ -28,7 +28,7 @@ def generate_keyfile_test() -> None:
         _sample_file(),
         _TASK.operation_configs(),
         str(_TASK.run_dir),
-        max_parallel_samples=12,
+        max_parallel_samples=24,
         keep_checkpoints=True,
     ))
 
