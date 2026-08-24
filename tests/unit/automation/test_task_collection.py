@@ -9,8 +9,10 @@ import pytest
 
 import mobo.automation.task_collection as task_collection
 from mobo.automation.task_collection import (
+    RING_7050_SINGLE_TASK_1,
     TC4_RING_MULTI_TASK_1,
-    get_task_definition,
+    get_multi_operation_task_definition,
+    get_single_operation_task_definition,
 )
 
 
@@ -46,7 +48,7 @@ def _small_template(path: Path) -> str:
 
 
 def test_tc4_task_is_registered_and_has_fixed_first_operation():
-    task = get_task_definition("tc4-ring-multi-task-1")
+    task = get_multi_operation_task_definition("tc4-ring-multi-task-1")
     assert task is TC4_RING_MULTI_TASK_1
     assert task.name == "TC4碾环多工步任务1"
     assert task.operations[0]["parameters"] == []
@@ -70,6 +72,70 @@ def test_tc4_task_is_registered_and_has_fixed_first_operation():
     assert load_target.operation_indices == (1, 2, 3)
     assert load_target.select_component == 1
     assert load_target.in_progress is True
+
+
+def test_7050_single_task_is_registered_with_requested_design_space():
+    task = get_single_operation_task_definition("7050-ring-single-task-1")
+    assert task is RING_7050_SINGLE_TASK_1
+    assert task.workspace.parts[-2:] == ("single", "7050_ring_single_task_1")
+    assert [(item["name"], item["range"]) for item in task.parameters] == [
+        ("workpiece_temperature", [320.0, 450.0]),
+        ("ring_die_temperature", [150.0, 250.0]),
+        ("pressure_roll_constant_speed", [0.2, 2.0]),
+    ]
+    assert [target.output_name for target in task.targets] == [
+        "roundness_inner", "roundness_outer", "die_load_y",
+        "effective_strain_std", "average_grain_size", "material_fill",
+    ]
+    load_target = next(
+        target for target in task.targets if target.output_name == "die_load_y"
+    )
+    assert load_target.target_name == "load"
+    assert load_target.object_name == "driving_roll"
+    assert load_target.operation_indices == (1,)
+    assert load_target.select_component == 1
+    assert load_target.in_progress is True
+    assert task.targets[-1].verified is False
+
+
+def test_typed_task_getters_reject_the_wrong_task_kind():
+    assert get_multi_operation_task_definition(
+        "tc4-ring-multi-task-1"
+    ) is TC4_RING_MULTI_TASK_1
+    assert get_single_operation_task_definition(
+        "7050-ring-single-task-1"
+    ) is RING_7050_SINGLE_TASK_1
+    with pytest.raises(TypeError, match="不是多工步任务"):
+        get_multi_operation_task_definition("7050-ring-single-task-1")
+    with pytest.raises(TypeError, match="不是单工步任务"):
+        get_single_operation_task_definition("tc4-ring-multi-task-1")
+
+
+@pytest.mark.integration
+def test_real_7050_template_has_grain_and_generates_parameterized_key(tmp_path):
+    task = RING_7050_SINGLE_TASK_1
+    task.validate()
+    template = Path(task.template_key)
+    text = template.read_text(encoding="utf-8")
+    assert "TRANS        1       1       0       0       1" in text
+    assert "GRAIN        1   23400      16" in text
+    grain_start = text.index("GRAIN        1   23400      16")
+    assert text[grain_start:].splitlines()[1].split()[2:4] == [
+        "5.0000000000E+001", "5.0000000000E+001",
+    ]
+
+    sample = tmp_path / "sample.txt"
+    sample.write_text("320\t150\t0.2\n", encoding="utf-8")
+    generated = Path(task.prepare_keys(sample, workspace=tmp_path / "run")[0])
+    rendered = generated.read_text(encoding="utf-8")
+    assert "REFTMP       1    3.2000000000E+002" in rendered
+    assert "NDTMP        1       0    3.2000000000E+002" in rendered
+    for object_id in (2, 3, 4, 5):
+        assert f"REFTMP       {object_id}    1.5000000000E+002" in rendered
+    assert (
+        "MOVCTL       3       1       0    0.0000000000E+000    "
+        "1.0000000000E+000    0.0000000000E+000    2.0000000000E-001"
+    ) in rendered
 
 
 def test_task_prepare_uses_temp_workspace_and_never_calls_solver(monkeypatch, tmp_path):
@@ -101,6 +167,13 @@ def test_multi_operation_dataset_has_no_header(monkeypatch, tmp_path):
         "extract_targets",
         lambda self, files: {"load": "12.30", "grain": "50.10"},
     )
+    monkeypatch.setattr(
+        type(TC4_RING_MULTI_TASK_1),
+        "_completed_key_files",
+        lambda self, task, sample_index: {
+            index: [str(tmp_path / f"{index}.KEY")] for index in range(1, 4)
+        },
+    )
     operations = {
         str(index): {"terminal_key": str(tmp_path / f"{index}.KEY")}
         for index in range(1, 4)
@@ -113,6 +186,30 @@ def test_multi_operation_dataset_has_no_header(monkeypatch, tmp_path):
     assert Path(output).read_text(encoding="utf-8") == (
         "800\t200\t0.1\t900\t300\t1.0\t12.30\t50.10\n"
     )
+
+
+def test_multi_operation_progress_targets_export_checkpoint_saved_steps(
+        monkeypatch, tmp_path):
+    operations = {}
+    for index in range(1, 4):
+        checkpoint = tmp_path / f"checkpoint_{index}.DB"
+        checkpoint.touch()
+        operations[str(index)] = {
+            "terminal_key": str(tmp_path / f"terminal_{index}.KEY"),
+            "checkpoint": str(checkpoint),
+        }
+    task = SimpleNamespace(state={"samples": {"0": {"operations": operations}}})
+    calls = []
+
+    def fake_export(db_path, output_dir):
+        calls.append((db_path, output_dir))
+        return [f"{output_dir}/step_1.KEY", f"{output_dir}/step_60.KEY"]
+
+    monkeypatch.setattr(task_collection, "export_saved_step_keys", fake_export)
+    result = TC4_RING_MULTI_TASK_1._completed_key_files(task, 0)
+
+    assert len(calls) == 3
+    assert all(len(result[index]) == 2 for index in range(1, 4))
 
 
 @pytest.mark.integration

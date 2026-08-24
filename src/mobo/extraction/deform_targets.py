@@ -128,6 +128,12 @@ def _extractGrainMorph(AllLines:List[List[str]],obj_id:str,inprogress:bool,selec
     return "{:.2f}".format(finall_res)
 
 
+def _extractMaterialFill(AllLines: List[List[str]], obj_id: str,
+                         inprogress: bool, select_component=None) -> str:
+    """碾环材料填充性占位提取器；指标定义确定后在此实现。"""
+    return "nan"
+
+
 def _extractEffectiveStrainStdv(AllLines: List[List[str]], obj_id: str,
                                 inprogress: bool, select_component=None) -> str:
     """计算 STRAIN 数据块中单元等效应变的标准差。"""

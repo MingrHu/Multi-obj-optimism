@@ -63,7 +63,7 @@ def generate_keyfile_test() -> None:
         "process_info_file": str(task_dir(_TASK_ID) / "process_info.json")
     }
 
-    print(init_execution_task(_TASK_ID, paths_config, param_table, target_table, in_progress, 3400))
+    print(init_execution_task(_TASK_ID, paths_config, param_table, target_table, in_progress))
 
 
 def run_process_test() -> None:

@@ -14,6 +14,7 @@ def test_builtin_registrations():
     assert ("generic", "grain") in keys
     assert ("ring", "roundness_inner") in keys
     assert ("ring", "roundness_outer") in keys
+    assert ("ring", "material_fill") in keys
 
 
 def test_get_returns_spec():
@@ -42,7 +43,15 @@ def test_resolve_no_fallback_hit_raises():
 
 def test_targets_for():
     assert set(registry.targets_for("generic")) >= {"stress", "load", "grain"}
-    assert set(registry.targets_for("ring")) == {"roundness_inner", "roundness_outer"}
+    assert set(registry.targets_for("ring")) == {
+        "roundness_inner", "roundness_outer", "material_fill",
+    }
+
+
+def test_ring_material_fill_is_explicit_unimplemented_placeholder():
+    spec = registry.resolve("ring", "material_fill")
+    assert spec.kind == "key_lines"
+    assert spec.fn([[]], "1", False, None) == "nan"
 
 
 def test_register_decorator_and_register_fn():

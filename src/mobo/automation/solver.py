@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import tempfile
 import threading
@@ -33,13 +34,14 @@ DEF_ARM_CTL = os.environ.get("MOBO_DEF_ARM_CTL", "DEF_ARM_CTL.COM")
 _OPERATION_LOG = os.path.join(str(LOGS_DIR), "deform_operation.log")
 
 
-def _run_pre_with_commands(commands: str) -> None:
+def _run_pre_with_commands(commands: str) -> str:
     """把命令串写入临时文件，用输入重定向驱动 DEF_PRE_64，并记录输出到日志。
 
     :param commands: 发送给 DEF_PRE_64 的完整命令串（含换行）
     """
     os.makedirs(str(LOGS_DIR), exist_ok=True)
     fd, cmd_file = tempfile.mkstemp(prefix="deform_pre_", suffix=".txt", text=True)
+    output_lines: List[str] = []
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(commands)
@@ -59,9 +61,11 @@ def _run_pre_with_commands(commands: str) -> None:
                     break
                 if output:
                     log_file.write(output)
+                    output_lines.append(output)
     finally:
         if os.path.exists(cmd_file):
             os.remove(cmd_file)
+    return "".join(output_lines)
 
 
 def key_to_db(key_path: str, db_path: str) -> None:
@@ -93,6 +97,19 @@ def db_to_key(db_path: str, key_path: str, step: str = "") -> None:
     """
     commands = f"E\n2\n2\n{db_path}\n{step}\nE\nE\n8\n{key_path}\nE\nY\n"
     _run_pre_with_commands(commands)
+
+
+def query_db_steps(db_path: str) -> List[int]:
+    """查询 DEFORM DB 实际保存的结果步号，不根据 NSTEP/STPINC 猜测。"""
+    commands = f"E\n2\n2\n{db_path}\n\nE\nE\nY\n"
+    output = _run_pre_with_commands(commands)
+    match = re.search(r"Step Numbers:\s*(.*?)\s*Step Number\s*=", output, re.DOTALL)
+    if match is None:
+        raise RuntimeError(f"无法从 DEFORM 输出解析数据库保存步号: {db_path}")
+    steps = sorted({int(value) for value in re.findall(r"-?\d+", match.group(1))})
+    if not steps:
+        raise RuntimeError(f"DEFORM 数据库没有可用结果步: {db_path}")
+    return steps
 
 
 def run_key_actions(key_path: str) -> None:
@@ -366,6 +383,7 @@ __all__ = [
     "key_to_db",
     "key_to_db_batch",
     "db_to_key",
+    "query_db_steps",
     "run_key_actions",
     "solve_db_sync",
     "DeformSolver",

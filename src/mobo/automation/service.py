@@ -37,7 +37,6 @@ _REQUIRED_EXEC_KEYS = (
     "param_table",
     "target_table",
     "in_progress",
-    "max_step",
 )
 
 
@@ -76,7 +75,6 @@ def _rebuild_task(task_id: str, provided: Optional[Dict[str, Any]] = None) -> Fo
         param_table=[list(row) for row in req["param_table"]],
         target_table=[list(row) for row in req["target_table"]],
         in_progress=list(req["in_progress"]),
-        max_step=req["max_step"],
         process_info_file=paths.get("process_info_file") or (
             str(task_dir(task_id) / "process_info.json") if incremental else ""
         ),
@@ -183,9 +181,8 @@ def init_execution_task(
     task_id: str,
     paths_config: Dict[str, str],
     param_table: List[List[str]],
-    target_table: List[List[str]],
+    target_table: List[List[Any]],
     in_progress: List[bool],
-    max_step: int,
     incremental: bool = False,
 ) -> Dict[str, str]:
     """初始化执行任务：校验路径、落盘输入参数、构建任务并生成 KEY 文件。"""
@@ -203,7 +200,6 @@ def init_execution_task(
             "param_table": param_table,
             "target_table": target_table,
             "in_progress": in_progress,
-            "max_step": max_step,
             "incremental": incremental,
         })
         task.generate_keys()

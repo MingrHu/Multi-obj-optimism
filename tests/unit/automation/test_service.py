@@ -80,19 +80,19 @@ def test_create_sampling_task_failure(monkeypatch):
 
 
 def test_init_execution_task_missing_paths():
-    res = service.init_execution_task("t1", {}, [["temp"]], [["grain"]], [False], 10)
+    res = service.init_execution_task("t1", {}, [["temp"]], [["grain"]], [False])
     assert res["status"] == "failed"
 
 
 def test_init_execution_task_persists_req(monkeypatch, tmp_path):
     monkeypatch.setattr(service, "ForgingTask", _FakeTask)
     res = service.init_execution_task(
-        "t1", _paths(tmp_path), [["temp"], ["workpiece"]], [["grain"], ["workpiece"]], [False], 100
+        "t1", _paths(tmp_path), [["temp"], ["workpiece"]], [["grain"], ["workpiece"]], [False]
     )
     assert res["status"] == "success"
     # 输入参数已落盘，供后续步骤续跑
     state = task_store.load("t1")
-    assert state["req"]["max_step"] == 100
+    assert "max_step" not in state["req"]
     assert state["req"]["param_table"] == [["temp"], ["workpiece"]]
     assert state["stage"] == "generate_keys" and state["status"] == "finished"
 
@@ -105,7 +105,7 @@ def test_run_and_extract_resume_from_disk(monkeypatch, tmp_path):
     """init 落盘后，run/extract 仅凭 task_id 从磁盘重建任务续跑。"""
     monkeypatch.setattr(service, "ForgingTask", _FakeTask)
     service.init_execution_task(
-        "t1", _paths(tmp_path), [["temp"], ["workpiece"]], [["grain"], ["workpiece"]], [False], 100
+        "t1", _paths(tmp_path), [["temp"], ["workpiece"]], [["grain"], ["workpiece"]], [False]
     )
 
     # 只传 task_id，不再传任何参数
@@ -125,7 +125,7 @@ def test_query_execution_status_unknown():
 def test_query_execution_status_reads_state(monkeypatch, tmp_path):
     monkeypatch.setattr(service, "ForgingTask", _FakeTask)
     service.init_execution_task(
-        "t1", _paths(tmp_path), [["temp"], ["workpiece"]], [["grain"], ["workpiece"]], [False], 100
+        "t1", _paths(tmp_path), [["temp"], ["workpiece"]], [["grain"], ["workpiece"]], [False]
     )
     res = service.query_execution_status("t1")
     assert res["status"] == "finished"
@@ -136,7 +136,7 @@ def test_state_history_accumulates(monkeypatch, tmp_path):
     """完整记录各阶段的状态转移，而非覆盖。"""
     monkeypatch.setattr(service, "ForgingTask", _FakeTask)
     service.init_execution_task(
-        "t1", _paths(tmp_path), [["temp"], ["workpiece"]], [["grain"], ["workpiece"]], [False], 100
+        "t1", _paths(tmp_path), [["temp"], ["workpiece"]], [["grain"], ["workpiece"]], [False]
     )
     service.run_execution_step("t1")
     service.run_extract_data("t1")
@@ -157,20 +157,21 @@ def test_run_without_record_needs_params(monkeypatch, tmp_path):
         param_table=[["temp"], ["workpiece"]],
         target_table=[["grain"], ["workpiece"]],
         in_progress=[False],
-        max_step=100,
     )
     assert res["status"] == "success"
-    assert task_store.load("fresh")["req"]["max_step"] == 100
+    assert "max_step" not in task_store.load("fresh")["req"]
 
 
 def test_record_takes_precedence_over_overrides(monkeypatch, tmp_path):
     """已有记录时，传入的 overrides 不覆盖记录里的参数。"""
     monkeypatch.setattr(service, "ForgingTask", _FakeTask)
     service.init_execution_task(
-        "t1", _paths(tmp_path), [["temp"], ["workpiece"]], [["grain"], ["workpiece"]], [False], 100
+        "t1", _paths(tmp_path), [["temp"], ["workpiece"]], [["grain"], ["workpiece"]], [False]
     )
-    service.run_execution_step("t1", max_step=999)
-    assert task_store.load("t1")["req"]["max_step"] == 100
+    service.run_execution_step("t1", param_table=[["other"], ["workpiece"]])
+    assert task_store.load("t1")["req"]["param_table"] == [
+        ["temp"], ["workpiece"],
+    ]
 
 
 def test_process_info_file_passed_to_task(monkeypatch, tmp_path):
@@ -184,7 +185,7 @@ def test_process_info_file_passed_to_task(monkeypatch, tmp_path):
 
     monkeypatch.setattr(service, "ForgingTask", _Capture)
     service.init_execution_task(
-        "t1", _paths(tmp_path), [["temp"], ["workpiece"]], [["grain"], ["workpiece"]], [False], 100
+        "t1", _paths(tmp_path), [["temp"], ["workpiece"]], [["grain"], ["workpiece"]], [False]
     )
     assert captured["process_info_file"] == str(tmp_path / "process_info.json")
 
@@ -222,7 +223,7 @@ def test_rebuild_task_restores_key_files_in_sample_order(monkeypatch, tmp_path):
     for i in range(12):
         (temp_key / f"MODEL{i}.KEY").write_text("")
     service.init_execution_task(
-        "t1", paths, [["temp"], ["workpiece"]], [["grain"], ["workpiece"]], [False], 100
+        "t1", paths, [["temp"], ["workpiece"]], [["grain"], ["workpiece"]], [False]
     )
 
     task = service._rebuild_task("t1")
@@ -247,7 +248,7 @@ def _setup_misaligned_res_db(tmp_path, n=12):
         d.mkdir()
         (d / f"{stem}.DB").write_text(stem)  # 内容=真实样本 stem，用于校验不丢
     service.init_execution_task(
-        "t1", paths, [["temp"], ["workpiece"]], [["grain"], ["workpiece"]], [False], 100
+        "t1", paths, [["temp"], ["workpiece"]], [["grain"], ["workpiece"]], [False]
     )
     return res_db
 
@@ -297,7 +298,7 @@ def test_align_result_db_dirs_partial(tmp_path):
         d.mkdir()
         (d / f"{stem}.DB").write_text(stem)
     service.init_execution_task(
-        "t1", paths, [["temp"], ["workpiece"]], [["grain"], ["workpiece"]], [False], 100
+        "t1", paths, [["temp"], ["workpiece"]], [["grain"], ["workpiece"]], [False]
     )
 
     res = service.align_result_db_dirs("t1")
@@ -315,7 +316,7 @@ def test_run_extract_data_resume_loads_samples_and_no_index_col(monkeypatch, tmp
 
     # 打桩 DEFORM 相关子过程，避免依赖真实环境
     monkeypatch.setattr(extract, "db_to_key",
-                        lambda db, key, step: open(key, "w", encoding="utf-8").close())
+                        lambda db, key, step: open(key, "w", encoding="utf-8").write("frame"))
     monkeypatch.setattr(extract, "read_key_frames", lambda files: [["frame"]])
     # 提取器回显它收到的样本第一个参数值，便于校验参数-目标配对
     monkeypatch.setattr(DeformConfig, "get_target_function",
@@ -341,7 +342,7 @@ def test_run_extract_data_resume_loads_samples_and_no_index_col(monkeypatch, tmp
         (d / f"MODEL{i}.DB").write_text("")
 
     service.init_execution_task(
-        "t1", paths, [["temp"], ["workpiece"]], [["grain"], ["workpiece"], [1]], [False], 1
+        "t1", paths, [["temp"], ["workpiece"]], [["grain"], ["workpiece"], [1]], [False]
     )
     # 记录里 param_table 仍只有 2 行（样本行未落盘）
     assert task_store.load("t1")["req"]["param_table"] == [["temp"], ["workpiece"]]

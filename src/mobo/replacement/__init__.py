@@ -7,6 +7,7 @@ from .deform_parameters import (
     replace_keyword_last_value,
     replace_movctl_constant_speed,
     replace_object_temperature,
+    replace_ring_die_temperature,
     replace_pressure_roll_speed_profile,
 )
 from .registry import ReplacementRegistry
@@ -36,6 +37,10 @@ registry.register_fn(
 )
 registry.register_fn(
     "workpiece_temperature", replace_object_temperature,
+    kind="document",
+)
+registry.register_fn(
+    "ring_die_temperature", replace_ring_die_temperature,
     kind="document",
 )
 registry.register_fn(

@@ -124,6 +124,13 @@ TC4 碾环多工步任务由 `task_collection.TC4_RING_MULTI_TASK_1` 完整定�
 工步1不含参数绑定，预生成时字节复制；工步2、3将一个模具温度样本值
 展开到所有模具对象。`prepare_keys()` 只验证参数到 KEY 的映射，不调用 DEFORM。
 
+7050 碾环单工步任务由 `task_collection.RING_7050_SINGLE_TASK_1` 定义，复用
+`ForgingTask` 的 KEY 生成、求解与提取流水线。一个 `ring_die_temperature` 样本值通过
+文档级替换原子能力同步作用于对象 2～5；`material_fill` 是尚未确定计算方法的目标占位符。
+结果提取不再要求调用方提供最大步数：终态目标用空步号导出 DB 最新结果集；全过程目标
+先从 DEFORM 的 `Step Numbers` 查询 DB 实际保存步号，再逐帧导出。多工步全过程目标从
+各工步 checkpoint DB 提取，因此启用这类目标时必须保留工步检查点。
+
 ## 路径集中化
 
 所有路径统一由 `mobo.common.paths` 提供，取代旧代码中的 `../../data/...` 相对路径与

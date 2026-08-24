@@ -9,7 +9,7 @@ from __future__ import annotations
 import os
 import threading
 from enum import IntEnum
-from typing import Callable, List, Optional, Sequence, Tuple
+from typing import Any, Callable, List, Optional, Sequence, Tuple
 
 from mobo.common.logging import logger
 from .extract import extract_dataset, extract_dataset_row
@@ -60,7 +60,6 @@ class ForgingTask:
     :param param_table: 工艺参数固定表头 ``[[参数名...], [对象名...]]``（2×n）
     :param target_table: 目标固定表头 ``[[目标名...], [对象名...], [select_component...]]``（3×m）
     :param in_progress: 每个目标是否走全过程提取（1×m）
-    :param max_step: KEY 求解过程最大步数
     :param process_info_file: 求解过程信息记录文件路径（记录各 DB 是否求解完成，支持中断续跑）
     :param dry_run: 为 True 时只推进状态、不真正调用 DEFORM（用于非 Windows/测试）
     :param key_files: 内存记录的生成批量key文件
@@ -78,9 +77,8 @@ class ForgingTask:
         result_key_dir: str,
         result_txt_dir: str,
         param_table: List[List[str]],
-        target_table: List[List[str]],
+        target_table: List[List[Any]],
         in_progress: List[bool],
-        max_step: int,
         process_info_file: str = "",
         *,
         dry_run: bool = False,
@@ -98,7 +96,6 @@ class ForgingTask:
         self.param_table = param_table
         self.target_table = target_table
         self.in_progress = in_progress
-        self.max_step = max_step
         self.dry_run = dry_run
         self.max_parallel = max_parallel
         self.incremental = incremental
@@ -205,7 +202,7 @@ class ForgingTask:
                 incremental_dataset.mark_started(sample_index)
                 try:
                     row = extract_dataset_row(
-                        db_path, sample_index, self.result_key_dir, self.max_step,
+                        db_path, sample_index, self.result_key_dir,
                         self.param_table[sample_index + 2], self.target_table,
                         self.in_progress,
                     )
@@ -232,7 +229,6 @@ class ForgingTask:
             extract_dataset(
                 self.db_files,
                 self.result_key_dir,
-                self.max_step,
                 self.param_table,
                 self.target_table,
                 self.in_progress,

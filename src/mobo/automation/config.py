@@ -11,6 +11,7 @@ from mobo.extraction.deform_targets import (
     _extractGrainMorph,
     _extractMaxLoad,
     _extractMaxStress,
+    _extractMaterialFill,
     _extractUsrGrainStdv,
 )
 from mobo.extraction.ring_roundness import extract_ring_roundness
@@ -74,6 +75,7 @@ class DeformConfig:
         'strain_std': partial(_lines_target, _extractEffectiveStrainStdv),
         'grain': partial(_lines_target, _extractUsrGrainStdv),
         'grain_morph': partial(_lines_target, _extractGrainMorph),
+        'material_fill': partial(_lines_target, _extractMaterialFill),
         'roundness_inner': partial(_roundness_target, "inner"),
         'roundness_outer': partial(_roundness_target, "outer"),
     }

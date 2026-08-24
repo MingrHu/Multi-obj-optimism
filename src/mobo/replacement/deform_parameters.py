@@ -70,6 +70,27 @@ def replace_object_temperature(
     return result
 
 
+def replace_ring_die_temperature(
+    lines: Sequence[str], bindings: Sequence[ParameterBinding]
+) -> list[str]:
+    """用一个采样值同步设置碾环对象 2～5 的模具参考温度。"""
+    result = list(lines)
+    binding = next(
+        (item for item in bindings if item.name == "ring_die_temperature"),
+        None,
+    )
+    if binding is None:
+        return result
+    value = format_deform_float(binding.value)
+    for index, line in enumerate(result):
+        tokens = line.split()
+        if len(tokens) < 3 or tokens[0] != "REFTMP" or tokens[1] not in {"2", "3", "4", "5"}:
+            continue
+        start = line.rfind(tokens[-1])
+        result[index] = line[:start] + value + line[start + len(tokens[-1]):]
+    return result
+
+
 def replace_movctl_constant_speed(
     line: str, binding: ParameterBinding
 ) -> LineReplacement:
@@ -206,6 +227,7 @@ __all__ = [
     "replace_keyword_last_value",
     "replace_movctl_constant_speed",
     "replace_object_temperature",
+    "replace_ring_die_temperature",
     "replace_pressure_roll_speed_profile",
     "scale_abs",
     "scale_movctl_block",

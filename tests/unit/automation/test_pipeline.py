@@ -30,7 +30,6 @@ def _make_task(tmp_path):
         param_table=[["temp", "speed"], ["workpiece", "topdie"]],
         target_table=[["grain"], ["workpiece"]],
         in_progress=[False],
-        max_step=10,
         dry_run=True,
     )
 

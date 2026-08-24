@@ -100,9 +100,9 @@ def run_multi_operation_task(task_id: str, **provided: Any) -> Dict[str, Any]:
     incremental_state_file = ""
     incremental_output_file = ""
     if incremental_enabled:
-        from .task_collection import get_task_definition
+        from .task_collection import get_multi_operation_task_definition
 
-        definition = get_task_definition(task_id)
+        definition = get_multi_operation_task_definition(task_id)
         result_dir = req.get("incremental_result_dir") or str(definition.workspace / "results")
         incremental_state_file = str(task_dir(task_id) / "incremental_dataset.json")
         incremental_output_file = os.path.join(
@@ -152,10 +152,10 @@ def query_multi_operation_status(task_id: str) -> Optional[Dict[str, Any]]:
 
 def run_multi_operation_extract(task_id: str, result_dir: str | None = None) -> Dict[str, Any]:
     """仅凭 task_id 恢复多工步任务并生成无表头结果数据集。"""
-    from .task_collection import get_task_definition
+    from .task_collection import get_multi_operation_task_definition
 
     task = _rebuild(task_id)
-    definition = get_task_definition(task_id)
+    definition = get_multi_operation_task_definition(task_id)
     result_file = definition.extract_dataset(task, result_dir=result_dir)
     return task_store.update(
         task_id, stage="extract", status="finished",

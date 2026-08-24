@@ -398,11 +398,13 @@ class MultiOperationTask:
 
     def _prepare_transition(self, sample_index: int, operation_index: int,
                             operation_dir: str, db_path: str, previous_terminal: str) -> None:
+        """多工步替换模控制逻辑 保留前序 DB 的材料和晶粒状态"""
         operation = self.operations[operation_index - 1]
         params = _parameters(operation)
         values = self._values(sample_index, operation_index)
         names, objects, expanded_values = _expanded_parameter_values(params, values)
         parameterized = os.path.join(operation_dir, "parameterized_template.KEY")
+
         if os.path.exists(parameterized):
             parts = split_operation_key(parameterized, operation_dir)
         else:
@@ -454,15 +456,20 @@ class MultiOperationTask:
             run_key_actions(action_path)
 
     def _run_sample(self, sample_index: int) -> None:
+        """多工步核心处理函数逻辑"""
+        # 样本位置
         sample_dir = os.path.join(self.work_dir, str(sample_index))
         os.makedirs(sample_dir, exist_ok=True)
         db_path = os.path.join(sample_dir, "result.DB")
         sample_state = self.state["samples"][str(sample_index)]
         sample_state["status"] = "running"
         self._save()
+
+        # 多工步执行 1 2 3
         for operation_index in range(1, len(self.operations) + 1):
             operation = self.operations[operation_index - 1]
             op_state = sample_state["operations"][str(operation_index)]
+            # 完成的就跳过
             if op_state["status"] == "completed":
                 continue
             operation_dir = os.path.join(sample_dir, f"op{operation_index}")
@@ -475,7 +482,7 @@ class MultiOperationTask:
                 sample_dir, f"terminal_{operation_index - 1}.KEY"
             )
             try:
-                # preparing 可安全重做；solving 阶段则复用已经生成的 DB 继续提交。
+                # 重新运行：1-从未开始 2-准备中 3-准备失败 4-不存在DB文件
                 phase = op_state.get("phase", "pending")
                 if phase in {"pending", "preparing"} or (
                         phase == "failed" and op_state.get("failed_phase") == "preparing"
@@ -488,6 +495,7 @@ class MultiOperationTask:
                     else:
                         if self.keep_checkpoints and os.path.exists(previous_checkpoint):
                             shutil.copy2(previous_checkpoint, db_path)
+                        # 执行换模逻辑 生成新的工步 DB
                         self._prepare_transition(sample_index, operation_index, operation_dir,
                                                  db_path, previous_terminal)
                     self._set_operation(sample_index, operation_index, phase="prepared")
@@ -496,15 +504,19 @@ class MultiOperationTask:
                         f"工步 {operation_index} 准备完成后未生成结果 DB: {db_path}"
                     )
                 self._set_operation(sample_index, operation_index, status="running", phase="solving")
+
+                # 非空跑情况下执行deform求解
                 if not self.dry_run:
                     solve_db_sync(db_path)
+                    # 终态 KEY 文件 用于结果获取以及后续工步换模
                     terminal = os.path.join(sample_dir, f"terminal_{operation_index}.KEY")
                     db_to_key(db_path, terminal, "")
-                    # 每个需要晶粒演化的阶段都立即校验，避免错误传播到后续工步。
+                    # 下一个工步
                     next_operation = (
-                        self.operations[operation_index]
-                        if operation_index < len(self.operations) else None
+                        self.operations[operation_index] if operation_index < len(self.operations) else None
                     )
+                    # 部分KEY文件缺失晶粒组织设置 必须在初始KEY文件手动设置 在后续工步中直接从前序DB中继承晶粒组织状态
+                    # 后续阶段的模板KEY只提供模具几何、接触关系、运动停止条件等
                     grain_required = bool(operation.get("enable_grain")) or bool(
                         next_operation and next_operation.get("enable_grain")
                     )

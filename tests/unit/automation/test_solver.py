@@ -24,6 +24,24 @@ def test_db_to_key_command_string(monkeypatch):
     assert captured["cmd"] == "E\n2\n2\nin.DB\n5\nE\nE\n8\nout.KEY\nE\nY\n"
 
 
+def test_query_db_steps_parses_actual_saved_steps(monkeypatch):
+    captured = {}
+
+    def fake_run(command):
+        captured["command"] = command
+        return "Step Numbers:\n     -1      1     59     60\n\n Step Number = 60 ?"
+
+    monkeypatch.setattr(solver, "_run_pre_with_commands", fake_run)
+    assert solver.query_db_steps("model.DB") == [-1, 1, 59, 60]
+    assert captured["command"] == "E\n2\n2\nmodel.DB\n\nE\nE\nY\n"
+
+
+def test_query_db_steps_rejects_unparseable_output(monkeypatch):
+    monkeypatch.setattr(solver, "_run_pre_with_commands", lambda _command: "invalid")
+    with pytest.raises(RuntimeError, match="解析数据库保存步号"):
+        solver.query_db_steps("model.DB")
+
+
 def test_run_key_actions_command_string(monkeypatch):
     captured = {}
     monkeypatch.setattr(solver, "_run_pre_with_commands", lambda cmd: captured.setdefault("cmd", cmd))
@@ -96,10 +114,11 @@ def test_run_pre_with_commands_invokes_popen(monkeypatch, tmp_path):
     monkeypatch.setattr(solver, "LOGS_DIR", tmp_path)
     monkeypatch.setattr(solver, "_OPERATION_LOG", str(tmp_path / "op.log"))
 
-    solver._run_pre_with_commands("E\nY\n")
+    output = solver._run_pre_with_commands("E\nY\n")
     assert solver.DEF_PRE_64 in seen["command"]
     assert seen["kwargs"]["shell"] is True
     assert (tmp_path / "op.log").read_text() == "log line 1\n"
+    assert output == "log line 1\n"
 
 
 def test_deform_solver_running_counter():

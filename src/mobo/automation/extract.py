@@ -15,33 +15,75 @@ from typing import Any, List, Sequence
 from mobo.common.logging import logger
 from .config import DeformConfig
 from .keyfile import derive_output_path, read_key_frames
-from .solver import db_to_key
+from .solver import db_to_key, query_db_steps
 
 
-def _export_all_steps(db_file: str, save_dir: str, max_step: int) -> List[str]:
-    """把一个 DB 文件的 0..max_step-1 步全部导出为 KEY 文件。
+def _export_key(db_file: str, key_file: str, step: str) -> str:
+    """导出一个确定存在的 DB 结果步，并拒绝静默产生空文件。"""
+    if os.path.isfile(key_file) and os.path.getsize(key_file) > 0:
+        return key_file
+    db_to_key(db_file, key_file, step)
+    if not os.path.isfile(key_file) or os.path.getsize(key_file) == 0:
+        label = "终态" if step == "" else f"第 {step} 步"
+        raise FileNotFoundError(f"DEFORM 未导出{label} KEY: {key_file}")
+    return key_file
 
-    :param db_file: DB 文件路径
-    :param save_dir: KEY 导出目录
-    :param max_step: 最大步数
-    :return: 各步 KEY 文件路径列表
-    """
+
+def export_terminal_key(db_file: str, save_dir: str) -> str:
+    """使用 DEFORM 数据库默认最新结果集导出终态 KEY。"""
+    os.makedirs(save_dir, exist_ok=True)
+    key_file = derive_output_path(db_file, save_dir, "_terminal", "KEY")
+    return _export_key(db_file, key_file, "")
+
+
+def export_saved_step_keys(db_file: str, save_dir: str) -> List[str]:
+    """查询并导出 DB 中实际存在的全部保存步，不猜测连续步号。"""
     os.makedirs(save_dir, exist_ok=True)
     key_files: List[str] = []
-    for step in range(max_step):
-        key_file = derive_output_path(db_file, save_dir, str(step), "KEY")
-        key_files.append(key_file)
-        while not os.path.exists(key_file):
-            db_to_key(db_file, key_file, str(step))
+    for step in query_db_steps(db_file):
+        key_file = derive_output_path(db_file, save_dir, f"_step_{step}", "KEY")
+        key_files.append(_export_key(db_file, key_file, str(step)))
     return key_files
+
+
+def _extract_values(
+    db_file: str,
+    step_dir: str,
+    target_table: List[List[Any]],
+    in_progress: Sequence[bool],
+) -> List[str]:
+    """终态目标读取最新帧；全过程目标读取 DB 实际保存的全部帧。"""
+    target_names, object_names, select_components = target_table
+    terminal_key = export_terminal_key(db_file, step_dir)
+    terminal_frames = read_key_frames([terminal_key])
+    saved_keys: List[str] = []
+    saved_frames: List[List[str]] = []
+    if any(in_progress):
+        saved_keys = export_saved_step_keys(db_file, step_dir)
+        saved_frames = read_key_frames(saved_keys)
+
+    values: List[str] = []
+    for index, target_name in enumerate(target_names):
+        extractor = DeformConfig.get_target_function(target_name)
+        if extractor is None:
+            raise ValueError(f"未知目标提取器: {target_name}")
+        object_id = DeformConfig.get_object_id(object_names[index])
+        use_progress = bool(in_progress[index])
+        values.append(extractor(
+            saved_keys if use_progress else [terminal_key],
+            saved_frames if use_progress else terminal_frames,
+            object_id,
+            use_progress,
+            select_components[index],
+        ))
+    return values
 
 
 def extract_dataset(
     db_files: Sequence[str],
     key_export_dir: str,
-    max_step: int,
     param_table: List[List[str]],
-    target_table: List[List[str]],
+    target_table: List[List[Any]],
     in_progress: Sequence[bool],
     result_dir: str,
 ) -> str:
@@ -49,16 +91,12 @@ def extract_dataset(
 
     :param db_files: 结果 DB 文件路径序列
     :param key_export_dir: 逐步 KEY 导出的根目录
-    :param max_step: 每个 DB 的最大步数
     :param param_table: 参数表（前两行为表头，其后每行对应一个样本的工艺参数）
     :param target_table: 目标表 ``[[目标名...], [对象名...], [select_component...]]``
     :param in_progress: 每个目标是否走全过程提取
     :param result_dir: 数据集输出目录
     :return: 输出数据集文件完整路径
     """
-    target_names, object_names, select_component = (
-        target_table[0], target_table[1], target_table[2]
-    )
     # 新建数据集
     os.makedirs(result_dir, exist_ok=True)
     timestamp = datetime.now().strftime("%Y-%m-%d %H_%M_%S")
@@ -71,21 +109,11 @@ def extract_dataset(
             logger.info(f"当前提取的文件为：{db_file}")
             try:
                 step_dir = os.path.join(key_export_dir, str(i))
-                # 导出key文件
-                key_files = _export_all_steps(db_file, step_dir, max_step)
-                frames = read_key_frames(key_files)
-
                 # 样本工艺参数（param_table 前两行为表头，样本从第 2 行起）
                 row: List[Any] = list(param_table[i + 2])
-                for idx, target_name in enumerate(target_names):
-                    # 1 提取函数
-                    extractor = DeformConfig.get_target_function(target_name)
-                    # 2 提取对象
-                    object_id = DeformConfig.get_object_id(object_names[idx])
-                    row.append(extractor(
-                        key_files, frames, object_id,
-                        in_progress[idx], select_component[idx],
-                    ))
+                row.extend(_extract_values(
+                    db_file, step_dir, target_table, in_progress
+                ))
                 line = "\t".join(map(str, row)) + "\n"
                 logger.info(line)
                 # 追加
@@ -103,27 +131,20 @@ def extract_dataset_row(
     db_file: str,
     sample_index: int,
     key_export_dir: str,
-    max_step: int,
     parameters: Sequence[Any],
-    target_table: List[List[str]],
+    target_table: List[List[Any]],
     in_progress: Sequence[bool],
 ) -> List[Any]:
     """从一个已完成 DB 导出 KEY 并生成一行数据，供增量批处理调用。"""
-    target_names, object_names, select_component = (
-        target_table[0], target_table[1], target_table[2]
-    )
     step_dir = os.path.join(key_export_dir, str(sample_index))
-    key_files = _export_all_steps(db_file, step_dir, max_step)
-    frames = read_key_frames(key_files)
     row: List[Any] = list(parameters)
-    for idx, target_name in enumerate(target_names):
-        extractor = DeformConfig.get_target_function(target_name)
-        object_id = DeformConfig.get_object_id(object_names[idx])
-        row.append(extractor(
-            key_files, frames, object_id,
-            in_progress[idx], select_component[idx],
-        ))
+    row.extend(_extract_values(db_file, step_dir, target_table, in_progress))
     return row
 
 
-__all__ = ["extract_dataset", "extract_dataset_row"]
+__all__ = [
+    "export_saved_step_keys",
+    "export_terminal_key",
+    "extract_dataset",
+    "extract_dataset_row",
+]

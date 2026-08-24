@@ -17,6 +17,7 @@ from .deform_targets import (
     _extractGrainMorph,
     _extractMaxLoad,
     _extractMaxStress,
+    _extractMaterialFill,
     _extractUsrGrainStdv,
     calculate_von_mises,
 )
@@ -34,6 +35,8 @@ registry.register_fn("generic", "grain", _extractUsrGrainStdv, kind="key_lines",
                      description="自定义晶粒模型 USRELM 尺寸标准差")
 registry.register_fn("generic", "grain_morph", _extractGrainMorph, kind="key_lines",
                      description="GRAIN 指定晶粒组织分量平均值")
+registry.register_fn("ring", "material_fill", _extractMaterialFill, kind="key_lines",
+                     description="碾环材料填充性（占位，尚未定义计算方法）")
 
 # ---- 注册碾环工件的圆度提取（key_file 约定）----
 registry.register_fn(

@@ -10,26 +10,43 @@ from mobo.automation import extract
 from mobo.automation.config import DeformConfig
 
 
-def test_export_all_steps(monkeypatch, tmp_path):
+def test_export_saved_steps_uses_database_step_list(monkeypatch, tmp_path):
     exported = []
 
     def fake_db_to_key(db, key, step):
         exported.append((db, key, step))
-        # 模拟 DEFORM 真正生成了文件，使 while 循环退出
-        open(key, "w", encoding="utf-8").close()
+        open(key, "w", encoding="utf-8").write("frame")
 
     monkeypatch.setattr(extract, "db_to_key", fake_db_to_key)
-    keys = extract._export_all_steps(str(tmp_path / "model.DB"), str(tmp_path / "out"), 3)
+    monkeypatch.setattr(extract, "query_db_steps", lambda _db: [-1, 30, 60])
+    keys = extract.export_saved_step_keys(
+        str(tmp_path / "model.DB"), str(tmp_path / "out")
+    )
     assert len(keys) == 3
     assert all(os.path.exists(k) for k in keys)
-    assert [s for _, _, s in exported] == ["0", "1", "2"]
+    assert [s for _, _, s in exported] == ["-1", "30", "60"]
+
+
+def test_export_terminal_uses_deform_latest_step(monkeypatch, tmp_path):
+    calls = []
+
+    def fake_db_to_key(db, key, step):
+        calls.append((db, key, step))
+        open(key, "w", encoding="utf-8").write("terminal")
+
+    monkeypatch.setattr(extract, "db_to_key", fake_db_to_key)
+    key = extract.export_terminal_key(
+        str(tmp_path / "model.DB"), str(tmp_path / "out")
+    )
+    assert calls[0][2] == ""
+    assert key.endswith("model_terminal.KEY")
 
 
 def test_extract_dataset_writes_result(monkeypatch, tmp_path):
     # db_to_key 直接落一个空 KEY 文件
     monkeypatch.setattr(
         extract, "db_to_key",
-        lambda db, key, step: open(key, "w", encoding="utf-8").close(),
+        lambda db, key, step: open(key, "w", encoding="utf-8").write("frame"),
     )
     # read_key_frames 返回占位帧
     monkeypatch.setattr(extract, "read_key_frames", lambda files: [["frame"]])
@@ -54,7 +71,6 @@ def test_extract_dataset_writes_result(monkeypatch, tmp_path):
     out = extract.extract_dataset(
         db_files,
         str(tmp_path / "keys"),
-        1,
         param_table,
         target_table,
         [False],
@@ -74,7 +90,7 @@ def test_extract_dataset_routes_roundness(monkeypatch, tmp_path):
     """碾环圆度目标通过统一提取流程调用（对象名转 ID，用 KEY 文件计算）。"""
     monkeypatch.setattr(
         extract, "db_to_key",
-        lambda db, key, step: open(key, "w", encoding="utf-8").close(),
+        lambda db, key, step: open(key, "w", encoding="utf-8").write("frame"),
     )
     monkeypatch.setattr(extract, "read_key_frames", lambda files: [["frame"]])
 
@@ -91,7 +107,7 @@ def test_extract_dataset_routes_roundness(monkeypatch, tmp_path):
     os.makedirs(os.path.dirname(db_files[0]), exist_ok=True)
 
     out = extract.extract_dataset(
-        db_files, str(tmp_path / "keys"), 2, param_table, target_table, [False],
+        db_files, str(tmp_path / "keys"), param_table, target_table, [False],
         str(tmp_path / "result"),
     )
     content = open(out, encoding="utf-8").read()
@@ -100,4 +116,4 @@ def test_extract_dataset_routes_roundness(monkeypatch, tmp_path):
     assert len(calls) == 1
     key_path, which, object_id = calls[0]
     assert which == "inner" and object_id == 1
-    assert key_path.endswith("model1.KEY")  # max_step=2 -> 最终步索引 1
+    assert key_path.endswith("model_terminal.KEY")

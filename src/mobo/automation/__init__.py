@@ -34,9 +34,13 @@ from .multi_operation_service import (
 from .task_collection import (
     TASK_COLLECTION,
     TC4_RING_MULTI_TASK_1,
+    RING_7050_SINGLE_TASK_1,
     MultiOperationTaskDefinition,
+    SingleOperationTaskDefinition,
     TargetDefinition,
     get_task_definition,
+    get_multi_operation_task_definition,
+    get_single_operation_task_definition,
 )
 
 __all__ = [
@@ -58,8 +62,12 @@ __all__ = [
     "run_multi_operation_extract",
     "run_multi_operation_task",
     "MultiOperationTaskDefinition",
+    "SingleOperationTaskDefinition",
     "TargetDefinition",
     "TASK_COLLECTION",
     "TC4_RING_MULTI_TASK_1",
+    "RING_7050_SINGLE_TASK_1",
     "get_task_definition",
+    "get_multi_operation_task_definition",
+    "get_single_operation_task_definition",
 ]
