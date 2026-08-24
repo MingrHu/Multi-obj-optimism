@@ -118,6 +118,36 @@ def test_run_and_extract_resume_from_disk(monkeypatch, tmp_path):
     assert task_store.load("t1")["stage"] == "extract"
 
 
+def test_run_execution_step_restores_missing_key_before_solver(monkeypatch, tmp_path):
+    """单工步续跑在求解前补生成缺失 KEY，不覆盖已有非空 KEY。"""
+    paths = _paths(tmp_path)
+    Path(paths["smp_file"]).write_text("\n\n\n", encoding="utf-8")
+    Path(paths["std_key_file"]).write_text("HEADER\n", encoding="utf-8")
+    service.init_execution_task(
+        "t1", paths, [[], []], [[], [], []], [],
+    )
+    key_dir = Path(paths["temp_key_path"])
+    existing = key_dir / "MODEL0.KEY"
+    missing = key_dir / "MODEL1.KEY"
+    original = existing.read_bytes()
+    missing.unlink()
+
+    observed = {}
+
+    def capture_solver(task):
+        observed["key_files"] = list(task.key_files)
+
+    monkeypatch.setattr(service.ForgingTask, "run_solver", capture_solver)
+    result = service.run_execution_step("t1")
+
+    assert result["status"] == "success"
+    assert missing.read_text(encoding="utf-8") == "HEADER\n"
+    assert existing.read_bytes() == original
+    assert [Path(path).name for path in observed["key_files"]] == [
+        "MODEL0.KEY", "MODEL1.KEY", "MODEL2.KEY",
+    ]
+
+
 def test_query_execution_status_unknown():
     assert service.query_execution_status("nope")["status"] == "failed"
 

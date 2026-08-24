@@ -217,12 +217,12 @@ def run_execution_step(task_id: str, **overrides: Any) -> Dict[str, str]:
     """推进求解阶段。
 
     优先从任务记录续跑；记录缺失的参数可用 ``overrides`` 补齐（会回填记录），
-    记录与传入都没有则报错。
+    记录与传入都没有则报错。求解前会按样本补生成缺失或空的 KEY，
+    已存在的非空 KEY 保持不变。
     """
     try:
         task = _rebuild_task(task_id, overrides)
-        if getattr(task, "incremental", False):
-            task.load_samples_into_table()
+        task.generate_keys()
         task.run_solver()
         task_store.update(task_id, stage="run_solver", status="finished",
                           data={
