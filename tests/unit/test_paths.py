@@ -1,7 +1,6 @@
 """集中式路径解析测试。"""
 
 import importlib
-import os
 
 import mobo.common.paths as paths
 

@@ -3,13 +3,19 @@
 from __future__ import annotations
 
 import os
+import shutil
 from typing import Any, Dict, Optional, Sequence
 
 from mobo.common import task_store
+from mobo.common.paths import task_dir
 
 from .multi_operation import MultiOperationTask, Operation, generate_multi_operation_samples
 
 _KIND = "automation_multi_operation"
+
+
+def _workflow_state_file(task_id: str) -> str:
+    return str(task_dir(task_id) / "multi_operation_state.json")
 
 
 def create_multi_operation_sampling_task(task_id: str, operations: Sequence[Operation],
@@ -36,7 +42,8 @@ def init_multi_operation_task(task_id: str, sample_file: str,
     req = {"sample_file": os.path.abspath(sample_file), "operations": list(operations),
            "work_dir": os.path.abspath(work_dir),
            "max_parallel_samples": max_parallel_samples,
-           "keep_checkpoints": keep_checkpoints, "dry_run": dry_run}
+           "keep_checkpoints": keep_checkpoints, "dry_run": dry_run,
+           "state_file": _workflow_state_file(task_id)}
     task_store.init_state(task_id, _KIND, req)
     task_store.update(task_id, req=req)
     task = MultiOperationTask(task_id, **req)
@@ -47,12 +54,24 @@ def init_multi_operation_task(task_id: str, sample_file: str,
 def _rebuild(task_id: str, provided: Optional[Dict[str, Any]] = None) -> MultiOperationTask:
     required = ["sample_file", "operations", "work_dir"]
     req = task_store.resolve_req(task_id, _KIND, provided or {}, required)
+    state_file = _workflow_state_file(task_id)
+    legacy_state = os.path.join(req["work_dir"], "multi_operation_state.json")
+    if not os.path.exists(state_file) and os.path.exists(legacy_state):
+        os.makedirs(os.path.dirname(state_file), exist_ok=True)
+        shutil.move(legacy_state, state_file)
+    if req.get("state_file") != state_file:
+        task_store.update(
+            task_id,
+            req={"state_file": state_file},
+            data={"workflow_state": state_file},
+        )
     return MultiOperationTask(
         task_id=task_id, sample_file=req["sample_file"], operations=req["operations"],
         work_dir=req["work_dir"],
         max_parallel_samples=req.get("max_parallel_samples", 1),
         keep_checkpoints=req.get("keep_checkpoints", True),
         dry_run=req.get("dry_run", False),
+        state_file=state_file,
     )
 
 
@@ -82,7 +101,21 @@ def query_multi_operation_status(task_id: str) -> Optional[Dict[str, Any]]:
     return state
 
 
+def run_multi_operation_extract(task_id: str, result_dir: str | None = None) -> Dict[str, Any]:
+    """仅凭 task_id 恢复多工步任务并生成无表头结果数据集。"""
+    from .task_collection import get_task_definition
+
+    task = _rebuild(task_id)
+    definition = get_task_definition(task_id)
+    result_file = definition.extract_dataset(task, result_dir=result_dir)
+    return task_store.update(
+        task_id, stage="extract", status="finished",
+        data={"result_file": result_file},
+    )
+
+
 __all__ = [
     "create_multi_operation_sampling_task", "init_multi_operation_task",
     "run_multi_operation_task", "query_multi_operation_status",
+    "run_multi_operation_extract",
 ]

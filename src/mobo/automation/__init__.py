@@ -28,7 +28,15 @@ from .multi_operation_service import (
     create_multi_operation_sampling_task,
     init_multi_operation_task,
     query_multi_operation_status,
+    run_multi_operation_extract,
     run_multi_operation_task,
+)
+from .task_collection import (
+    TASK_COLLECTION,
+    TC4_RING_MULTI_TASK_1,
+    MultiOperationTaskDefinition,
+    TargetDefinition,
+    get_task_definition,
 )
 
 __all__ = [
@@ -47,5 +55,11 @@ __all__ = [
     "create_multi_operation_sampling_task",
     "init_multi_operation_task",
     "query_multi_operation_status",
+    "run_multi_operation_extract",
     "run_multi_operation_task",
+    "MultiOperationTaskDefinition",
+    "TargetDefinition",
+    "TASK_COLLECTION",
+    "TC4_RING_MULTI_TASK_1",
+    "get_task_definition",
 ]

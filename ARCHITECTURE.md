@@ -39,7 +39,7 @@
 
 | 子包 | 模块 | 职责 |
 |---|---|---|
-| `common` | `paths.py` | 集中式路径解析（`PROJECT_DIR/DATA_DIR/MODELS_DIR/TEST_DIR/KEY_FILE_DIR/TASKS_DIR`）+ 环境变量覆盖 |
+| `common` | `paths.py` | 集中式路径解析（包括 `AUTO_SINGLE_DIR/AUTO_MULTI_DIR`）+ 环境变量覆盖 |
 | `common` | `logging.py` | `GlobalLogger` 单例；显式 stdout 重定向 |
 | `common` | `task_store.py` | 任务状态持久化（`data/tasks/<id>/state.json`），三流程共用；`history` 完整记录阶段转移（只追加不覆盖），`resolve_req` 三路解析续跑参数（记录 > 传入 > 报错） |
 | `surrogate` | `common.py` | 数据加载/划分/标准化、指标、`save_model`、`Time`、DNN 构建 |
@@ -65,6 +65,7 @@
 | `automation` | `extract.py` | 结果 DB→KEY 逐步导出与数据集提取编排 |
 | `automation` | `pipeline.py` | `TaskStatus`（枚举）/ `ForgingTask` 三阶段状态机 / `generate_sample_file` |
 | `automation` | `service.py` | 任务级服务函数：state.json 落盘 + 仅凭 task_id 从磁盘重建续跑 |
+| `automation` | `multi_operation.py` / `task_collection.py` | 多工步换模、恢复、参数化 KEY 预生成与可导入任务集合 |
 
 ## 数据流
 
@@ -118,6 +119,10 @@
 
 新增参数类型时实现独立函数并在 `replacement/__init__.py` 注册，无需修改 KEY 生成流程。
 
+TC4 碾环多工步任务由 `task_collection.TC4_RING_MULTI_TASK_1` 完整定义。
+工步1不含参数绑定，预生成时字节复制；工步2、3将一个模具温度样本值
+展开到所有模具对象。`prepare_keys()` 只验证参数到 KEY 的映射，不调用 DEFORM。
+
 ## 路径集中化
 
 所有路径统一由 `mobo.common.paths` 提供，取代旧代码中的 `../../data/...` 相对路径与
@@ -126,6 +131,10 @@
 - `PROJECT_DIR` 通过向上查找含 `pyproject.toml` 或 `data/` 的祖先目录推导（比硬数层数稳健）。
 - 支持环境变量覆盖：`MOBO_PROJECT_DIR`、`MOBO_DATA_DIR`。
 - 函数改造仅限「默认参数/路径来源」，算法体保持 byte-for-byte 不变。
+- 运行时工作区分为 `data/AUTO/single/<task>` 和 `data/AUTO/mult/<task>`。
+- 任务状态集中在 `data/tasks/<task_id>/`：`state.json` 记录任务阶段，多工步的
+  `multi_operation_state.json` 记录逐样本/逐工步恢复状态，单工步的
+  `process_info.json` 记录逐 DB 求解进度；`AUTO` 只保存样本、DB、KEY 和结果数据。
 
 ## 日志设计取舍
 

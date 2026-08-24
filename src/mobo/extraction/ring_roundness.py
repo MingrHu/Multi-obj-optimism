@@ -23,7 +23,6 @@
 from __future__ import annotations
 
 import csv
-import math
 import sys
 from collections import defaultdict, deque
 from dataclasses import dataclass
@@ -362,7 +361,6 @@ def intersect_face_with_plane(
         dp = p[2] - plane_z
         dq = q[2] - plane_z
         p_on = abs(dp) <= z_tol
-        q_on = abs(dq) <= z_tol
 
         if p_on:
             intersections.append(p[:2].copy())
@@ -746,7 +744,10 @@ def save_plot(
 
     for name, loop, result in profiles:
         closed = np.vstack([loop, loop[0]])
-        line = ax.plot(closed[:, 0], closed[:, 1], linewidth=1.1, label=f"{name} section profile")[0]
+        ax.plot(
+            closed[:, 0], closed[:, 1],
+            linewidth=1.1, label=f"{name} section profile",
+        )
 
         circle = result.minimum_zone or result.least_squares
         x_mid, y_mid = circle_xy(circle.center_x, circle.center_y, circle.radius)
@@ -900,11 +901,17 @@ def determine_default_tolerances(mesh: Mesh) -> Tuple[float, float]:
     return characteristic_length * 1e-9, characteristic_length * 1e-8
 
 
+def determine_default_plane_z(mesh: Mesh) -> float:
+    """使用当前工件网格的 Z 向包围盒中心作为默认截面。"""
+    z_coordinates = mesh.coordinates[:, 2]
+    return (float(np.min(z_coordinates)) + float(np.max(z_coordinates))) / 2.0
+
+
 def extract_ring_roundness(
     key_path,
     *,
     which: str = "inner",
-    plane_z: float = 0.0,
+    plane_z: float | None = None,
     samples: int = 3000,
     object_id: int | None = None,
     object_name: str | None = "Workpiece - Ring",
@@ -918,7 +925,7 @@ def extract_ring_roundness(
 
     :param key_path: DEFORM ``.KEY`` 文件路径
     :param which: ``"inner"`` 取内圈，``"outer"`` 取外圈（按包围面积区分）
-    :param plane_z: 截面平面 z 值
+    :param plane_z: 截面平面 z 值；None 时使用当前工件 Z 向包围盒中心
     :param samples: 每条闭合轮廓按弧长均匀重采样的点数
     :param object_id: 直接指定对象编号（优先于 object_name）
     :param object_name: 对象名称
@@ -932,6 +939,7 @@ def extract_ring_roundness(
     key_path = Path(key_path)
 
     mesh = read_deform_key(key_path, object_id=object_id, object_name=object_name)
+    plane_z = determine_default_plane_z(mesh) if plane_z is None else plane_z
 
     default_z_tol, default_merge_tol = determine_default_tolerances(mesh)
     z_tol = default_z_tol if z_tol is None else z_tol

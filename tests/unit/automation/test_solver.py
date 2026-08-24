@@ -4,7 +4,6 @@
 构造与 :class:`DeformSolver` 的并发调度逻辑。
 """
 
-import subprocess
 
 import pytest
 
@@ -32,7 +31,13 @@ def test_run_key_actions_command_string(monkeypatch):
     assert captured["cmd"] == "E\n2\n1\ntransition.KEY\nE\nE\nY\n"
 
 
-def test_solve_db_sync_requires_normal_stop(monkeypatch, tmp_path):
+@pytest.mark.parametrize("normal_marker", [
+    "NORMAL STOP",
+    "Simulation Module Indicates End of Simulation",
+])
+def test_solve_db_sync_accepts_deform_normal_end_markers(
+    monkeypatch, tmp_path, normal_marker
+):
     written = []
 
     class _Stdin:
@@ -53,7 +58,7 @@ def test_solve_db_sync_requires_normal_stop(monkeypatch, tmp_path):
 
     monkeypatch.setattr(solver.subprocess, "Popen", lambda *args, **kwargs: _Process())
     db_path = tmp_path / "sample.DB"
-    (tmp_path / "sample.LOG").write_text("NORMAL STOP\n", encoding="utf-8")
+    (tmp_path / "sample.LOG").write_text(normal_marker + "\n", encoding="utf-8")
     solver.solve_db_sync(str(db_path))
     assert written == ["sample\nB\n"]
 
@@ -120,6 +125,23 @@ def test_deform_solver_feed_stdin(monkeypatch):
 
     solver.DeformSolver._feed_stdin(_P(), "payload")
     assert written == ["payload\n"]
+
+
+def test_deform_solver_does_not_mark_failed_job_done(monkeypatch):
+    s = solver.DeformSolver()
+    s._running = 1
+    started = []
+    completed = []
+    monkeypatch.setattr(s, "_mark_started", started.append)
+    monkeypatch.setattr(s, "_mark_done", completed.append)
+    monkeypatch.setattr(
+        solver, "solve_db_sync",
+        lambda _: (_ for _ in ()).throw(RuntimeError("failed")),
+    )
+    s._solve_one("sample", "/work", db_key="/work/sample.DB")
+    assert started == ["/work/sample.DB"]
+    assert completed == []
+    assert s.running == 0
 
 
 def test_deform_solver_run_all_schedules_each(monkeypatch):

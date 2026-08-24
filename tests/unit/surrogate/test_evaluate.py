@@ -1,6 +1,5 @@
 """SurrogateModelEvaluator 测试（非 DNN 路径，快速）。"""
 
-import numpy as np
 import pytest
 
 from mobo.surrogate.evaluate import SurrogateModelEvaluator, TargetCVSummary

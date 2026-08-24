@@ -18,6 +18,7 @@ from mobo.extraction.ring_roundness import (
     analyze_profile,
     build_section_components,
     component_perimeter,
+    determine_default_plane_z,
     determine_default_tolerances,
     extract_boundary_faces,
     extract_section_segments,
@@ -52,8 +53,8 @@ def main() -> int:
     parser.add_argument(
         "--plane-z",
         type=float,
-        default=0.0,
-        help="截面平面的 z 值，默认 0",
+        default=None,
+        help="截面平面的 z 值，默认使用工件 Z 向包围盒中心",
     )
     parser.add_argument(
         "--z-tol",
@@ -94,6 +95,7 @@ def main() -> int:
     )
 
     default_z_tol, default_merge_tol = determine_default_tolerances(mesh)
+    plane_z = determine_default_plane_z(mesh) if args.plane_z is None else args.plane_z
     z_tol = args.z_tol if args.z_tol is not None else default_z_tol
     merge_tol = args.merge_tol if args.merge_tol is not None else default_merge_tol
 
@@ -104,7 +106,7 @@ def main() -> int:
     segments = extract_section_segments(
         mesh,
         boundary_faces,
-        plane_z=args.plane_z,
+        plane_z=plane_z,
         z_tol=z_tol,
         merge_tol=merge_tol,
     )
@@ -166,20 +168,20 @@ def main() -> int:
     results = [inner_result, outer_result]
 
     stem = args.key_file.stem
-    csv_path = output_dir / f"{stem}_z{args.plane_z:g}_roundness.csv"
-    png_path = output_dir / f"{stem}_z{args.plane_z:g}_section.png"
+    csv_path = output_dir / f"{stem}_z{plane_z:g}_roundness.csv"
+    png_path = output_dir / f"{stem}_z{plane_z:g}_section.png"
 
     write_results_csv(
         csv_path,
         mesh,
-        args.plane_z,
+        plane_z,
         len(boundary_faces),
         len(segments),
         results,
     )
     save_plot(
         png_path,
-        args.plane_z,
+        plane_z,
         [
             ("Inner", inner_loop, inner_result),
             ("Outer", outer_loop, outer_result),
@@ -205,4 +207,4 @@ if __name__ == "__main__":
         raise SystemExit(main())
     except Exception as exc:
         print(f"错误：{exc}", file=sys.stderr)
-        raise SystemExit(1)
+        raise SystemExit(1) from exc

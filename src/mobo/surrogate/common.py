@@ -9,10 +9,11 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
 import pandas as pd
 import numpy as np
-import joblib,os,time
+import joblib
+import os
+import time
 from keras.models import Model
 from keras.layers import Dense, Dropout, BatchNormalization, Input
-from keras.optimizers import Adam
 
 from mobo.common.paths import MODELS_DIR
 
@@ -201,7 +202,6 @@ def save_model(model_type:str,model,r2,fact,pred,scalers,model_name:str):
 
 
 #####################################工具辅助函数模块############################################
-import time
 
 class Time:
     """记录代码块或函数执行时间的工具类（支持手动和自动模式）"""

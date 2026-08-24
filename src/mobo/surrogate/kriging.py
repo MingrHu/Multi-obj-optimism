@@ -1,10 +1,11 @@
 from .common import (load_and_preprocess_data,split_data_without_val,
-                    normal_max_absolute_error,save_model,Time)
+                    save_model)
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF, ConstantKernel as C
 from sklearn.metrics import r2_score
 
-def kriging_fun(file:str,vars_out:list[str],n_var:int,model_par:list[str] = []):
+def kriging_fun(file: str, vars_out: list[str], n_var: int,
+                model_par: list[str] | None = None):
     # 1. 加载数据
     X, Y = load_and_preprocess_data(file,vars_out,n_var)
 
@@ -32,12 +33,5 @@ def kriging_fun(file:str,vars_out:list[str],n_var:int,model_par:list[str] = []):
     
         # 计算相关指标
         r2 = r2_score(fact, pred)
-        nmae = normal_max_absolute_error(fact, pred)
-
         # 保存并打印当前结果
-        save_model(f"{vars_out[idx + n_var]}",cur_model,r2,fact,pred,scalers,"KM")    
-
-# if __name__ == "__main__":
-#     vars_out = ["1","2","3","4","5","6","7","res1","res2","res3"]
-#     file = '/Users/hmr/Desktop/Multi-obj-optimism/data/TEST/simulated.txt'
-#     kriging_fun(file,vars_out,7)
+        save_model(f"{vars_out[idx + n_var]}",cur_model,r2,fact,pred,scalers,"KM")

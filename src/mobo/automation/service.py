@@ -146,11 +146,12 @@ def create_sampling_task(
     method: str,
     param_ranges: Dict[str, tuple[float, float]],
     n_samples: int = 0,
-    level_nums: List[int] = [],
+    level_nums: Optional[List[int]] = None,
 ) -> Dict[str, str]:
     """创建并执行抽样任务，结果落盘到 state.json。"""
     if n_samples == 0:
         return {}
+    level_nums = level_nums or []
     try:
         out_path = generate_sample_file(task_id, method, param_ranges, save_dir, n_samples, level_nums)
         task_store.init_state(task_id, _KIND, {

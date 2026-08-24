@@ -5,7 +5,6 @@
 
 import threading
 
-import pytest
 
 from mobo.automation import pipeline
 from mobo.automation.pipeline import ForgingTask, TaskStatus, generate_sample_file

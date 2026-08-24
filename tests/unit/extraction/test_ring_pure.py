@@ -4,8 +4,10 @@ import numpy as np
 import pytest
 
 from mobo.extraction.ring_roundness import (
+    Mesh,
     algebraic_circle_center,
     closed_polyline_perimeter,
+    determine_default_plane_z,
     fit_least_squares_circle,
     parse_float,
     polygon_signed_area,
@@ -21,6 +23,17 @@ def _circle_points(cx, cy, r, n=200):
 def test_parse_float_fortran_d_exponent():
     assert parse_float("1.5D3") == pytest.approx(1500.0)
     assert parse_float("2.0e1") == pytest.approx(20.0)
+
+
+def test_default_plane_z_uses_mesh_bounding_box_center():
+    mesh = Mesh(
+        object_id=1,
+        object_name="ring",
+        node_ids=np.array([1, 2, 3]),
+        coordinates=np.array([[0, 0, 208.0], [1, 1, 300.0], [2, 2, 556.0]]),
+        elements=np.empty((0, 8), dtype=int),
+    )
+    assert determine_default_plane_z(mesh) == pytest.approx(382.0)
 
 
 def test_algebraic_circle_center():

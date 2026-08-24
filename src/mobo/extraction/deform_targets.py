@@ -6,14 +6,25 @@
 """
 
 import numpy as np
-import statistics,os
+import statistics
 from typing import List
+
+
+MIN_VALID_KEY_LINES = 10000
+
+
+def _validKeyFrames(AllLines: List[List[str]]) -> List[List[str]]:
+    """过滤未到 DEFORM 保存点而导出的明显不完整 KEY 帧。"""
+    return [lines for lines in AllLines if len(lines) > MIN_VALID_KEY_LINES]
 
 
 ##########################################################
 ###################自定义提取函数部分########################
 def _extractMaxStress(AllLines:List[List[str]],obj_id:str,inprogress:bool,select_component=None)->str:
     finall_res = -1.0
+    frames = _validKeyFrames(AllLines)
+    if not frames:
+        return "0.00"
     # 找首行
     def fun(lines:List[str])->float:
         res,pos,num = 0,-1,0
@@ -37,29 +48,25 @@ def _extractMaxStress(AllLines:List[List[str]],obj_id:str,inprogress:bool,select
                 index += 2
         return res
     if inprogress:
-        for lines in AllLines:
+        for lines in frames:
             finall_res = max(fun(lines),finall_res) # type: ignore
     else:
-        finall_res = fun(AllLines[-1])
+        finall_res = fun(frames[-1])
     return "{:.2f}".format(finall_res)
 
 def _extractMaxLoad(AllLines:List[List[str]],obj_id:str,inprogress:bool,select_component=0)->str:
-    # 载荷提取：FORCE obj fx [fy] [fz]，select_component 选取分量索引(0=x,1=y,2=z)
+    """提取 FORCE 指定方向的最大绝对载荷。"""
     idx = int(select_component)
-    finall_res = 0.0
     def fun(lines:List[str])->float:
         for line in lines:
             arry=line.split()
             if len(arry)>=3 and arry[0]=='FORCE' and arry[1]==obj_id:
                 comps=list(map(float,arry[2:]))
-                return comps[idx] if 0<=idx<len(comps) else 0.0
+                return abs(comps[idx]) if 0<=idx<len(comps) else 0.0
         return 0.0
-    if inprogress:
-        for lines in AllLines:
-            finall_res=max(fun(lines),finall_res)
-    else:
-        finall_res=fun(AllLines[-1])
-    return f"{finall_res:.2f}"
+    valid_frames = _validKeyFrames(AllLines)
+    frames = valid_frames if inprogress else valid_frames[-1:]
+    return "{:.2f}".format(max((fun(lines) for lines in frames), default=0.0))
 
 def _extractUsrGrainStdv(AllLines:List[List[str]],obj_id:str,inprogress:bool,select_component=3)->str:
     # 自定义晶粒模型时才用 USRELM；select_component 为每单元行的列索引
@@ -81,15 +88,16 @@ def _extractUsrGrainStdv(AllLines:List[List[str]],obj_id:str,inprogress:bool,sel
             res = statistics.stdev(grainsize)
         return res
     if inprogress:
-        for lines in AllLines:
+        for lines in _validKeyFrames(AllLines):
             finall_res = max(fun(lines),finall_res)
     else:
-        finall_res = fun(AllLines[-1])
+        valid_frames = _validKeyFrames(AllLines)
+        finall_res = fun(valid_frames[-1]) if valid_frames else 0.0
     return "{:.2f}".format(finall_res)
 
 def _extractGrainMorph(AllLines:List[List[str]],obj_id:str,inprogress:bool,select_component=1)->str:
     # GRAIN obj num_units vals_per_unit ...，每单元 vals_per_unit 个晶粒组织信息
-    # select_component 选取单元内第几个分量，跨单元求标准差
+    # select_component 选取单元内第几个分量，跨单元求平均值
     comp = int(select_component)
     finall_res = 0.0
     def fun(lines:List[str])->float:
@@ -110,18 +118,38 @@ def _extractGrainMorph(AllLines:List[List[str]],obj_id:str,inprogress:bool,selec
                 unit += lines[i].split()
                 i += 1
             values.append(float(unit[comp]))
-        return statistics.stdev(values) if len(values) > 1 else 0.0
+        return statistics.fmean(values) if values else 0.0
     if inprogress:
-        for lines in AllLines:
+        for lines in _validKeyFrames(AllLines):
             finall_res = max(fun(lines),finall_res)
     else:
-        # 硬编码 测试 TODO 后续再改动
-        valid_fin_idx = -1
-        for idx,key_file in enumerate(AllLines):
-            if len(key_file) > 10000:
-                valid_fin_idx = idx 
-        finall_res = fun(AllLines[valid_fin_idx])
+        valid_frames = _validKeyFrames(AllLines)
+        finall_res = fun(valid_frames[-1]) if valid_frames else 0.0
     return "{:.2f}".format(finall_res)
+
+
+def _extractEffectiveStrainStdv(AllLines: List[List[str]], obj_id: str,
+                                inprogress: bool, select_component=None) -> str:
+    """计算 STRAIN 数据块中单元等效应变的标准差。"""
+    def fun(lines: List[str]) -> float:
+        start, count = -1, 0
+        for index, line in enumerate(lines):
+            fields = line.split()
+            if len(fields) >= 3 and fields[0] == "STRAIN" and fields[1] == obj_id:
+                start, count = index + 1, int(fields[2])
+                break
+        if start == -1 or count <= 1:
+            return 0.0
+        values = []
+        for line in lines[start:start + count]:
+            fields = line.split()
+            if len(fields) >= 2:
+                values.append(float(fields[1]))
+        return statistics.stdev(values) if len(values) > 1 else 0.0
+
+    valid_frames = _validKeyFrames(AllLines)
+    frames = valid_frames if inprogress else valid_frames[-1:]
+    return "{:.6f}".format(max((fun(lines) for lines in frames), default=0.0))
 
 
 ########################Helper#######################

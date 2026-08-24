@@ -1,6 +1,5 @@
 """集成测试：用真实 PRG 模型跑一次小规模 NSGA-II（输出重定向到 tmp）。"""
 
-import os
 
 import pytest
 

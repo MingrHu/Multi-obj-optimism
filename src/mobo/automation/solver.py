@@ -26,8 +26,8 @@ from mobo.common.logging import logger
 from mobo.common.paths import LOGS_DIR
 
 # DEFORM 可执行程序（需在 PATH 中，或设置对应环境变量）
-DEF_PRE_64 = "DEF_PRE_64.exe"
-DEF_ARM_CTL = "DEF_ARM_CTL.COM"
+DEF_PRE_64 = os.environ.get("MOBO_DEF_PRE_64", "DEF_PRE_64.exe")
+DEF_ARM_CTL = os.environ.get("MOBO_DEF_ARM_CTL", "DEF_ARM_CTL.COM")
 
 # DEFORM 操作日志路径（集中到 LOGS_DIR）
 _OPERATION_LOG = os.path.join(str(LOGS_DIR), "deform_operation.log")
@@ -80,7 +80,7 @@ def key_to_db_batch(key_paths: Sequence[str], db_paths: Sequence[str]) -> None:
     :param key_paths: 输入 KEY 文件路径序列
     :param db_paths: 与之一一对应的输出 DB 文件路径序列
     """
-    for key_path, db_path in zip(key_paths, db_paths):
+    for key_path, db_path in zip(key_paths, db_paths, strict=True):
         key_to_db(key_path, db_path)
 
 
@@ -125,7 +125,11 @@ def solve_db_sync(db_path: str) -> None:
         raise RuntimeError(f"DEFORM 未生成求解日志: {log_path}")
     with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
         log_text = f.read()
-    if "NORMAL STOP" not in log_text or "ABNORMAL STOP" in log_text:
+    normal_markers = (
+        "NORMAL STOP",
+        "Simulation Module Indicates End of Simulation",
+    )
+    if not any(marker in log_text for marker in normal_markers) or "ABNORMAL STOP" in log_text:
         raise RuntimeError(f"DEFORM 求解未正常结束，请检查: {log_path}")
 
 
@@ -279,18 +283,7 @@ class DeformSolver:
         """
         self._mark_started(db_key or db_path)
         try:
-            process = subprocess.Popen(
-                DEF_ARM_CTL,
-                stdin=subprocess.PIPE,
-                shell=False,
-                cwd=work_dir,
-                text=True,
-            )
-            self._feed_stdin(process, db_path)
-            self._feed_stdin(process, "B")
-            process.wait()
-            if process.stdin:
-                process.stdin.close()
+            solve_db_sync(db_key or db_path)
             logger.info(f"当前任务计算完成！请查看 {db_path} 结果")
             self._mark_done(db_key or db_path)
         except Exception as exc:

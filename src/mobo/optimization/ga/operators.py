@@ -1,10 +1,6 @@
 import numpy as np
-from pymoo.core.crossover import Crossover
-from pymoo.core.mutation import Mutation
 from pymoo.operators.crossover.sbx import SBX
 
-import numpy as np
-from pymoo.operators.crossover.sbx import SBX
 
 from mobo.common.paths import DATA_DIR
 

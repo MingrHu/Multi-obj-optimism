@@ -13,6 +13,7 @@ from functools import partial
 
 from .base import ExtractorKind, ExtractorSpec, KeyFileExtractor, KeyLinesExtractor
 from .deform_targets import (
+    _extractEffectiveStrainStdv,
     _extractGrainMorph,
     _extractMaxLoad,
     _extractMaxStress,
@@ -26,11 +27,13 @@ from .ring_roundness import extract_ring_roundness
 registry.register_fn("generic", "stress", _extractMaxStress, kind="key_lines",
                      description="模具/工件最大等效应力（Von Mises）")
 registry.register_fn("generic", "load", _extractMaxLoad, kind="key_lines",
-                     description="模具/工件载荷 FORCE 分量")
+                     description="模具/工件 FORCE 分量绝对值最大值")
+registry.register_fn("generic", "strain_std", _extractEffectiveStrainStdv,
+                     kind="key_lines", description="单元等效应变标准差")
 registry.register_fn("generic", "grain", _extractUsrGrainStdv, kind="key_lines",
                      description="自定义晶粒模型 USRELM 尺寸标准差")
 registry.register_fn("generic", "grain_morph", _extractGrainMorph, kind="key_lines",
-                     description="GRAIN 晶粒组织形貌分量标准差")
+                     description="GRAIN 指定晶粒组织分量平均值")
 
 # ---- 注册碾环工件的圆度提取（key_file 约定）----
 registry.register_fn(

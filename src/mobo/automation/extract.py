@@ -56,8 +56,9 @@ def extract_dataset(
     :param result_dir: 数据集输出目录
     :return: 输出数据集文件完整路径
     """
-    target_names, object_names,select_component  = target_table[0], target_table[1],target_table[2]
-    result_rows: List[List[Any]] = []
+    target_names, object_names, select_component = (
+        target_table[0], target_table[1], target_table[2]
+    )
     # 新建数据集
     os.makedirs(result_dir, exist_ok=True)
     timestamp = datetime.now().strftime("%Y-%m-%d %H_%M_%S")
@@ -81,7 +82,10 @@ def extract_dataset(
                     extractor = DeformConfig.get_target_function(target_name)
                     # 2 提取对象
                     object_id = DeformConfig.get_object_id(object_names[idx])
-                    row.append(extractor(key_files, frames, object_id, in_progress[idx],select_component[idx]))
+                    row.append(extractor(
+                        key_files, frames, object_id,
+                        in_progress[idx], select_component[idx],
+                    ))
                 line = "\t".join(map(str, row)) + "\n"
                 logger.info(line)
                 # 追加

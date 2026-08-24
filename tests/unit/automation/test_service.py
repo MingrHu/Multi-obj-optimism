@@ -4,6 +4,8 @@
 验证服务接口的返回结构、state.json 落盘与「仅凭 task_id 续跑」的行为。
 """
 
+from pathlib import Path
+
 import pytest
 
 from mobo.automation import service
@@ -225,7 +227,7 @@ def test_rebuild_task_restores_key_files_in_sample_order(monkeypatch, tmp_path):
 
     task = service._rebuild_task("t1")
     # 列表位置 i 必须恒等于文件名里的样本序号
-    stems = [p.rsplit("/", 1)[-1] for p in task.key_files]
+    stems = [Path(p).name for p in task.key_files]
     assert stems == [f"MODEL{i}.KEY" for i in range(12)]
 
 
@@ -326,13 +328,16 @@ def test_run_extract_data_resume_loads_samples_and_no_index_col(monkeypatch, tmp
     sample_lines = [f"{i} 30\n" for i in range(n)]
     (tmp_path / "smp.txt").write_text("".join(sample_lines))
     # temp_key：模板名 MODEL，样本序号 0..11（含两位数，字典序会乱）
-    temp_key = tmp_path / "temp_key"; temp_key.mkdir()
+    temp_key = tmp_path / "temp_key"
+    temp_key.mkdir()
     for i in range(n):
         (temp_key / f"MODEL{i}.KEY").write_text("")
     # res_db：已按数值序对齐的目录（<i>/MODEL<i>.DB），模拟求解完成
-    res_db = tmp_path / "res_db"; res_db.mkdir()
+    res_db = tmp_path / "res_db"
+    res_db.mkdir()
     for i in range(n):
-        d = res_db / str(i); d.mkdir()
+        d = res_db / str(i)
+        d.mkdir()
         (d / f"MODEL{i}.DB").write_text("")
 
     service.init_execution_task(

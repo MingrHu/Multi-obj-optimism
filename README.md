@@ -19,12 +19,21 @@ Python 工具包，覆盖从数据生成到多目标寻优的完整链路：
 
 ## 环境要求
 
-- Python **3.11+**
+- Python **3.11 或 3.12**（推荐 3.12）
 - CPU-only 即可运行（无需 GPU/CUDA）
+- DEFORM 自动化求解仅支持已安装 DEFORM 的 Windows
 
 ## 快速安装
 
-一键脚本（Linux / macOS，自动建 venv、装 CPU 版 torch、装本包与开发依赖）：
+Windows PowerShell（DEFORM 自动化推荐）：
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+.\setup_env.ps1
+.\.venv\Scripts\Activate.ps1
+```
+
+Linux / macOS（不能真实调用 DEFORM，可运行其余功能）：
 
 ```bash
 bash setup_env.sh            # 核心 + 开发依赖
@@ -47,7 +56,16 @@ pip install -e ".[dev]"
 python -c "import torch, mobo; print(torch.__version__, mobo.__version__)"
 ```
 
-> 国内网络可为脚本设置 PyPI 镜像：`PIP_INDEX=https://mirrors.aliyun.com/pypi/simple/ bash setup_env.sh`
+> 国内网络可通过 `PIP_INDEX` 环境变量或 PowerShell 的 `-PipIndex` 参数指定镜像。
+
+若 DEFORM 可执行文件没有加入 PATH，可在运行前设置：
+
+```powershell
+$env:MOBO_DEF_PRE_64 = "C:\Program Files\SFTC\DEFORM\v11.0\3D\DEF_PRE_64.exe"
+$env:MOBO_DEF_ARM_CTL = "C:\Program Files\SFTC\DEFORM\v11.0\3D\DEF_ARM_CTL.COM"
+```
+
+安装脚本最后会运行 `pip check` 并导入数值计算、代理模型、优化和自动化所需依赖。
 
 ## 快速上手
 
@@ -112,6 +130,8 @@ Multi-obj-optimism/
 ├── logs/              # 运行日志（DEFORM 操作日志等，不纳入版本管理）
 ├── pyproject.toml     # 打包与依赖配置、pytest/coverage 配置、CLI 入口点
 ├── requirements.txt   # 依赖清单（供不走 pyproject 的场景参考）
+├── requirements-dev.txt / requirements-gui.txt # 开发测试与可选 GUI 锁定依赖
+├── setup_env.ps1      # Windows 一键环境安装脚本
 ├── setup_env.sh       # 一键环境安装脚本（建 venv + CPU 版 torch + 本包）
 ├── README.md          # 本文件：总览、安装、上手、结构说明
 ├── ARCHITECTURE.md    # 分层架构、模块职责表与数据流
@@ -201,6 +221,7 @@ data/
 ## 测试
 
 ```bash
+ruff check src tests scripts    # 静态检查（语法、未定义名称、可疑默认参数等）
 pytest -m "not slow"          # 默认跳过耗时（DNN 训练等）用例
 pytest                        # 全部用例
 pytest --cov=mobo             # 覆盖率

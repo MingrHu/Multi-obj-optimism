@@ -11,6 +11,11 @@ import pytest
 
 from mobo.automation import keyfile
 from mobo.replacement.base import LineReplacement
+from mobo.replacement.deform_parameters import (
+    scale_abs,
+    scale_movctl_block,
+    scale_speed_line,
+)
 from mobo.replacement.registry import ReplacementRegistry
 
 
@@ -78,6 +83,22 @@ def test_generate_key_files_replaces_target_values(tmp_path):
     assert keyfile.format_deform_float("10.0") in content1
 
 
+def test_line_replacement_changes_only_last_matching_token():
+    line = "MOVCTL 3 1 0 0.0 1.0 0.0 1.0\n"
+    rendered = keyfile.apply_parameters(
+        [line], ["pressure_roll_constant_speed"], ["pressure_roll"], ["0.1"]
+    )[0]
+    assert rendered.split()[5] == "1.0"
+    assert rendered.split()[-1] == keyfile.format_deform_float("0.1")
+
+
+def test_constant_speed_atomic_ignores_function_movctl_header():
+    line = "MOVCTL 3 1 2 0.0 1.0 0.0 20\n"
+    assert keyfile.apply_parameters(
+        [line], ["pressure_roll_constant_speed"], ["pressure_roll"], ["0.1"]
+    ) == [line]
+
+
 def test_read_key_frames(tmp_path):
     f1 = tmp_path / "a.KEY"
     f2 = tmp_path / "b.KEY"
@@ -93,21 +114,21 @@ def test_read_key_frames(tmp_path):
 
 def test_scale_abs_maps_range_and_preserves_sign():
     # 原绝对值范围 [0.2, 2.3] 映射到 [0.5, 1.5]
-    assert keyfile._scale_abs(2.3, 0.2, 2.3, 0.5, 1.5) == pytest.approx(1.5)   # 最大 -> upper
-    assert keyfile._scale_abs(0.2, 0.2, 2.3, 0.5, 1.5) == pytest.approx(0.5)   # 最小 -> lower
+    assert scale_abs(2.3, 0.2, 2.3, 0.5, 1.5) == pytest.approx(1.5)   # 最大 -> upper
+    assert scale_abs(0.2, 0.2, 2.3, 0.5, 1.5) == pytest.approx(0.5)   # 最小 -> lower
     # 负数：先按绝对值缩放再贴回符号；1.25 -> 0.5 + (1.25-0.2)/2.1 = 1.0
-    assert keyfile._scale_abs(-1.25, 0.2, 2.3, 0.5, 1.5) == pytest.approx(-1.0)
+    assert scale_abs(-1.25, 0.2, 2.3, 0.5, 1.5) == pytest.approx(-1.0)
 
 
 def test_scale_abs_zero_span_maps_to_midpoint():
     # 原范围跨度为 0（所有点绝对值相同）-> 目标区间中点，避免除零
-    assert keyfile._scale_abs(0.8, 0.8, 0.8, 0.5, 1.5) == pytest.approx(1.0)
-    assert keyfile._scale_abs(-0.8, 0.8, 0.8, 0.5, 1.5) == pytest.approx(-1.0)
+    assert scale_abs(0.8, 0.8, 0.8, 0.5, 1.5) == pytest.approx(1.0)
+    assert scale_abs(-0.8, 0.8, 0.8, 0.5, 1.5) == pytest.approx(-1.0)
 
 
 def test_scale_speed_line_replaces_only_speed_column():
     line = "    1.0000000000E+000    2.3000000000E+000\n"
-    out = keyfile._scale_speed_line(line, 0.2, 2.3, 0.5, 1.5)
+    out = scale_speed_line(line, 0.2, 2.3, 0.5, 1.5)
     # 时间列保留，速度列（最大绝对值）被映射到 upper=1.5
     assert out.split()[0] == "1.0000000000E+000"
     assert float(out.split()[1]) == pytest.approx(1.5)
@@ -117,10 +138,10 @@ def test_scale_speed_line_replaces_only_speed_column():
 def test_scale_speed_line_ignores_unparseable():
     # 仅单个 token（无速度列）时原样返回
     single = "onlyonetoken\n"
-    assert keyfile._scale_speed_line(single, 0.2, 2.3, 0.5, 1.5) == single
+    assert scale_speed_line(single, 0.2, 2.3, 0.5, 1.5) == single
     # 速度列非数值时原样返回
     bad = "    1.0000000000E+000    NaNaN\n"
-    assert keyfile._scale_speed_line(bad, 0.2, 2.3, 0.5, 1.5) == bad
+    assert scale_speed_line(bad, 0.2, 2.3, 0.5, 1.5) == bad
 
 
 def test_collect_speed_scale_specs_requires_both_bounds():
@@ -146,7 +167,7 @@ def test_scale_movctl_block_scales_m_lines_only():
         "    3.0000000000E+000    8.0000000000E-001\n",   # abs 0.8 -> 0.5+(0.8-0.3)/1.9
         "STROKE       3    0.0\n",                          # 块外，不动
     ]
-    out = keyfile._scale_movctl_block(lines, {"3": (0.5, 1.5)})
+    out = scale_movctl_block(lines, {"3": (0.5, 1.5)})
     assert out[0] == lines[0]                        # MOVCTL 头行（含行数 3）不变
     assert float(out[1].split()[1]) == pytest.approx(1.5)
     assert float(out[2].split()[1]) == pytest.approx(-0.5)
@@ -156,7 +177,7 @@ def test_scale_movctl_block_scales_m_lines_only():
 
 def test_scale_movctl_block_noop_without_specs():
     lines = ["MOVCTL 3 1 2 0.0 1.0 0.0 3\n", "    1.0    2.2\n"]
-    assert keyfile._scale_movctl_block(lines, {}) is lines
+    assert scale_movctl_block(lines, {}) is lines
 
 
 def test_generate_key_files_scales_speed_block(tmp_path):

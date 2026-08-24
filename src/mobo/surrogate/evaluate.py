@@ -236,7 +236,8 @@ class SurrogateModelEvaluator:
                 f"RMSE={s.rmse_mean:.4f}±{s.rmse_std:.4f} | "
                 f"MAXERR={s.max_error_mean:.4f}±{s.max_error_std:.4f} | "
                 f"Train={s.train_time_mean_s:.4f}s (min={s.train_time_min_s:.4f}, max={s.train_time_max_s:.4f}) | "
-                f"Pred={s.predict_time_mean_s:.6f}s (min={s.predict_time_min_s:.6f}, max={s.predict_time_max_s:.6f}) | "
+                f"Pred={s.predict_time_mean_s:.6f}s "
+                f"(min={s.predict_time_min_s:.6f}, max={s.predict_time_max_s:.6f}) | "
                 f"Score={score_str}"
             )
 

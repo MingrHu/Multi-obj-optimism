@@ -5,6 +5,8 @@ from functools import partial
 from .base import LineReplacement, ParameterBinding, ReplacerSpec
 from .deform_parameters import (
     replace_keyword_last_value,
+    replace_movctl_constant_speed,
+    replace_object_temperature,
     replace_pressure_roll_speed_profile,
 )
 from .registry import ReplacementRegistry
@@ -26,6 +28,15 @@ registry.register_fn(
 registry.register_fn(
     "speed", partial(replace_keyword_last_value, keyword="MOVCTL"),
     kind="line",
+)
+registry.register_fn(
+    "pressure_roll_constant_speed",
+    replace_movctl_constant_speed,
+    kind="line",
+)
+registry.register_fn(
+    "workpiece_temperature", replace_object_temperature,
+    kind="document",
 )
 registry.register_fn(
     ("pressure_roll_speed_lower", "pressure_roll_speed_upper"),

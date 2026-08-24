@@ -24,5 +24,7 @@ class Doe_surrogateModel:
         self.model = [kriging_fun,dnn_run,prg_fun,svr_fun,rf_run]
     # which_model:取值0-4 分别对应如下
     # [kriging_fun,dnn_run,prg_fun,svr_fun,rf_run]
-    def train_save_model(self,which_model:int,model_par:list[str] = []):
-        self.model[which_model](self.file,self.vars_out,self.n,model_par)
+    def train_save_model(
+        self, which_model: int, model_par: list[str] | None = None
+    ):
+        self.model[which_model](self.file, self.vars_out, self.n, model_par or [])

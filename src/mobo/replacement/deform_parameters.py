@@ -44,7 +44,46 @@ def replace_keyword_last_value(
     matched = len(tokens) >= 2 and tokens[0] == keyword and tokens[1] == binding.object_id
     if not matched:
         return LineReplacement(line, False)
-    return LineReplacement(line.replace(tokens[-1], format_deform_float(binding.value)), True)
+    start = line.rfind(tokens[-1])
+    text = line[:start] + format_deform_float(binding.value) + line[start + len(tokens[-1]):]
+    return LineReplacement(text, True)
+
+
+def replace_object_temperature(
+    lines: Sequence[str], bindings: Sequence[ParameterBinding]
+) -> list[str]:
+    """同时设置对象的 REFTMP 和统一 NDTMP 默认温度。"""
+    result = list(lines)
+    for binding in bindings:
+        if binding.name != "workpiece_temperature" or binding.object_id is None:
+            continue
+        for index, line in enumerate(result):
+            tokens = line.split()
+            if len(tokens) < 2 or tokens[1] != binding.object_id:
+                continue
+            if tokens[0] in {"REFTMP", "NDTMP"}:
+                start = line.rfind(tokens[-1])
+                result[index] = (
+                    line[:start] + format_deform_float(binding.value)
+                    + line[start + len(tokens[-1]):]
+                )
+    return result
+
+
+def replace_movctl_constant_speed(
+    line: str, binding: ParameterBinding
+) -> LineReplacement:
+    """仅在 MOVCTL 常速模式（Ftype=0）下替换行末速度。"""
+    tokens = line.split()
+    matched = (
+        len(tokens) >= 4
+        and tokens[0] == "MOVCTL"
+        and tokens[1] == binding.object_id
+        and tokens[3] == "0"
+    )
+    if not matched:
+        return LineReplacement(line, False)
+    return replace_keyword_last_value(line, binding, keyword="MOVCTL")
 
 
 def collect_speed_scale_specs(
@@ -165,6 +204,8 @@ __all__ = [
     "format_deform_float",
     "parse_speed",
     "replace_keyword_last_value",
+    "replace_movctl_constant_speed",
+    "replace_object_temperature",
     "replace_pressure_roll_speed_profile",
     "scale_abs",
     "scale_movctl_block",

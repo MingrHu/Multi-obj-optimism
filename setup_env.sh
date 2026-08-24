@@ -17,8 +17,10 @@
 # =============================================================================
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # ---- 可配置项 ----
-VENV_DIR="venv"
+VENV_DIR="$SCRIPT_DIR/.venv"
 TORCH_VERSION="2.10.0"
 TORCH_CPU_INDEX="https://download.pytorch.org/whl/cpu"
 # PyPI 镜像（留空则使用默认源）。国内可设为 https://mirrors.aliyun.com/pypi/simple/
@@ -46,6 +48,7 @@ if ! command -v python3 >/dev/null 2>&1; then
 fi
 PYTHON="python3"
 echo "==> 使用 $($PYTHON --version)"
+"$PYTHON" -c "import sys; assert (3, 11) <= sys.version_info[:2] < (3, 13), '需要 Python 3.11/3.12'"
 
 # ---- 2. 创建虚拟环境 ----
 if [ ! -d "$VENV_DIR" ]; then
@@ -65,25 +68,27 @@ fi
 
 # ---- 3. 升级 pip ----
 echo "==> 升级 pip"
-python -m pip install -U pip "${PIP_ARGS[@]}"
+python -m pip install -U pip setuptools wheel "${PIP_ARGS[@]}"
 
 # ---- 4. 安装 CPU 版 torch ----
 echo "==> 安装 CPU 版 torch==${TORCH_VERSION}"
 python -m pip install "torch==${TORCH_VERSION}" --index-url "$TORCH_CPU_INDEX"
 
 # ---- 5. 安装本包 + 开发依赖 ----
-echo "==> 以可编辑模式安装 mobo 及开发依赖"
-python -m pip install -e ".[dev]" "${PIP_ARGS[@]}"
+echo "==> 安装锁定的运行时、开发依赖并以可编辑模式安装 mobo"
+python -m pip install -r "$SCRIPT_DIR/requirements-dev.txt" "${PIP_ARGS[@]}"
+python -m pip install -e "$SCRIPT_DIR" --no-deps
 
 # ---- 6. 可选 GUI ----
 if [ "$WITH_GUI" -eq 1 ]; then
     echo "==> 安装 GUI 依赖 (PySide6)"
-    python -m pip install -e ".[gui]" "${PIP_ARGS[@]}"
+    python -m pip install -r "$SCRIPT_DIR/requirements-gui.txt" "${PIP_ARGS[@]}"
 fi
 
 # ---- 7. 自检 ----
 echo "==> 自检导入"
-python -c "import torch, mobo; print('torch', torch.__version__); print('mobo', mobo.__version__)"
+python -m pip check
+python -c "import numpy, pandas, scipy, sklearn, matplotlib, keras, tensorflow, pymoo, gymnasium, stable_baselines3, pyDOE, torch, mobo; print('torch', torch.__version__); print('mobo', mobo.__version__)"
 
 echo ""
 echo "✅ 环境安装完成。激活方式：source $VENV_DIR/bin/activate"

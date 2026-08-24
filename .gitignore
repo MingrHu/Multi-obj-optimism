@@ -11,6 +11,22 @@ env.bak/
 __pycache__/
 *.py[cod]
 *$py.class
+.mypy_cache/
+.pyright/
+.pyre/
+.pytype/
+.ruff_cache/
+.hypothesis/
+.tox/
+.nox/
+.cache/
+
+# 本地环境变量和解释器配置
+.env
+.env.*
+!.env.example
+.direnv/
+.python-version
 
 # Jupyter Notebook 缓存
 .ipynb_checkpoints/
@@ -21,6 +37,12 @@ __pycache__/
 # VS Code
 .vscode/
 
+# 其他编辑器和本地开发工具
+.fleet/
+.history/
+.codex/
+.agents/
+
 # 其他常见忽略项
 *.egg-info/
 *.egg
@@ -28,8 +50,16 @@ __pycache__/
 *.tmp
 *.swp
 .DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+Desktop.ini
+~$*
+*.bak
+*.orig
 data/AUTO
 data/TEST/
+data/keyfile
 data/tasks/
 AUTO_OPERATION_LOG.txt
 
@@ -37,6 +67,7 @@ AUTO_OPERATION_LOG.txt
 logs/
 .pytest_cache/
 .coverage
+.coverage.*
 htmlcov/
 coverage.xml
 

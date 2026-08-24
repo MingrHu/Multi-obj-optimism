@@ -7,7 +7,7 @@ name = "mobo"
 version = "1.0.0"
 description = "多目标锻造工艺优化工具包：代理模型 + NSGA-II/RL 优化 + DEFORM 自动化 + 几何圆度提取"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.13"
 authors = [{ name = "Hu Mingrui" }]
 license = { text = "Proprietary" }
 
@@ -33,14 +33,13 @@ dependencies = [
 
 [project.optional-dependencies]
 gui = ["PySide6==6.11.0"]
-dev = ["pytest", "pytest-cov", "pytest-mock"]
+dev = ["pytest", "pytest-cov", "pytest-mock", "ruff==0.12.12"]
 
 [project.scripts]
 mobo-ring-roundness = "mobo.cli.ring_roundness:main"
 mobo-ga = "mobo.cli.ga:main"
 mobo-rl = "mobo.cli.rl:main"
 mobo-surrogate = "mobo.cli.surrogate:main"
-mobo-automation-multi = "mobo.cli.multi_operation_demo:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -53,6 +52,14 @@ markers = [
     "integration: 依赖仓库 data/ 真实产物的集成用例",
 ]
 addopts = "-m 'not slow' --cov=mobo --cov-report=term-missing --import-mode=importlib"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+extend-exclude = ["data", "logs", ".venv"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "B"]
 
 [tool.coverage.run]
 source = ["mobo"]

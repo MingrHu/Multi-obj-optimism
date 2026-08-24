@@ -13,10 +13,11 @@ from mobo.automation.service import (
     run_execution_step,
     run_extract_data,
 )
-from mobo.common.paths import PROJECT_DIR
+from mobo.common.paths import AUTO_SINGLE_DIR, KEY_FILE_DIR, task_dir
 
 # 用于示例的固定任务 ID
 _TASK_ID = "2026-07-28-demo"
+_WORKSPACE = AUTO_SINGLE_DIR / _TASK_ID
 
 
 def _print_status(task_id: str) -> None:
@@ -34,29 +35,32 @@ def sample_generate_test() -> None:
         "pressure_roll_speed_lower": (0.2, 1.9),    # 锻造下限速度范围 (mm/s)
         "driving_roll_rad_speed": (0.5, 1.5),    # 驱动辊角速度范围 (rad/s)
     }
-    save_dir = f"{PROJECT_DIR}/data/TEST"
-    print(create_sampling_task(_TASK_ID, save_dir, "lhs", param_ranges, 200))
+    print(create_sampling_task(_TASK_ID, str(_WORKSPACE / "samples"), "lhs", param_ranges, 200))
 
 
 def generate_keyfile_test() -> None:
     """演示：初始化执行任务（落盘输入参数并生成 KEY 文件）。"""
     # 测试碾环
     # 1 输入参数表
-    param_table = [["roll_tmp", "roll_tmp", "roll_tmp", "pressure_roll_speed_upper","pressure_roll_speed_lower","driving_roll_rad_speed"],
-                   ["workpiece", "driving_roll", "pressure_roll", "pressure_roll", "pressure_roll", "driving_roll"]]
+    param_table = [
+        ["roll_tmp", "roll_tmp", "roll_tmp", "pressure_roll_speed_upper",
+         "pressure_roll_speed_lower", "driving_roll_rad_speed"],
+        ["workpiece", "driving_roll", "pressure_roll", "pressure_roll",
+         "pressure_roll", "driving_roll"],
+    ]
     # 2 提取目标表：第 0 行目标名、第 1 行对象名、第 2 行 select_component（分量）
     target_table = [["load", "grain_morph"],
                     ["driving_roll", "workpiece"],
                     [2, 1]]
     in_progress = [True, False]
     paths_config = {
-        "smp_file": f"{PROJECT_DIR}/data/TEST/smp.txt",
-        "std_key_file": f"{PROJECT_DIR}/data/keyfile/RINGROLL.KEY",
-        "temp_key_path": f"{PROJECT_DIR}/data/TEST/temp_key",
-        "res_db_path": f"{PROJECT_DIR}/data/TEST/res_db",
-        "res_key_path": f"{PROJECT_DIR}/data/TEST/res_key",
-        "res_txt_path": f"{PROJECT_DIR}/data/TEST/res_txt",
-        "process_info_file":f"{PROJECT_DIR}/data/TEST/process_info.json"
+        "smp_file": str(_WORKSPACE / "samples" / f"{_TASK_ID}-lhs.txt"),
+        "std_key_file": str(KEY_FILE_DIR / "RINGROLL.KEY"),
+        "temp_key_path": str(_WORKSPACE / "temp_key"),
+        "res_db_path": str(_WORKSPACE / "res_db"),
+        "res_key_path": str(_WORKSPACE / "res_key"),
+        "res_txt_path": str(_WORKSPACE / "res_txt"),
+        "process_info_file": str(task_dir(_TASK_ID) / "process_info.json")
     }
 
     print(init_execution_task(_TASK_ID, paths_config, param_table, target_table, in_progress, 3400))

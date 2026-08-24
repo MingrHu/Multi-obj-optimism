@@ -55,6 +55,9 @@ MODELS_DIR = DATA_DIR / "models"
 TEST_DIR = DATA_DIR / "TEST"
 KEY_FILE_DIR = DATA_DIR / "keyfile"
 TASKS_DIR = DATA_DIR / "tasks"
+AUTO_DIR = DATA_DIR / "AUTO"
+AUTO_SINGLE_DIR = AUTO_DIR / "single"
+AUTO_MULTI_DIR = AUTO_DIR / "mult"
 
 
 def model_family_dir(family: str) -> Path:
@@ -84,6 +87,9 @@ __all__ = [
     "TEST_DIR",
     "KEY_FILE_DIR",
     "TASKS_DIR",
+    "AUTO_DIR",
+    "AUTO_SINGLE_DIR",
+    "AUTO_MULTI_DIR",
     "model_family_dir",
     "task_dir",
 ]

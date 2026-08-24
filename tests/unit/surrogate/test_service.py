@@ -21,8 +21,8 @@ class _FakeDoe:
     def __init__(self, data_file, vars_out, n_vars):
         self.args = (data_file, vars_out, n_vars)
 
-    def train_save_model(self, which_model, model_par=[]):
-        _FakeDoe.calls.append((which_model, model_par))
+    def train_save_model(self, which_model, model_par=None):
+        _FakeDoe.calls.append((which_model, model_par or []))
 
 
 @pytest.fixture(autouse=True)

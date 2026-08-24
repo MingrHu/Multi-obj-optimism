@@ -44,6 +44,8 @@ KEYWORD    object_id    field_1    field_2    ...
 | `driving_roll_rad_speed` | `ANGMOV` | 匹配关键字和对象 ID，替换行末值 | `driving_roll` |
 | `pressure_roll_speed_lower` | `MOVCTL` 控制点块 | 与上界共同缩放控制点速度列 | `pressure_roll` |
 | `pressure_roll_speed_upper` | `MOVCTL` 控制点块 | 与下界共同缩放控制点速度列 | `pressure_roll` |
+| `workpiece_temperature` | `REFTMP` + `NDTMP` | 同时更新工件参考温度和统一节点温度 | `workpiece` |
+| `pressure_roll_constant_speed` | `MOVCTL` | 仅用于常速模式，替换行末速度 | `pressure_roll` |
 
 ### 2.1 `REFTMP`：对象参考温度
 
@@ -75,6 +77,10 @@ NDTMP        1       0    1.2000000000E+003
 - `NDTMP` 位于对象状态数据中，表示节点温度数据或统一节点初始温度。
 
 模板中可能同时存在二者。实际采用哪个关键字，应以该模板的初始化方式为准。
+
+TC4 多工步任务使用 `workpiece_temperature`，因为后续工步在上一工步 DB
+状态上换模。过渡动作会同时应用 `REFTMP` 和参数化后的
+`NDTMP 1 0 <temperature>` 片段，避免只改参考温度而未设置继承工件温度。
 
 ### 2.3 `MOVCTL`：平移运动控制
 
@@ -354,11 +360,17 @@ FORCE        2   -3.2454E+005    2.1790E+006    1.2811E+005
 | 1 | Y |
 | 2 | Z |
 
-全过程提取当前比较的是分量原值的最大值，不是绝对值最大值。
+`_extractMaxLoad` 会先对指定方向取绝对值。`in_progress=True` 时再求
+全过程最大值；否则返回最终帧的载荷绝对值。
 
 `FORCE` 在初始模板中也可能作为对象运动/载荷控制行出现，因此提取时应结合对象 ID 和导出 KEY 的实际结构验证。
 
-### 6.3 `USRELM`：用户自定义单元变量
+### 6.3 `STRAIN`：单元等效应变
+
+当 `STRAIN` 头后续记录为 `element_id effective_strain` 时，`strain_std` 读取工件
+所有单元的等效应变并计算样本标准差，作为应变均匀性指标。
+
+### 6.4 `USRELM`：用户自定义单元变量
 
 示例：
 
@@ -375,7 +387,7 @@ USRELM       1   13080    0.0000000000E+000       2
 
 `USRELM` 本身是通用用户单元变量，不天然等于晶粒尺寸；只有在对应用户子程序约定该列保存晶粒数据时，才能作此解释。
 
-### 6.4 `GRAIN`：DEFORM 晶粒组织结果
+### 6.5 `GRAIN`：DEFORM 晶粒组织结果
 
 当前 `_extractGrainMorph` 期望头部形式为：
 
@@ -385,7 +397,7 @@ GRAIN object_id num_units values_per_unit ...
 
 它读取每个单元的组织分量，以 `select_component` 选择分量，并计算跨单元标准差。数据可能跨多行存储。
 
-### 6.5 `USRNOD`：用户自定义节点变量
+### 6.6 `USRNOD`：用户自定义节点变量
 
 `USRNOD` 表示用户节点变量数据。当前仓库未直接用它计算目标，但在 DB 导出的终态 KEY 中通常与 `USRELM` 一起存在。
 
@@ -413,8 +425,9 @@ KFREAD 1
 
 1. 下一工步 simulation 片段。
 2. 工件控制属性片段。
-3. 对象 2～5 的完整模具片段。
-4. 对象间接触片段。
+3. 工件统一节点温度 `NDTMP` 片段（模板存在时）。
+4. 对象 2～5 的完整模具片段。
+5. 对象间接触片段。
 
 ### 7.3 `OBJPOS`：对象位置变换
 
@@ -485,13 +498,16 @@ Inter-Object Data → 文件末尾     = 接触关系
 | 简单平移速度 | `MOVCTL` |
 | 压力辊函数速度上下界 | `MOVCTL` + 后续控制点 |
 | 驱动辊角速度 | `ANGMOV` |
+| TC4 工件温度 | `REFTMP` + `NDTMP` |
+| 压力辊常速 | 常速模式 `MOVCTL` 行末值 |
 
 ### 已支持提取
 
 | 目标 | 关键字/数据 |
 |---|---|
 | 最大 Von Mises 应力 | `STRESS` |
-| 指定方向载荷 | `FORCE` |
+| 指定方向最大绝对载荷 | `FORCE` |
+| 等效应变均匀性 | `STRAIN` 单元值标准差 |
 | 用户晶粒变量离散度 | `USRELM` |
 | 晶粒组织分量离散度 | `GRAIN` |
 | 环件内/外圈圆度 | `OBJNAM + RZ + ELMCON` |

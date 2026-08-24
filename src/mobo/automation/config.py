@@ -7,6 +7,7 @@ from functools import partial
 from typing import Any, List
 
 from mobo.extraction.deform_targets import (
+    _extractEffectiveStrainStdv,
     _extractGrainMorph,
     _extractMaxLoad,
     _extractMaxStress,
@@ -55,14 +56,14 @@ class DeformConfig:
 
     # ===================== 模拟对象定义 =====================
     OBJ_DEF = {
-        'workpiece': "1",   # 普通工件
-        'driving_roll':"2", # 碾环驱动辊
+        'workpiece': "1",       # 普通工件
+        'driving_roll':"2",     # 碾环驱动辊
         'pressure_roll':"3",    # 碾环压力辊
-        'axial_roll_1':"4",
-        'axial_roll_2':"5",
+        'axial_roll_1':"4",     # 定位辊1
+        'axial_roll_2':"5",     # 定位辊2
 
-        'topdie': "2",
-        'butdie': "3"
+        'topdie': "2",     # 普通压力锻造上模
+        'butdie': "3"      # 普通压力锻造下模
     }
 
     # ===================== 目标函数映射 =====================
@@ -70,6 +71,7 @@ class DeformConfig:
     TAR_FUNC: dict[str, Any] = {
         'stress': partial(_lines_target, _extractMaxStress),
         'load': partial(_lines_target, _extractMaxLoad),
+        'strain_std': partial(_lines_target, _extractEffectiveStrainStdv),
         'grain': partial(_lines_target, _extractUsrGrainStdv),
         'grain_morph': partial(_lines_target, _extractGrainMorph),
         'roundness_inner': partial(_roundness_target, "inner"),

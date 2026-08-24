@@ -4,7 +4,9 @@ from mobo.replacement.registry import ReplacementRegistry
 
 def test_registry_resolves_parameter_capability():
     registry = ReplacementRegistry()
-    fn = lambda line, binding: LineReplacement(line, False)
+
+    def fn(line, binding):
+        return LineReplacement(line, False)
 
     spec = registry.register_fn("temperature", fn, kind="line")
 
@@ -14,7 +16,9 @@ def test_registry_resolves_parameter_capability():
 
 def test_registry_groups_document_parameter_aliases():
     registry = ReplacementRegistry()
-    fn = lambda lines, bindings: list(lines)
+
+    def fn(lines, bindings):
+        return list(lines)
 
     spec = registry.register_fn(
         ("speed_lower", "speed_upper"), fn,

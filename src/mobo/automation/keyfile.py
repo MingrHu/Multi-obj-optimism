@@ -23,10 +23,6 @@ from mobo.replacement.base import DocumentReplacer, LineReplacer
 from mobo.replacement.deform_parameters import (
     collect_speed_scale_specs,
     format_deform_float,
-    parse_speed as _parse_speed,
-    scale_abs as _scale_abs,
-    scale_movctl_block as _scale_movctl_block,
-    scale_speed_line as _scale_speed_line,
 )
 from .config import DeformConfig
 
