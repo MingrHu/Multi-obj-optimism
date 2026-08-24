@@ -228,3 +228,18 @@ def test_progress_noop_without_file():
     s = solver.DeformSolver()
     s._mark_done("/x.DB")  # 不应抛异常
     assert s.pending_db_files(["/x.DB"]) == ["/x.DB"]
+
+
+def test_completed_callback_runs_for_resumed_db(monkeypatch, tmp_path):
+    progress_file = str(tmp_path / "process_info.json")
+    completed = []
+    s = solver.DeformSolver(
+        process_info_file=progress_file,
+        on_completed=completed.append,
+    )
+    dbs = ["/res/0/m.DB"]
+    s._init_progress(dbs)
+    s._mark_done(dbs[0])
+    monkeypatch.setattr(s, "submit", lambda *args, **kwargs: None)
+    s.run_all(dbs)
+    assert completed == [dbs[0]]

@@ -20,7 +20,7 @@ import tempfile
 import threading
 import time
 from queue import Queue
-from typing import Any, List, Sequence
+from typing import Any, Callable, List, Sequence
 
 from mobo.common.logging import logger
 from mobo.common.paths import LOGS_DIR
@@ -140,13 +140,15 @@ class DeformSolver:
     取代原实现中裸露在模块级的全局计数器与锁
     """
 
-    def __init__(self, max_parallel: int = 12,process_info_file:str = "") -> None:
+    def __init__(self, max_parallel: int = 12,process_info_file:str = "",
+                 on_completed: Callable[[str], None] | None = None) -> None:
         """
         :param max_parallel: 最大并行求解进程数
         :param process_info_file: 求解过程信息记录文件位置
         """
         self.max_parallel = max_parallel
         self.process_info_file = process_info_file
+        self.on_completed = on_completed
         self._running = 0
         self._lock = threading.Lock()
 
@@ -286,6 +288,11 @@ class DeformSolver:
             solve_db_sync(db_key or db_path)
             logger.info(f"当前任务计算完成！请查看 {db_path} 结果")
             self._mark_done(db_key or db_path)
+            if self.on_completed is not None:
+                try:
+                    self.on_completed(db_key or db_path)
+                except Exception as exc:
+                    logger.error(f"完成后处理失败: {exc}")
         except Exception as exc:
             logger.error(f"求解进程出错: {exc}")
         finally:
@@ -314,6 +321,17 @@ class DeformSolver:
         :param db_paths: 待求解的 DB 文件路径列表
         """
         self._init_progress(db_paths)
+        if self.on_completed is not None:
+            completed = {
+                item["db_path"] for item in self._load_progress().get("db_files", [])
+                if item.get("done")
+            }
+            for db_path in db_paths:
+                if db_path in completed:
+                    try:
+                        self.on_completed(db_path)
+                    except Exception as exc:
+                        logger.error(f"已完成 DB 后处理失败: {exc}")
         pending = self.pending_db_files(db_paths)
 
         task_queue: Queue = Queue()

@@ -99,4 +99,31 @@ def extract_dataset(
     return out_path
 
 
-__all__ = ["extract_dataset"]
+def extract_dataset_row(
+    db_file: str,
+    sample_index: int,
+    key_export_dir: str,
+    max_step: int,
+    parameters: Sequence[Any],
+    target_table: List[List[str]],
+    in_progress: Sequence[bool],
+) -> List[Any]:
+    """从一个已完成 DB 导出 KEY 并生成一行数据，供增量批处理调用。"""
+    target_names, object_names, select_component = (
+        target_table[0], target_table[1], target_table[2]
+    )
+    step_dir = os.path.join(key_export_dir, str(sample_index))
+    key_files = _export_all_steps(db_file, step_dir, max_step)
+    frames = read_key_frames(key_files)
+    row: List[Any] = list(parameters)
+    for idx, target_name in enumerate(target_names):
+        extractor = DeformConfig.get_target_function(target_name)
+        object_id = DeformConfig.get_object_id(object_names[idx])
+        row.append(extractor(
+            key_files, frames, object_id,
+            in_progress[idx], select_component[idx],
+        ))
+    return row
+
+
+__all__ = ["extract_dataset", "extract_dataset_row"]

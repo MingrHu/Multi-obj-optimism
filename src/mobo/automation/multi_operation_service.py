@@ -10,6 +10,7 @@ from mobo.common import task_store
 from mobo.common.paths import task_dir
 
 from .multi_operation import MultiOperationTask, Operation, generate_multi_operation_samples
+from .incremental import IncrementalDataset
 
 _KIND = "automation_multi_operation"
 
@@ -37,12 +38,16 @@ def init_multi_operation_task(task_id: str, sample_file: str,
                               operations: Sequence[Operation], work_dir: str,
                               max_parallel_samples: int = 24,
                               keep_checkpoints: bool = True,
-                              dry_run: bool = False) -> Dict[str, Any]:
+                              dry_run: bool = False,
+                              incremental: bool = False,
+                              incremental_result_dir: str | None = None) -> Dict[str, Any]:
     """初始化多工步计算任务；全部续跑参数写入 state.json。"""
     req = {"sample_file": os.path.abspath(sample_file), "operations": list(operations),
            "work_dir": os.path.abspath(work_dir),
            "max_parallel_samples": max_parallel_samples,
            "keep_checkpoints": keep_checkpoints, "dry_run": dry_run,
+           "incremental": incremental,
+           "incremental_result_dir": incremental_result_dir,
            "state_file": _workflow_state_file(task_id)}
     task_store.init_state(task_id, _KIND, req)
     task_store.update(task_id, req=req)
@@ -78,13 +83,46 @@ def _rebuild(task_id: str, provided: Optional[Dict[str, Any]] = None) -> MultiOp
 def run_multi_operation_task(task_id: str, **provided: Any) -> Dict[str, Any]:
     """仅凭 task_id 从磁盘重建并运行或续跑多工步任务。"""
     task = _rebuild(task_id, provided)
+    state = task_store.load(task_id) or {}
+    req = state.get("req") or {}
+    incremental_enabled = bool(req.get("incremental"))
+    incremental_state_file = ""
+    incremental_output_file = ""
+    if incremental_enabled:
+        from .task_collection import get_task_definition
+
+        definition = get_task_definition(task_id)
+        result_dir = req.get("incremental_result_dir") or str(definition.workspace / "results")
+        incremental_state_file = str(task_dir(task_id) / "incremental_dataset.json")
+        incremental_output_file = os.path.join(
+            result_dir, f"{task_id}_incremental_result.txt"
+        )
+        dataset = IncrementalDataset(
+            incremental_state_file,
+            incremental_output_file,
+        )
+
+        def on_sample_completed(sample_index: int) -> None:
+            if dataset.is_completed(sample_index):
+                return
+            dataset.mark_started(sample_index)
+            try:
+                dataset.commit(sample_index, definition.extract_sample_row(task, sample_index))
+            except Exception as exc:
+                dataset.mark_failed(sample_index, str(exc))
+
+        task.on_sample_completed = on_sample_completed
     task_store.update(task_id, stage="solving", status="running")
     result = task.run()
     status = "finished" if result["status"] == "completed" else "failed"
     return task_store.update(task_id, stage="completed" if status == "finished" else "failed",
                              status=status, data={"workflow": result,
                                                  "workflow_state": task.state_file,
-                                                 "result_db_files": task.result_db_files()})
+                                                 "result_db_files": task.result_db_files(),
+                                                 "incremental_state_file":
+                                                     incremental_state_file,
+                                                 "incremental_output_file":
+                                                     incremental_output_file})
 
 
 def query_multi_operation_status(task_id: str) -> Optional[Dict[str, Any]]:

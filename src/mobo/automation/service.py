@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Optional
 
 from mobo.common import task_store
 from mobo.common.logging import logger
+from mobo.common.paths import task_dir
 from .pipeline import ForgingTask, generate_sample_file
 
 _KIND = "automation"
@@ -64,6 +65,7 @@ def _rebuild_task(task_id: str, provided: Optional[Dict[str, Any]] = None) -> Fo
     """
     req = task_store.resolve_req(task_id, _KIND, provided or {}, _REQUIRED_EXEC_KEYS)
     paths = req["paths_config"]
+    incremental = bool(req.get("incremental", False))
     task = ForgingTask(
         sample_file=paths["smp_file"],
         template_key=paths["std_key_file"],
@@ -75,7 +77,18 @@ def _rebuild_task(task_id: str, provided: Optional[Dict[str, Any]] = None) -> Fo
         target_table=[list(row) for row in req["target_table"]],
         in_progress=list(req["in_progress"]),
         max_step=req["max_step"],
-        process_info_file=paths.get("process_info_file", ""),
+        process_info_file=paths.get("process_info_file") or (
+            str(task_dir(task_id) / "process_info.json") if incremental else ""
+        ),
+        incremental=incremental,
+        incremental_state_file=paths.get(
+            "incremental_state_file",
+            str(task_dir(task_id) / "incremental_dataset.json"),
+        ),
+        incremental_output_file=paths.get(
+            "incremental_output_file",
+            os.path.join(paths["res_txt_path"], f"{task_id}_incremental_result.txt"),
+        ),
     )
     # 从临时 KEY 目录恢复已生成的输入 KEY（文件名形如 <模板名><样本序号>.KEY）。
     temp_dir = paths["temp_key_path"]
@@ -173,6 +186,7 @@ def init_execution_task(
     target_table: List[List[str]],
     in_progress: List[bool],
     max_step: int,
+    incremental: bool = False,
 ) -> Dict[str, str]:
     """初始化执行任务：校验路径、落盘输入参数、构建任务并生成 KEY 文件。"""
     try:
@@ -190,6 +204,7 @@ def init_execution_task(
             "target_table": target_table,
             "in_progress": in_progress,
             "max_step": max_step,
+            "incremental": incremental,
         })
         task.generate_keys()
         task_store.update(task_id, stage="generate_keys", status="finished",
@@ -210,9 +225,19 @@ def run_execution_step(task_id: str, **overrides: Any) -> Dict[str, str]:
     """
     try:
         task = _rebuild_task(task_id, overrides)
+        if getattr(task, "incremental", False):
+            task.load_samples_into_table()
         task.run_solver()
         task_store.update(task_id, stage="run_solver", status="finished",
-                          data={"db_file_count": len(task.db_files)})
+                          data={
+                              "db_file_count": len(task.db_files),
+                              "incremental_state_file": getattr(
+                                  task, "incremental_state_file", ""
+                              ) if getattr(task, "incremental", False) else "",
+                              "incremental_output_file": getattr(
+                                  task, "incremental_output_file", ""
+                              ) if getattr(task, "incremental", False) else "",
+                          })
         return _result(task_id, True, "计算任务运行完成")
     except Exception as exc:
         logger.error(f"求解运行失败：{exc}")

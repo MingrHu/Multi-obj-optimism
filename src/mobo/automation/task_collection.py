@@ -181,6 +181,24 @@ class MultiOperationTaskDefinition:
                     logger.error(f"样本 {sample_index} 数据提取失败: {exc}")
         return str(output)
 
+    def extract_sample_row(
+        self,
+        task: MultiOperationTask,
+        sample_index: int,
+    ) -> list[str]:
+        """从一个已完成多工步样本的终态 KEY 生成数据集行。"""
+        state = task.state["samples"][str(sample_index)]
+        if state.get("status") != "completed":
+            raise ValueError(f"样本 {sample_index} 尚未完成")
+        key_files = {
+            operation_index: [
+                state["operations"][str(operation_index)]["terminal_key"]
+            ]
+            for operation_index in range(1, len(self.operations) + 1)
+        }
+        targets = self.extract_targets(key_files)
+        return [str(value) for value in task.samples[sample_index]] + list(targets.values())
+
 
 _TC4_TEMPLATE_DIR = KEY_FILE_DIR / "tc4_ring_multi_task_1"
 _TC4_DIES = ("driving_roll", "pressure_roll", "axial_roll_1", "axial_roll_2")

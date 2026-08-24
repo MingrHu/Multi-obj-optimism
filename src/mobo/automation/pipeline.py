@@ -12,7 +12,8 @@ from enum import IntEnum
 from typing import Callable, List, Optional, Sequence, Tuple
 
 from mobo.common.logging import logger
-from .extract import extract_dataset
+from .extract import extract_dataset, extract_dataset_row
+from .incremental import IncrementalDataset
 from .keyfile import derive_output_path, generate_key_files
 from .sampling import ParamRanges, generate_samples
 from .solver import DeformSolver, key_to_db_batch
@@ -84,6 +85,9 @@ class ForgingTask:
         *,
         dry_run: bool = False,
         max_parallel: int = 24,
+        incremental: bool = False,
+        incremental_state_file: str = "",
+        incremental_output_file: str = "",
     ) -> None:
         self.sample_file = sample_file
         self.template_key = template_key
@@ -97,6 +101,9 @@ class ForgingTask:
         self.max_step = max_step
         self.dry_run = dry_run
         self.max_parallel = max_parallel
+        self.incremental = incremental
+        self.incremental_state_file = incremental_state_file
+        self.incremental_output_file = incremental_output_file
 
         # 中间产物
         self.key_files: List[str] = []
@@ -181,8 +188,34 @@ class ForgingTask:
             if self.dry_run:
                 return
             key_to_db_batch(key_paths, db_paths)
+            incremental_dataset = None
+            if self.incremental:
+                incremental_dataset = IncrementalDataset(
+                    self.incremental_state_file,
+                    self.incremental_output_file,
+                )
+
+            def on_completed(db_path: str) -> None:
+                if incremental_dataset is None:
+                    return
+                sample_index = self.db_files.index(db_path)
+                if incremental_dataset.is_completed(sample_index):
+                    return
+                incremental_dataset.mark_started(sample_index)
+                try:
+                    row = extract_dataset_row(
+                        db_path, sample_index, self.result_key_dir, self.max_step,
+                        self.param_table[sample_index + 2], self.target_table,
+                        self.in_progress,
+                    )
+                    incremental_dataset.commit(sample_index, row)
+                except Exception as exc:
+                    incremental_dataset.mark_failed(sample_index, str(exc))
+                    raise
+
             DeformSolver(max_parallel=self.max_parallel,
-                         process_info_file=self.process_info_file).run_all(self.db_files)
+                         process_info_file=self.process_info_file,
+                         on_completed=on_completed).run_all(self.db_files)
 
         thread = self._run_async("求解运行", work)
         if thread is not None:

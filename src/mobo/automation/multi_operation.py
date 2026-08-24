@@ -11,7 +11,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Sequence
+from typing import Any, Callable, Dict, List, Sequence
 
 import pandas as pd
 
@@ -201,7 +201,8 @@ class MultiOperationTask:
     def __init__(self, task_id: str, sample_file: str, operations: Sequence[Operation],
                  work_dir: str, max_parallel_samples: int = 1,
                  keep_checkpoints: bool = True, dry_run: bool = False,
-                 state_file: str | None = None) -> None:
+                 state_file: str | None = None,
+                 on_sample_completed: Callable[[int], None] | None = None) -> None:
         if len(operations) < 2:
             raise ValueError("多工步任务至少需要两个工步")
         self.task_id = task_id
@@ -211,6 +212,7 @@ class MultiOperationTask:
         self.max_parallel_samples = max(1, int(max_parallel_samples))
         self.keep_checkpoints = keep_checkpoints
         self.dry_run = dry_run
+        self.on_sample_completed = on_sample_completed
         self.state_file = os.path.abspath(
             state_file or os.path.join(self.work_dir, "multi_operation_state.json")
         )
@@ -427,11 +429,17 @@ class MultiOperationTask:
             sample_dir, f"terminal_{len(self.operations)}.KEY"
         )
         self._save()
+        if self.on_sample_completed is not None:
+            self.on_sample_completed(sample_index)
 
     def run(self) -> Dict[str, Any]:
         """运行或续跑全部样本，已完成工步不会重复执行。"""
         self.state["status"] = "running"
         self._save()
+        if self.on_sample_completed is not None:
+            for sample_index in range(len(self.samples)):
+                if self.state["samples"][str(sample_index)]["status"] == "completed":
+                    self.on_sample_completed(sample_index)
         pending = [i for i in range(len(self.samples))
                    if self.state["samples"][str(i)]["status"] != "completed"]
         errors = []
