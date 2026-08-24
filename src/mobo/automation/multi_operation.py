@@ -436,6 +436,7 @@ class MultiOperationTask:
         """运行或续跑全部样本，已完成工步不会重复执行。"""
         self.state["status"] = "running"
         self._save()
+        # 一边计算一边生成
         if self.on_sample_completed is not None:
             for sample_index in range(len(self.samples)):
                 if self.state["samples"][str(sample_index)]["status"] == "completed":
