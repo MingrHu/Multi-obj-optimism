@@ -1,4 +1,4 @@
-param(
+﻿param(
     [switch]$WithGui,
     [string]$PipIndex = $env:PIP_INDEX
 )
@@ -51,3 +51,4 @@ if (-not $Arm -and -not $env:MOBO_DEF_ARM_CTL) {
 
 Write-Host "环境安装完成。激活脚本：$VenvDir\Scripts\Activate.ps1"
 Write-Host "测试命令：python -m pytest -m 'not slow'"
+
