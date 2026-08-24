@@ -21,7 +21,7 @@ def sample_generate_test() -> None:
     print(_TASK.generate_samples(method="lhs", n_samples=256))
 
 
-def generate_keyfile_test() -> None:
+def init_task_test() -> None:
     """初始化任务、工作目录和磁盘恢复状态。"""
     print(init_multi_operation_task(
         _TASK_ID,
@@ -30,6 +30,7 @@ def generate_keyfile_test() -> None:
         str(_TASK.run_dir),
         max_parallel_samples=24,
         keep_checkpoints=True,
+        incremental=True,
     ))
 
 
@@ -51,7 +52,7 @@ def status_test() -> None:
 if __name__ == "__main__":
     # 每一步可单独运行，只要 _TASK_ID 一致即可接着上一步继续
     # sample_generate_test()
-    generate_keyfile_test()
+    init_task_test()
     # run_process_test()
     # extra_data_test()
     # status_test()
