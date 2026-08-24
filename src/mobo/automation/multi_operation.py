@@ -297,7 +297,7 @@ class MultiOperationTask:
         return [str(v) for v in self.samples[sample_index][start:start + count]]
 
     def prepare_parameterized_keys(self) -> List[str]:
-        """批量生成各样本、各工步的参数化模板 KEY，不调用 DEFORM。"""
+        """补生成缺失的样本/工步参数化 KEY，已存在的文件直接复用。"""
         generated: List[str] = []
         for sample_index in range(len(self.samples)):
             sample_dir = os.path.join(self.work_dir, str(sample_index))
@@ -305,6 +305,9 @@ class MultiOperationTask:
                 operation_dir = os.path.join(sample_dir, f"op{operation_index}")
                 os.makedirs(operation_dir, exist_ok=True)
                 output_path = os.path.join(operation_dir, "parameterized_template.KEY")
+                generated.append(output_path)
+                if os.path.isfile(output_path) and os.path.getsize(output_path) > 0:
+                    continue
                 params = _parameters(operation)
                 if not params:
                     shutil.copy2(operation["template_key"], output_path)
@@ -316,12 +319,24 @@ class MultiOperationTask:
                         operation["template_key"], output_path,
                         names, objects, values,
                     )
-                generated.append(output_path)
         return generated
+
+    def parameterized_key_files(self) -> List[str]:
+        """返回全部参数化 KEY 的确定性路径，不执行文件生成。"""
+        return [
+            os.path.join(
+                self.work_dir, str(sample_index), f"op{operation_index}",
+                "parameterized_template.KEY",
+            )
+            for sample_index in range(len(self.samples))
+            for operation_index in range(1, len(self.operations) + 1)
+        ]
 
     def prepare_initial_db_files(self) -> List[str]:
         """串行把每个未完成样本的工步1参数化 KEY 转换为初始 DB。"""
-        generated = self.prepare_parameterized_keys()
+        generated = self.parameterized_key_files()
+        if any(not os.path.isfile(path) or os.path.getsize(path) == 0 for path in generated):
+            generated = self.prepare_parameterized_keys()
         first_keys = generated[::len(self.operations)]
         db_files: List[str] = []
         for sample_index, key_path in enumerate(first_keys):
@@ -363,7 +378,9 @@ class MultiOperationTask:
         params = _parameters(operation)
         key_path = os.path.join(operation_dir, "operation.KEY")
         parameterized = os.path.join(operation_dir, "parameterized_template.KEY")
-        if os.path.exists(parameterized):
+        if os.path.isfile(key_path):
+            pass
+        elif os.path.exists(parameterized):
             shutil.copy2(parameterized, key_path)
         elif params:
             names, objects, values = _expanded_parameter_values(

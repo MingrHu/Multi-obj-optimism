@@ -141,6 +141,7 @@ class ForgingTask:
 
     def load_samples_into_table(self) -> None:
         """把样本文件的每行数值追加到参数表（表头之后）。"""
+        del self.param_table[2:]
         with open(self.sample_file, "r", encoding="utf-8") as f:
             for line in f:
                 self.param_table.append(line.split())

@@ -147,6 +147,40 @@ def test_prepare_parameterized_keys_keeps_fixed_stage_and_expands_shared_value(t
     assert "MOVCTL 3 1 0 0 1 0 1.5000000000E+000" in text
 
 
+def test_prepare_parameterized_keys_reuses_existing_outputs(tmp_path):
+    operations = _operations(tmp_path)
+    samples = tmp_path / "samples.txt"
+    samples.write_text("910\t810\n", encoding="utf-8")
+    task = MultiOperationTask(
+        "multi", str(samples), operations, str(tmp_path / "runs"), dry_run=True
+    )
+    generated = task.prepare_parameterized_keys()
+    Path(generated[1]).write_text("existing-key", encoding="utf-8")
+
+    repeated = task.prepare_parameterized_keys()
+
+    assert repeated == generated
+    assert Path(generated[1]).read_text(encoding="utf-8") == "existing-key"
+
+
+def test_prepare_initial_db_reuses_existing_keys_and_db(tmp_path, monkeypatch):
+    operations = _operations(tmp_path)
+    samples = tmp_path / "samples.txt"
+    samples.write_text("910\t810\n", encoding="utf-8")
+    task = MultiOperationTask(
+        "multi", str(samples), operations, str(tmp_path / "runs"), dry_run=True
+    )
+    task.prepare_parameterized_keys()
+    db_path = tmp_path / "runs" / "0" / "result.DB"
+    db_path.touch()
+    monkeypatch.setattr(
+        task, "prepare_parameterized_keys",
+        lambda: (_ for _ in ()).throw(AssertionError("不应重新生成 KEY")),
+    )
+
+    assert task.prepare_initial_db_files() == [str(db_path)]
+
+
 def test_dry_run_completes_and_rebuild_skips_completed_operations(tmp_path):
     operations = _operations(tmp_path)
     samples = tmp_path / "samples.txt"

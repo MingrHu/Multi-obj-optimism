@@ -119,18 +119,27 @@ def generate_key_files(template_path: str, param_table: List[List[str]], save_di
     :return: 生成的 KEY 文件路径列表
     """
     os.makedirs(save_dir, exist_ok=True)
+    generated = [
+        derive_output_path(template_path, save_dir, str(sample_idx), "KEY")
+        for sample_idx in range(len(param_table[2:]))
+    ]
+    if all(os.path.isfile(path) and os.path.getsize(path) > 0 for path in generated):
+        logger.info(f"{len(generated)} 个 KEY 文件均已存在，跳过生成")
+        return generated
+
     with open(template_path, "r", encoding="utf-8") as f:
         template_lines = f.readlines()
 
     param_names, object_names = param_table[0], param_table[1]
-    generated: List[str] = []
 
-    for sample_idx, values in enumerate(param_table[2:]):
+    for sample_idx, (values, out_path) in enumerate(zip(
+            param_table[2:], generated, strict=True)):
+        if os.path.isfile(out_path) and os.path.getsize(out_path) > 0:
+            logger.info(f"第 {sample_idx + 1} 个 KEY 文件已存在，跳过生成: {out_path}")
+            continue
         new_lines = apply_parameters(template_lines, param_names, object_names, values)
-        out_path = derive_output_path(template_path, save_dir, str(sample_idx), "KEY")
         with open(out_path, "w", encoding="utf-8") as f:
             f.writelines(new_lines)
-        generated.append(out_path)
         logger.info(f"第 {sample_idx + 1} 个 KEY 文件已保存: {out_path}")
 
     return generated

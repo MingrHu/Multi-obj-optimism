@@ -6,6 +6,7 @@
 """
 
 import os
+from pathlib import Path
 
 import pytest
 
@@ -81,6 +82,24 @@ def test_generate_key_files_replaces_target_values(tmp_path):
     content1 = open(generated[1], encoding="utf-8").read()
     assert keyfile.format_deform_float("875.0") in content1
     assert keyfile.format_deform_float("10.0") in content1
+
+
+def test_generate_key_files_reuses_existing_outputs(tmp_path):
+    template = _write_template(tmp_path)
+    param_table = [
+        ["temp", "speed"],
+        ["workpiece", "topdie"],
+        ["950.0", "40.0"],
+    ]
+    generated = keyfile.generate_key_files(str(template), param_table, str(tmp_path / "keys"))
+    Path(generated[0]).write_text("existing-key", encoding="utf-8")
+
+    repeated = keyfile.generate_key_files(
+        str(template), param_table, str(tmp_path / "keys")
+    )
+
+    assert repeated == generated
+    assert Path(generated[0]).read_text(encoding="utf-8") == "existing-key"
 
 
 def test_line_replacement_changes_only_last_matching_token():
