@@ -95,6 +95,40 @@ def db_to_key(db_path: str, key_path: str, step: str = "") -> None:
     _run_pre_with_commands(commands)
 
 
+def run_key_actions(key_path: str) -> None:
+    """载入并执行包含 DBREAD/KFREAD/GENDB 的前处理动作 KEY。"""
+    commands = f"E\n2\n1\n{key_path}\nE\nE\nY\n"
+    _run_pre_with_commands(commands)
+
+
+def solve_db_sync(db_path: str) -> None:
+    """同步求解单个 DB，并以进程返回码和 LOG 的 NORMAL STOP 判定成功。"""
+    work_dir = os.path.dirname(os.path.abspath(db_path))
+    stem = os.path.splitext(os.path.basename(db_path))[0]
+    process = subprocess.Popen(
+        DEF_ARM_CTL,
+        stdin=subprocess.PIPE,
+        shell=False,
+        cwd=work_dir,
+        text=True,
+    )
+    if process.stdin is None:
+        raise RuntimeError("无法打开 DEFORM 求解器标准输入")
+    process.stdin.write(stem + "\nB\n")
+    process.stdin.flush()
+    process.stdin.close()
+    return_code = process.wait()
+    if return_code:
+        raise RuntimeError(f"DEFORM 求解器退出码为 {return_code}")
+    log_path = os.path.join(work_dir, stem + ".LOG")
+    if not os.path.exists(log_path):
+        raise RuntimeError(f"DEFORM 未生成求解日志: {log_path}")
+    with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
+        log_text = f.read()
+    if "NORMAL STOP" not in log_text or "ABNORMAL STOP" in log_text:
+        raise RuntimeError(f"DEFORM 求解未正常结束，请检查: {log_path}")
+
+
 class DeformSolver:
     """DEFORM 求解调度器，封装并发求解计数
 
@@ -321,5 +355,7 @@ __all__ = [
     "key_to_db",
     "key_to_db_batch",
     "db_to_key",
+    "run_key_actions",
+    "solve_db_sync",
     "DeformSolver",
 ]

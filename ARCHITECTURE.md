@@ -14,7 +14,8 @@
         ┌──────────────┬───────────────┼───────────────┬──────────────┐
         ▼              ▼               ▼               ▼              ▼
 ┌──────────────┐ ┌───────────┐ ┌───────────────┐ ┌──────────────┐ ┌────────────┐
-│  surrogate   │ │optimization│ │  extraction   │ │  automation  │ │  （复用）  │
+│  surrogate   │ │optimization│ │extraction /   │ │  automation  │ │  （复用）  │
+│              │ │           │ │ replacement   │ │              │ │            │
 │  代理模型    │ │  ga / rl   │ │  原子能力层   │ │ DEFORM 流水线│ │            │
 └──────┬───────┘ └─────┬─────┘ └───────┬───────┘ └──────┬───────┘ │            │
        │               │               │                │         │            │
@@ -55,6 +56,8 @@
 | `extraction` | `base.py` / `registry.py` | 原子能力层类型与注册/分派 |
 | `extraction` | `deform_targets.py` | DEFORM 目标提取原子函数（`_extract*`）|
 | `extraction` | `ring_roundness.py` | 碾环截面圆度纯函数 + `extract_ring_roundness` 适配器 |
+| `replacement` | `base.py` / `registry.py` | 工艺参数替换原子能力类型与按参数名注册/分派 |
+| `replacement` | `deform_parameters.py` | DEFORM 普通关键字与 MOVCTL 控制点块替换原子函数 |
 | `automation` | `config.py` | `DeformConfig` 关键字/对象/目标函数映射 |
 | `automation` | `sampling.py` | LHS / 全因子采样（纯逻辑）|
 | `automation` | `keyfile.py` | KEY 文件文本处理：格式化、路径派生、`generate_key_files`（纯逻辑）|
@@ -103,6 +106,17 @@
   `registry.register_fn(...)` 或 `@registry.register(...)`，**无需改动底层提取函数体**。
 - `DeformConfig.TAR_FUNC` 仍直接引用同一批提取函数，保证 `automation` 流水线零改动；
   registry 作为统一对外原子层与之并行存在。
+
+## 工艺参数替换原子能力（replacement）
+
+`automation.keyfile` 只负责 KEY 文件读写、样本参数组装和能力路由。具体文本修改位于
+`replacement.deform_parameters`，注册表按参数名返回两类能力：
+
+- **`line`**：匹配 KEY 关键字与对象 ID，替换普通参数行；
+- **`document`**：处理跨多行或多个参数共同决定的结构，例如根据上下界缩放完整
+  `MOVCTL` 控制点块。
+
+新增参数类型时实现独立函数并在 `replacement/__init__.py` 注册，无需修改 KEY 生成流程。
 
 ## 路径集中化
 

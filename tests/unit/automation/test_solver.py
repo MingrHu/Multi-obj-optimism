@@ -25,6 +25,39 @@ def test_db_to_key_command_string(monkeypatch):
     assert captured["cmd"] == "E\n2\n2\nin.DB\n5\nE\nE\n8\nout.KEY\nE\nY\n"
 
 
+def test_run_key_actions_command_string(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(solver, "_run_pre_with_commands", lambda cmd: captured.setdefault("cmd", cmd))
+    solver.run_key_actions("transition.KEY")
+    assert captured["cmd"] == "E\n2\n1\ntransition.KEY\nE\nE\nY\n"
+
+
+def test_solve_db_sync_requires_normal_stop(monkeypatch, tmp_path):
+    written = []
+
+    class _Stdin:
+        def write(self, value):
+            written.append(value)
+
+        def flush(self):
+            pass
+
+        def close(self):
+            pass
+
+    class _Process:
+        stdin = _Stdin()
+
+        def wait(self):
+            return 0
+
+    monkeypatch.setattr(solver.subprocess, "Popen", lambda *args, **kwargs: _Process())
+    db_path = tmp_path / "sample.DB"
+    (tmp_path / "sample.LOG").write_text("NORMAL STOP\n", encoding="utf-8")
+    solver.solve_db_sync(str(db_path))
+    assert written == ["sample\nB\n"]
+
+
 def test_key_to_db_batch(monkeypatch):
     calls = []
     monkeypatch.setattr(solver, "key_to_db", lambda k, d: calls.append((k, d)))

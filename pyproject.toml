@@ -40,6 +40,7 @@ mobo-ring-roundness = "mobo.cli.ring_roundness:main"
 mobo-ga = "mobo.cli.ga:main"
 mobo-rl = "mobo.cli.rl:main"
 mobo-surrogate = "mobo.cli.surrogate:main"
+mobo-automation-multi = "mobo.cli.multi_operation_demo:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

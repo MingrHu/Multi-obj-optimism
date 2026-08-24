@@ -10,6 +10,8 @@ import os
 import pytest
 
 from mobo.automation import keyfile
+from mobo.replacement.base import LineReplacement
+from mobo.replacement.registry import ReplacementRegistry
 
 
 def test_format_deform_float_zero():
@@ -182,4 +184,26 @@ def test_generate_key_files_scales_speed_block(tmp_path):
     assert max(absv) == pytest.approx(1.5)
     # 负数保号
     assert float(lines[2].split()[1]) < 0
+
+
+def test_apply_parameters_routes_custom_atomic_capability(monkeypatch):
+    registry = ReplacementRegistry()
+    calls = []
+
+    def replace_custom(line, binding):
+        calls.append((line, binding.name, binding.object_id, binding.value))
+        if not line.startswith("CUSTOM"):
+            return LineReplacement(line, False)
+        return LineReplacement(f"CUSTOM {binding.object_id} {binding.value}\n", True)
+
+    registry.register_fn("custom", replace_custom, kind="line")
+    monkeypatch.setattr(keyfile, "replacement_registry", registry)
+
+    result = keyfile.apply_parameters(
+        ["CUSTOM 1 old\n", "UNCHANGED\n"],
+        ["custom"], ["workpiece"], ["new"],
+    )
+
+    assert result == ["CUSTOM 1 new\n", "UNCHANGED\n"]
+    assert calls[0][1:] == ("custom", "1", "new")
 

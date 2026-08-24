@@ -7,51 +7,28 @@
 - :func:`generate_key_files`：把工艺参数写入模板 KEY，批量生成输入 KEY；
 - :func:`read_key_frames`：读取一组 KEY 文件的全部文本行
 
-KEY 文件本质是文本文件，目标行格式为：``<关键字> <对象ID> ... <参数值>``，
-:func:`generate_key_files` 依据 :class:`~mobo.automation.config.DeformConfig` 的
-关键字/对象映射定位并替换参数值
+KEY 文件本质是文本文件，目标行格式为：``<关键字> <对象ID> ... <参数值>``。
+本模块只编排文件读写并把参数请求路由到 :mod:`mobo.replacement` 原子能力层。
 """
 
 from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import List, Sequence, cast
 
 from mobo.common.logging import logger
+from mobo.replacement import ParameterBinding, registry as replacement_registry
+from mobo.replacement.base import DocumentReplacer, LineReplacer
+from mobo.replacement.deform_parameters import (
+    collect_speed_scale_specs,
+    format_deform_float,
+    parse_speed as _parse_speed,
+    scale_abs as _scale_abs,
+    scale_movctl_block as _scale_movctl_block,
+    scale_speed_line as _scale_speed_line,
+)
 from .config import DeformConfig
-
-
-def format_deform_float(value: str) -> str:
-    """把数值格式化为 DEFORM 规范的 10 位尾数、3 位指数科学计数法。
-
-    非数值输入原样返回；0 返回固定的 ``0.0000000000E+000``。
-
-    :param value: 待格式化的字符串
-    :return: DEFORM 科学计数法字符串
-    """
-    try:
-        n = float(value)
-    except (ValueError, TypeError):
-        return str(value)
-
-    if n == 0.0:
-        return "0.0000000000E+000"
-
-    s = "{0:.10e}".format(n).upper()
-    if "E" not in s:
-        return f"{s}E+000"
-
-    mantissa, exp = s.split("E")
-    if exp.startswith("-"):
-        sign, digits = "-", exp[1:]
-    elif exp.startswith("+"):
-        sign, digits = "+", exp[1:]
-    else:
-        sign, digits = "+", exp
-
-    digits = digits.lstrip("0") or "0"
-    return f"{mantissa}E{sign}{digits.zfill(3)}"
 
 
 def derive_output_path(source_file: str, save_dir: str, tag: str, file_type: str) -> str:
@@ -71,175 +48,66 @@ def derive_output_path(source_file: str, save_dir: str, tag: str, file_type: str
 
 def _apply_params_to_line(line: str, param_names: Sequence[str], object_names: Sequence[str],
                           values: Sequence[str]) -> str:
-    """若某行匹配到 (关键字, 对象ID)，则用格式化后的参数值替换该行末尾值。
+    """按注册表路由单行替换能力。"""
+    return _apply_bindings_to_line(
+        line, _parameter_bindings(param_names, object_names, values)
+    )
 
-    :param line: KEY 文件的一行
-    :param param_names: 工艺参数名序列（如 ``["temp", "speed"]``）
-    :param object_names: 参数对应的对象名序列（如 ``["workpiece", "topdie"]``）
-    :param values: 与参数一一对应的取值序列
-    :return: 替换后的行（未匹配则原样返回）
-    """
-    tokens = line.split()
-    if len(tokens) < 2:
-        return line
 
-    for pos, value in enumerate(values):
-        param_name = param_names[pos]
-        # 碾环 MOVCTL 速度上/下界：交给块级裁剪，不做单行末值替换
-        if param_name == 'pressure_roll_speed_upper' or param_name == 'pressure_roll_speed_lower':
+def _apply_bindings_to_line(
+    line: str, bindings: Sequence[ParameterBinding]
+) -> str:
+    """把预解析的参数请求路由到行级能力。"""
+    for binding in bindings:
+        spec = replacement_registry.resolve(binding.name)
+        if spec is None or spec.kind != "line":
             continue
-        key_var = DeformConfig.get_key_var(param_name)
-        object_id = DeformConfig.get_object_id(object_names[pos])
-        # 目标行：第一个 token 为关键字，第二个 token 为对象 ID
-        if key_var == tokens[0] and tokens[1] == object_id:
-            return line.replace(tokens[-1], format_deform_float(value))
+        replacer = cast(LineReplacer, spec.fn)
+        result = replacer(line, binding)
+        if result.matched:
+            return result.text
     return line
+
+
+def _parameter_bindings(
+    param_names: Sequence[str],
+    object_names: Sequence[str],
+    values: Sequence[str],
+) -> list[ParameterBinding]:
+    """把三列表头和值组装成替换注册表的请求。"""
+    return [
+        ParameterBinding(
+            name=param_names[pos],
+            object_name=object_names[pos],
+            object_id=DeformConfig.get_object_id(object_names[pos]),
+            value=value,
+        )
+        for pos, value in enumerate(values)
+    ]
 
 
 def _collect_speed_scale_specs(
     param_names: Sequence[str],
     object_names: Sequence[str],
     values: Sequence[str],
-) -> Dict[str, Tuple[float, float]]:
-    """从一个样本中收集碾环速度缩放目标区间，按对象 ID 聚合。
-
-    仅当同一对象同时提供 ``pressure_roll_speed_lower`` 与 ``pressure_roll_speed_upper``
-    时才生成目标区间。
-
-    :param param_names: 参数名序列
-    :param object_names: 参数对应对象名序列
-    :param values: 参数取值序列
-    :return: ``{对象ID: (lower, upper)}``（lower/upper 均取绝对值并保证 lower<=upper）
-    """
-    lowers: Dict[str, float] = {}
-    uppers: Dict[str, float] = {}
-    for pos, param_name in enumerate(param_names):
-        object_id = DeformConfig.get_object_id(object_names[pos])
-        if object_id is None:
-            continue
-        try:
-            magnitude = abs(float(values[pos]))
-        except (ValueError, TypeError):
-            continue
-        if param_name == 'pressure_roll_speed_lower':
-            lowers[object_id] = magnitude
-        elif param_name == 'pressure_roll_speed_upper':
-            uppers[object_id] = magnitude
-
-    specs: Dict[str, Tuple[float, float]] = {}
-    for object_id in lowers.keys() & uppers.keys():
-        low, high = lowers[object_id], uppers[object_id]
-        specs[object_id] = (min(low, high), max(low, high))
-    return specs
+) -> dict[str, tuple[float, float]]:
+    """兼容旧私有接口，并把请求路由到速度区间原子能力。"""
+    return collect_speed_scale_specs(_parameter_bindings(param_names, object_names, values))
 
 
-def _parse_speed(line: str) -> Optional[float]:
-    """解析控制点行的速度列（第 2 列，即行内最后一个数）。
-
-    :param line: 形如 ``    <时间>    <速度>\\n`` 的控制点行
-    :return: 速度浮点值；无法解析则返回 None
-    """
-    body = line[:-1] if line.endswith("\n") else line
-    _, sep, tail = body.rpartition(" ")
-    if not sep or not tail.strip():
-        return None
-    try:
-        return float(tail)
-    except ValueError:
-        return None
-
-
-def _scale_abs(value: float, src_min: float, src_max: float,
-               lower: float, upper: float) -> float:
-    """把速度的**绝对值**从原范围 ``[src_min, src_max]`` 线性映射到 ``[lower, upper]``
-    :param value: 原始速度值（可正可负）
-    :param src_min: 原始速度绝对值的最小值（非负）
-    :param src_max: 原始速度绝对值的最大值（非负）
-    :param lower: 目标绝对值下界（非负）
-    :param upper: 目标绝对值上界（非负）
-    :return: 缩放后的速度值（保留原符号）
-    """
-    sign = -1.0 if value < 0 else 1.0
-    span = src_max - src_min
-    if span <= 0:
-        scaled_abs = (lower + upper) / 2.0
-    else:
-        ratio = (abs(value) - src_min) / span
-        scaled_abs = lower + ratio * (upper - lower)
-    return sign * scaled_abs
-
-
-def _scale_speed_line(line: str, src_min: float, src_max: float,
-                      lower: float, upper: float) -> str:
-    """按绝对值范围缩放单个控制点行的速度列，保留原时间列与行内空白格式。
-
-    :param line: 形如 ``    <时间>    <速度>\\n`` 的控制点行
-    :param src_min: 原始速度绝对值的最小值
-    :param src_max: 原始速度绝对值的最大值
-    :param lower: 目标绝对值下界
-    :param upper: 目标绝对值上界
-    :return: 速度被缩放后的行；解析失败则原样返回
-    """
-    speed = _parse_speed(line)
-    if speed is None:
-        return line
-    body, newline = (line[:-1], "\n") if line.endswith("\n") else (line, "")
-    head, sep, _ = body.rpartition(" ")
-    scaled = _scale_abs(speed, src_min, src_max, lower, upper)
-    # 用格式化后的缩放值替换速度列，保留原时间列与列间空白
-    return head + sep + format_deform_float(str(scaled)) + newline
-
-
-def _scale_movctl_block(lines: List[str], specs: Dict[str, Tuple[float, float]]) -> List[str]:
-    """对 ``MOVCTL <对象ID> ... <m>`` 之后的 m 行控制点做速度等比例缩放。
-
-    定位每个待缩放对象的 ``MOVCTL`` 行，读取其行尾整数 ``m`` 作为控制点行数，先扫描
-    这 m 行得到原始速度的绝对值范围 ``[src_min, src_max]``，再把每行速度绝对值线性
-    映射到 ``specs`` 给出的目标区间（保号）。
-
-    :param lines: KEY 文件全部文本行（会返回缩放后的新列表，不原地修改入参）
-    :param specs: ``{对象ID: (lower, upper)}``
-    :return: 缩放后的文本行列表
-    """
-    if not specs:
-        return lines
-
-    movctl_key = DeformConfig.get_key_var("speed")  # "MOVCTL"
+def _apply_document_replacers(
+    lines: Sequence[str], bindings: Sequence[ParameterBinding]
+) -> List[str]:
+    """按注册顺序调用文档级能力，同一能力只执行一次。"""
     result = list(lines)
-    for idx, line in enumerate(lines):
-        tokens = line.split()
-        if len(tokens) < 2 or tokens[0] != movctl_key:
+    applied: set[str] = set()
+    for binding in bindings:
+        spec = replacement_registry.resolve(binding.name)
+        if spec is None or spec.kind != "document" or spec.name in applied:
             continue
-        object_id = tokens[1]
-        if object_id not in specs:
-            continue
-        try:
-            count = int(tokens[-1])
-        except ValueError:
-            continue
-        if count <= 0:
-            continue
-
-        # 第一趟：扫描该块内所有可解析速度的绝对值范围
-        block_speeds = []
-        for offset in range(1, count + 1):
-            j = idx + offset
-            if j >= len(result):
-                break
-            speed = _parse_speed(result[j])
-            if speed is not None:
-                block_speeds.append(abs(speed))
-        if not block_speeds:
-            continue
-        src_min, src_max = min(block_speeds), max(block_speeds)
-
-        # 第二趟：按范围等比例缩放每行速度
-        lower, upper = specs[object_id]
-        for offset in range(1, count + 1):
-            j = idx + offset
-            if j >= len(result):
-                break
-            result[j] = _scale_speed_line(result[j], src_min, src_max, lower, upper)
+        replacer = cast(DocumentReplacer, spec.fn)
+        result = replacer(result, bindings)
+        applied.add(spec.name)
     return result
 
 
@@ -262,13 +130,7 @@ def generate_key_files(template_path: str, param_table: List[List[str]], save_di
     generated: List[str] = []
 
     for sample_idx, values in enumerate(param_table[2:]):
-        new_lines = [
-            _apply_params_to_line(line, param_names, object_names, values)
-            for line in template_lines
-        ]
-        # 碾环 MOVCTL 速度控制点等比例缩放（无相关参数时零行为变化）
-        scale_specs = _collect_speed_scale_specs(param_names, object_names, values)
-        new_lines = _scale_movctl_block(new_lines, scale_specs)
+        new_lines = apply_parameters(template_lines, param_names, object_names, values)
         out_path = derive_output_path(template_path, save_dir, str(sample_idx), "KEY")
         with open(out_path, "w", encoding="utf-8") as f:
             f.writelines(new_lines)
@@ -276,6 +138,30 @@ def generate_key_files(template_path: str, param_table: List[List[str]], save_di
         logger.info(f"第 {sample_idx + 1} 个 KEY 文件已保存: {out_path}")
 
     return generated
+
+
+def apply_parameters(lines: Sequence[str], param_names: Sequence[str],
+                     object_names: Sequence[str], values: Sequence[str]) -> List[str]:
+    """把一组样本参数应用到 KEY 文本行并返回新列表。"""
+    bindings = _parameter_bindings(param_names, object_names, values)
+    rendered = [
+        _apply_bindings_to_line(line, bindings)
+        for line in lines
+    ]
+    return _apply_document_replacers(rendered, bindings)
+
+
+def write_parameterized_key(template_path: str, output_path: str,
+                            param_names: Sequence[str], object_names: Sequence[str],
+                            values: Sequence[str]) -> str:
+    """基于模板写出一个参数化 KEY，不修改模板文件。"""
+    with open(template_path, "r", encoding="utf-8") as f:
+        lines = f.readlines()
+    rendered = apply_parameters(lines, param_names, object_names, values)
+    os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.writelines(rendered)
+    return output_path
 
 
 def read_key_frames(key_files: Sequence[str]) -> List[List[str]]:
@@ -294,6 +180,8 @@ def read_key_frames(key_files: Sequence[str]) -> List[List[str]]:
 __all__ = [
     "format_deform_float",
     "derive_output_path",
+    "apply_parameters",
+    "write_parameterized_key",
     "generate_key_files",
     "read_key_frames",
 ]

@@ -23,6 +23,13 @@ from .service import (
     run_execution_step,
     run_extract_data,
 )
+from .multi_operation import MultiOperationTask, generate_multi_operation_samples
+from .multi_operation_service import (
+    create_multi_operation_sampling_task,
+    init_multi_operation_task,
+    query_multi_operation_status,
+    run_multi_operation_task,
+)
 
 __all__ = [
     "DeformConfig",
@@ -35,4 +42,10 @@ __all__ = [
     "run_execution_step",
     "run_extract_data",
     "align_result_db_dirs",
+    "MultiOperationTask",
+    "generate_multi_operation_samples",
+    "create_multi_operation_sampling_task",
+    "init_multi_operation_task",
+    "query_multi_operation_status",
+    "run_multi_operation_task",
 ]
