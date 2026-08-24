@@ -51,7 +51,16 @@ def init_multi_operation_task(task_id: str, sample_file: str,
            "state_file": _workflow_state_file(task_id)}
     task_store.init_state(task_id, _KIND, req)
     task_store.update(task_id, req=req)
-    task = MultiOperationTask(task_id, **req)
+    task = MultiOperationTask(
+        task_id=task_id,
+        sample_file=req["sample_file"],
+        operations=req["operations"],
+        work_dir=req["work_dir"],
+        max_parallel_samples=req["max_parallel_samples"],
+        keep_checkpoints=req["keep_checkpoints"],
+        dry_run=req["dry_run"],
+        state_file=req["state_file"],
+    )
     return task_store.update(task_id, stage="initialized", status="running",
                              data={"workflow_state": task.state_file})
 
