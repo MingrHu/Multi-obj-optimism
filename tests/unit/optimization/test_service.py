@@ -85,3 +85,79 @@ def test_run_record_takes_precedence(_fake_optimizers):
     service.run_optimization(optimizer="rl", task_id="opt_pre")
     # 记录里的 optimizer 仍是 nsga2，两次都走 nsga2
     assert _fake_optimizers == ["nsga2", "nsga2"]
+
+
+def test_parameterized_nsga2_uses_model_task(monkeypatch):
+    task_store.init_state(
+        "tr_model",
+        "surrogate",
+        {"vars_out": ["temperature", "grain"], "n_vars": 1},
+    )
+    task_store.update(
+        "tr_model", status="finished", stage="train", data={"model_dir": "isolated/models"}
+    )
+    captured = {}
+
+    def fake_parameterized(request, *, model_dir, output_path):
+        captured.update(request=request, model_dir=model_dir, output_path=output_path)
+        return {
+            "solution_txt_path": output_path,
+            "solution_count": 4,
+            "all_solution_feasible": True,
+        }
+
+    monkeypatch.setattr(service, "run_parameterized_nsga2", fake_parameterized)
+    request = {
+        "model_id": "tr_model",
+        "objective_names": ["grain"],
+        "input_var_count": 1,
+        "all_var_list": ["temperature", "grain"],
+        "decision_var_indices": [0],
+        "decision_var_names": ["temperature"],
+        "decision_bounds": [{"lower": 800.0, "upper": 1000.0}],
+        "constraints": [],
+        "objective_config": [{"name": "grain", "minimize": True}],
+        "optimizer_config": {"pop_size": 10, "n_gen": 2},
+        "output_config": {},
+    }
+
+    response = service.run_optimization(request, optimizer="nsga2", task_id="opt_params")
+
+    assert response["code"] == 0
+    assert captured["model_dir"] == "isolated/models"
+    assert captured["output_path"].endswith("pareto_solutions.tsv")
+    assert response["data"]["constraint_check"]["solution_count"] == 4
+
+
+def test_parameterized_nsga2_rejects_variable_order_mismatch(monkeypatch):
+    task_store.init_state(
+        "tr_order",
+        "surrogate",
+        {"vars_out": ["speed", "grain"], "n_vars": 1},
+    )
+    task_store.update(
+        "tr_order", status="finished", stage="train", data={"model_dir": "models"}
+    )
+    monkeypatch.setattr(
+        service,
+        "run_parameterized_nsga2",
+        lambda *args, **kwargs: pytest.fail("变量校验失败时不应启动优化"),
+    )
+    request = {
+        "model_id": "tr_order",
+        "objective_names": ["grain"],
+        "input_var_count": 1,
+        "all_var_list": ["temperature", "grain"],
+        "decision_var_indices": [0],
+        "decision_var_names": ["temperature"],
+        "decision_bounds": [{"lower": 800.0, "upper": 1000.0}],
+        "constraints": [],
+        "objective_config": [{"name": "grain", "minimize": True}],
+        "optimizer_config": {"pop_size": 10, "n_gen": 2},
+        "output_config": {},
+    }
+
+    response = service.run_optimization(request, optimizer="nsga2", task_id="opt_order")
+
+    assert response["code"] == 1
+    assert "变量顺序不一致" in response["msg"]

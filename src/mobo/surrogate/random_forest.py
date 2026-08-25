@@ -15,7 +15,7 @@ def rf_run(file: str, vars_out: list[str], n_var: int,
 
     for idx in range(len(Y_train_scaled_list)):
         num = 300
-        cur_model = RandomForestRegressor(n_estimators=num, random_state=42)
+        cur_model = RandomForestRegressor(n_estimators=num, random_state=42, n_jobs=-1)
         # 训练模型
         cur_model.fit(X_train_scaled, Y_train_scaled_list[idx])
         pred_scaled = cur_model.predict(X_test_scaled)

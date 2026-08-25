@@ -69,6 +69,10 @@ $env:MOBO_DEF_ARM_CTL = "C:\Program Files\SFTC\DEFORM\v11.0\3D\DEF_ARM_CTL.COM"
 
 ## 快速上手
 
+需要从外部系统按 JSON/字典直接调用代理训练和参数化 NSGA-II 时，使用
+[`mobo.api`](PUBLIC_API.md)。该入口会校验变量映射、边界、目标与约束，并以任务 ID
+隔离模型和优化产物。
+
 ### 1. 训练 / 评估代理模型
 
 ```python
@@ -144,6 +148,10 @@ Multi-obj-optimism/
 src/mobo/
 ├── __init__.py            # 包版本与顶层导出
 │
+├── api/                   # 对外 JSON/字典门面（代理训练 + 参数化 NSGA-II）
+│   ├── validation.py      #   协议解析、字段适配和交叉字段校验
+│   └── facade.py          #   train_surrogate/run_optimization/query_task
+│
 ├── common/                # 基础设施（被各子包复用）
 │   ├── paths.py           #   集中式路径解析：PROJECT_DIR/DATA_DIR/MODELS_DIR/... 与环境变量覆盖
 │   └── logging.py         #   全局 logger（单例 + 统一格式，仅 CLI 入口劫持 stdout）
@@ -157,7 +165,7 @@ src/mobo/
 │   ├── random_forest.py   #   随机森林回归
 │   ├── kriging.py         #   Kriging / 高斯过程回归(GPR)
 │   ├── evaluate.py        #   K 折交叉验证评估与报告
-│   └── service.py         #   预留的对外服务接口（占位）
+│   └── service.py         #   训练任务状态与 model_id 专属模型产物
 │
 ├── optimization/          # 多目标优化
 │   ├── ga/                #   NSGA-II 遗传算法（pymoo）

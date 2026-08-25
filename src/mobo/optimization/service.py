@@ -4,20 +4,22 @@
 接口：优化前落盘请求参数（含代理模型 ``model_id`` 溯源），优化后把响应（输出文件路径、
 任务信息）写入 ``TASKS_DIR/<task_id>/state.json``。
 
-底层 :func:`~mobo.optimization.ga.run.NSGA2_run` 与
-:func:`~mobo.optimization.rl.run.train_and_optimize` 目前为无参演示实现（超参硬编码），
-本层负责状态记录与结果落盘，不改动其函数体；参数化优化留待协议进一步细化。
+历史 :func:`~mobo.optimization.ga.run.NSGA2_run` 与
+:func:`~mobo.optimization.rl.run.train_and_optimize` 保留为无参演示实现。协议请求完整时，
+本层改用参数化 NSGA-II 编排器；旧的简化调用仍兼容原演示入口。
 """
 
 from __future__ import annotations
 
 import time
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 from mobo.common import task_store
 from mobo.common.logging import logger
 from mobo.common.paths import DATA_DIR
+from mobo.optimization.ga.parameterized import run_parameterized_nsga2
 from mobo.optimization.ga.run import NSGA2_run
 from mobo.optimization.rl.run import train_and_optimize
 
@@ -25,6 +27,12 @@ _KIND = "optimization"
 
 # 优化续跑所需的参数键（三路解析：记录 > 传入 > 报错）
 _REQUIRED_OPT_KEYS = ("optimizer",)
+
+_PARAMETERIZED_NSGA2_KEYS = (
+    "model_id", "objective_names", "input_var_count", "all_var_list",
+    "decision_var_indices", "decision_var_names", "decision_bounds",
+    "constraints", "objective_config", "optimizer_config", "output_config",
+)
 
 
 def _new_task_id() -> str:
@@ -59,7 +67,36 @@ def run_optimization(
 
     try:
         started = time.time()
-        if optimizer == "nsga2":
+        constraint_check = None
+        if optimizer == "nsga2" and all(key in resolved for key in _PARAMETERIZED_NSGA2_KEYS):
+            model_id = resolved["model_id"]
+            model_state = task_store.load(model_id)
+            if model_state is None or model_state.get("kind") != "surrogate":
+                raise ValueError(f"代理模型任务不存在：{model_id}")
+            if model_state.get("status") != "finished":
+                raise ValueError(f"代理模型任务尚未完成：{model_id}")
+            training_request = model_state.get("req") or {}
+            if training_request.get("vars_out") != resolved["all_var_list"]:
+                raise ValueError("all_var_list 与 model_id 训练时记录的变量顺序不一致")
+            if training_request.get("n_vars") != resolved["input_var_count"]:
+                raise ValueError("input_var_count 与 model_id 训练时记录不一致")
+            model_dir = (model_state.get("data") or {}).get("model_dir")
+            if not model_dir:
+                raise ValueError(f"代理模型任务缺少 model_dir：{model_id}")
+
+            configured_path = resolved["output_config"].get("pareto_txt_path")
+            default_path = str(Path(task_store.state_path(task_id)).parent / "pareto_solutions.tsv")
+            result = run_parameterized_nsga2(
+                resolved,
+                model_dir=model_dir,
+                output_path=configured_path or default_path,
+            )
+            file_resource = {"solution_txt_path": result["solution_txt_path"]}
+            constraint_check = {
+                "all_solution_feasible": result["all_solution_feasible"],
+                "solution_count": result["solution_count"],
+            }
+        elif optimizer == "nsga2":
             NSGA2_run()
             file_resource = {
                 "solution_txt_path": str(DATA_DIR / "pareto_solutions.txt"),
@@ -73,10 +110,19 @@ def run_optimization(
         cost = round(time.time() - started, 2)
 
         data = {
-            "task_info": {"model_id": resolved.get("model_id"), "optimizer": optimizer,
-                          "run_time_sec": cost},
+            "task_info": {
+                "model_id": resolved.get("model_id"),
+                "optimizer": optimizer,
+                "decision_var_names": resolved.get("decision_var_names"),
+                "objective_names": resolved.get("objective_names"),
+                "total_generation": (resolved.get("optimizer_config") or {}).get("n_gen"),
+                "pop_size": (resolved.get("optimizer_config") or {}).get("pop_size"),
+                "run_time_sec": cost,
+            },
             "file_resource": file_resource,
         }
+        if constraint_check is not None:
+            data["constraint_check"] = constraint_check
         task_store.update(task_id, stage="optimize", status="finished", data=data)
         return {"code": 0, "msg": "多目标优化计算完成", "task_id": task_id, "data": data}
     except Exception as exc:

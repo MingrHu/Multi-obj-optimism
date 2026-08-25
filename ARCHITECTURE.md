@@ -29,6 +29,9 @@
                          └───────────────────────────┘
 ```
 
+对外系统不直接依赖 CLI 或历史算法类，而是通过 `mobo.api` 的 JSON/字典门面调用
+`surrogate.service` 与 `optimization.service`。详细协议见 `PUBLIC_API.md`。
+
 - **common**：最底层基础设施，被其余所有子包依赖。
 - **surrogate / optimization / extraction / automation**：业务子包。
   - `automation.config.DeformConfig` 复用 `extraction.deform_targets` 的提取函数。
@@ -47,12 +50,14 @@
 | `surrogate` | `interface.py` | `Doe_surrogateModel` 统一训练接口 |
 | `surrogate` | `evaluate.py` | `SurrogateModelEvaluator` K 折交叉验证与报告 |
 | `surrogate` | `service.py` | `train_surrogate`/`query_model_status`：`model_id` 主键，req/resp 落盘 |
+| `api` | `validation.py` / `facade.py` | 优化与代理模型的 JSON 参数校验、字段适配和统一状态查询 |
 | `optimization/ga` | `problem.py` | `SurrogateOptimizationProblem`（pymoo 问题）|
 | `optimization/ga` | `operators.py` | `AdaptiveSBX` 自适应交叉、Pareto 结果读写 |
 | `optimization/ga` | `run.py` | `NSGA2_run` 运行入口 |
 | `optimization/rl` | `env.py` | `ForgingEnv`（Gymnasium 环境）|
 | `optimization/rl` | `run.py` | `train_and_optimize`（PPO）|
-| `optimization` | `service.py` | `run_optimization`/`query_optimization_status`：`opt_` 主键，结果落盘 |
+| `optimization` | `service.py` | `run_optimization`/`query_optimization_status`：`opt_` 主键，参数化 NSGA-II 与结果落盘 |
+| `optimization/ga` | `parameterized.py` | 由协议装配 NSGA-II，输出任务级 TSV 解集；历史 `NSGA2_run` 保持不变 |
 | `extraction` | `base.py` / `registry.py` | 原子能力层类型与注册/分派 |
 | `extraction` | `deform_targets.py` | DEFORM 目标提取原子函数（`_extract*`）|
 | `extraction` | `ring_roundness.py` | 碾环截面圆度纯函数 + `extract_ring_roundness` 适配器 |

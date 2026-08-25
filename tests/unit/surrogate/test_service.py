@@ -29,6 +29,13 @@ class _FakeDoe:
 def _fake_doe(monkeypatch):
     _FakeDoe.calls = []
     monkeypatch.setattr(service, "Doe_surrogateModel", _FakeDoe)
+    def fake_snapshot(model_id, family, target_names):
+        extension = "keras" if family == "DNN" else "pkl"
+        directory = f"task/{model_id}/models"
+        return directory, {
+            name: f"{directory}/{name}_model.{extension}" for name in target_names
+        }
+    monkeypatch.setattr(service, "_snapshot_model_artifacts", fake_snapshot)
 
 
 def test_train_prg_maps_index_and_params():

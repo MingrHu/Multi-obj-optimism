@@ -11,7 +11,9 @@
 from __future__ import annotations
 
 import time
+import shutil
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from mobo.common import task_store
@@ -52,6 +54,33 @@ def _new_model_id() -> str:
 def _to_model_par(family: str, biz_params: Dict[str, Any]) -> List[str]:
     """按各模型约定顺序把 biz_params 转成底层 model_par 字符串列表。"""
     return [str(biz_params[k]) for k in _PARAM_ORDER.get(family, []) if k in biz_params]
+
+
+def _snapshot_model_artifacts(
+    model_id: str,
+    family: str,
+    target_names: List[str],
+) -> tuple[str, Dict[str, str]]:
+    """把共享模型族目录中的本次训练产物复制到 model_id 专属目录。"""
+    source_dir = model_family_dir(family)
+    destination_dir = Path(task_store.state_path(model_id)).parent / "models"
+    destination_dir.mkdir(parents=True, exist_ok=True)
+    extension = "keras" if family == "DNN" else "pkl"
+    model_paths: Dict[str, str] = {}
+
+    for target_name in target_names:
+        filenames = [
+            f"{target_name}_model.{extension}",
+            f"{target_name}_scalers.pkl",
+        ]
+        for filename in filenames:
+            source = source_dir / filename
+            if not source.is_file():
+                raise FileNotFoundError(f"训练完成但未找到模型产物：{source}")
+            shutil.copy2(source, destination_dir / filename)
+        model_paths[target_name] = str(destination_dir / filenames[0])
+
+    return str(destination_dir), model_paths
 
 
 def train_surrogate(
@@ -99,10 +128,10 @@ def train_surrogate(
         Doe_surrogateModel(data_file, vars_out, n_vars).train_save_model(which_model, model_par)
         cost = round(time.time() - started, 2)
 
-        ext = "keras" if family == "DNN" else "pkl"
         target_names = vars_out[n_vars:]
-        model_dir = str(model_family_dir(family))
-        model_paths = {name: f"{model_dir}/{name}_model.{ext}" for name in target_names}
+        model_dir, model_paths = _snapshot_model_artifacts(
+            model_id, family, target_names
+        )
 
         data = {
             "model_index": model_index, "model_family": family,
