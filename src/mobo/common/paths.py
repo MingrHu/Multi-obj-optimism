@@ -55,6 +55,7 @@ MODELS_DIR = DATA_DIR / "models"
 TEST_DIR = DATA_DIR / "TEST"
 KEY_FILE_DIR = DATA_DIR / "keyfile"
 TASKS_DIR = DATA_DIR / "tasks"
+DOE_TASKS_DIR = DATA_DIR / "doe_tasks"
 AUTO_DIR = DATA_DIR / "AUTO"
 AUTO_SINGLE_DIR = AUTO_DIR / "single"
 AUTO_MULTI_DIR = AUTO_DIR / "mult"
@@ -87,6 +88,7 @@ __all__ = [
     "TEST_DIR",
     "KEY_FILE_DIR",
     "TASKS_DIR",
+    "DOE_TASKS_DIR",
     "AUTO_DIR",
     "AUTO_SINGLE_DIR",
     "AUTO_MULTI_DIR",

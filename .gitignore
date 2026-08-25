@@ -61,6 +61,7 @@ data/AUTO
 data/TEST/
 data/keyfile
 data/tasks/
+data/doe_tasks/
 AUTO_OPERATION_LOG.txt
 
 # 日志与测试/覆盖率产物

@@ -11,6 +11,8 @@ Python 工具包，覆盖从数据生成到多目标寻优的完整链路：
   （DEFORM 应力/载荷/晶粒、碾环内外圈圆度），可注册、可回退。
 - **DEFORM 自动化**（`mobo.automation`）：采样 → KEY/DB 处理 → 求解调度 → 结果提取的
   流水线（依赖 Windows 平台的 DEFORM）。
+- **DOE HTTP 服务**（`mobo.api`）：通过 Flask 暴露任务、采样、训练、推理和优化接口，
+  并按 DOE ID 隔离运行状态与产物。
 - **命令行入口**（`mobo.cli`）：圆度提取、GA/RL 优化、代理模型评估。
 
 > 详细分层与数据流见 [ARCHITECTURE.md](ARCHITECTURE.md)；开发约定见 [AGENTS.md](AGENTS.md)。
@@ -33,6 +35,9 @@ Set-ExecutionPolicy -Scope Process Bypass
 .\.venv\Scripts\Activate.ps1
 ```
 
+已有虚拟环境失效时使用 `.\setup_env.ps1 -Recreate`，也可通过 `-PythonPath` 指定
+Python 3.11 或 3.12 解释器。
+
 Linux / macOS（不能真实调用 DEFORM，可运行其余功能）：
 
 ```bash
@@ -53,7 +58,7 @@ pip install -e ".[dev]"
 安装完成后自检：
 
 ```bash
-python -c "import torch, mobo; print(torch.__version__, mobo.__version__)"
+python -c "import flask, requests, torch, mobo; print(torch.__version__, mobo.__version__)"
 ```
 
 > 国内网络可通过 `PIP_INDEX` 环境变量或 PowerShell 的 `-PipIndex` 参数指定镜像。
@@ -69,9 +74,22 @@ $env:MOBO_DEF_ARM_CTL = "C:\Program Files\SFTC\DEFORM\v11.0\3D\DEF_ARM_CTL.COM"
 
 ## 快速上手
 
-需要从外部系统按 JSON/字典直接调用代理训练和参数化 NSGA-II 时，使用
-[`mobo.api`](PUBLIC_API.md)。该入口会校验变量映射、边界、目标与约束，并以任务 ID
+需要从外部系统通过 HTTP 调用 DOE 采样、代理训练/评价、推理与优化时，使用
+[`mobo.api`](DOE_HTTP_API.md)。该入口通过 Flask 暴露 DOE HTTP 服务，并以 DOE ID
 隔离模型和优化产物。
+
+启动后端并运行完整训练、推理和 NSGA-II 优化 Demo：
+
+```powershell
+# 终端一
+mobo-api
+
+# 终端二
+python -m mobo.api.demo
+```
+
+详细部署、健康检查、端口配置和故障排查见
+[API 后端启动文档](src/mobo/api/BACKEND_STARTUP.md)。
 
 ### 1. 训练 / 评估代理模型
 
@@ -137,6 +155,7 @@ Multi-obj-optimism/
 ├── requirements-dev.txt / requirements-gui.txt # 开发测试与可选 GUI 锁定依赖
 ├── setup_env.ps1      # Windows 一键环境安装脚本
 ├── setup_env.sh       # 一键环境安装脚本（建 venv + CPU 版 torch + 本包）
+├── DOE_HTTP_API.md    # DOE HTTP 接口、请求字段和响应格式
 ├── README.md          # 本文件：总览、安装、上手、结构说明
 ├── ARCHITECTURE.md    # 分层架构、模块职责表与数据流
 └── AGENTS.md          # AI 代理协作的硬约束与开发约定
@@ -148,9 +167,14 @@ Multi-obj-optimism/
 src/mobo/
 ├── __init__.py            # 包版本与顶层导出
 │
-├── api/                   # 对外 JSON/字典门面（代理训练 + 参数化 NSGA-II）
-│   ├── validation.py      #   协议解析、字段适配和交叉字段校验
-│   └── facade.py          #   train_surrogate/run_optimization/query_task
+├── api/                   # Flask DOE HTTP 服务
+│   ├── app.py             #   应用工厂与 mobo-api 启动入口
+│   ├── handler.py         #   HTTP 路由、请求解析与统一响应
+│   ├── service.py         #   采样、数据集、训练、推理和优化处理层
+│   ├── store.py           #   DOE 独立目录与 JSON 状态持久化
+│   ├── runtime.py         #   后台训练和优化任务控制
+│   ├── demo.py            #   完整 HTTP 优化流程 Demo
+│   └── BACKEND_STARTUP.md #   后端部署、启动、健康检查和 Demo 操作
 │
 ├── common/                # 基础设施（被各子包复用）
 │   ├── paths.py           #   集中式路径解析：PROJECT_DIR/DATA_DIR/MODELS_DIR/... 与环境变量覆盖
@@ -217,11 +241,14 @@ tests/
 
 ```
 data/
+├── doe_tasks/         # HTTP 服务 DOE 运行状态及样本、模型和优化产物
+├── tasks/             # 底层代理训练、优化和自动化任务状态
 ├── models/            # 训练好的代理模型（GA/RL 运行时依赖）
 │   ├── PRG/           #   多项式模型：<target>_model.pkl + <target>_scalers.pkl
 │   └── DNN/           #   DNN 模型：<target>_model.keras + <target>_scalers.pkl
+├── AUTO/              # DEFORM 自动化样本、KEY、DB 与结果数据
 ├── TEST/              # 示例数据集 simulated.txt 与评估报告
-└── KEY_FILE/          # DEFORM KEY 文件（圆度提取用），如 RINGROLL.KEY
+└── keyfile/           # DEFORM KEY 文件（圆度提取用）
 ```
 
 自定义路径可用环境变量覆盖：`MOBO_PROJECT_DIR`、`MOBO_DATA_DIR`。

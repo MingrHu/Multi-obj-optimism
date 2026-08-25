@@ -14,6 +14,7 @@
 # 用法：
 #   bash setup_env.sh              # 安装核心 + 开发依赖
 #   bash setup_env.sh --with-gui   # 额外安装 GUI 依赖
+#   bash setup_env.sh --recreate   # 删除并重建失效的 .venv
 # =============================================================================
 set -euo pipefail
 
@@ -27,9 +28,11 @@ TORCH_CPU_INDEX="https://download.pytorch.org/whl/cpu"
 PIP_INDEX="${PIP_INDEX:-}"
 
 WITH_GUI=0
+RECREATE=0
 for arg in "$@"; do
     case "$arg" in
         --with-gui) WITH_GUI=1 ;;
+        --recreate) RECREATE=1 ;;
         *) echo "未知参数：$arg"; exit 1 ;;
     esac
 done
@@ -51,11 +54,23 @@ echo "==> 使用 $($PYTHON --version)"
 "$PYTHON" -c "import sys; assert (3, 11) <= sys.version_info[:2] < (3, 13), '需要 Python 3.11/3.12'"
 
 # ---- 2. 创建虚拟环境 ----
+if [ "$RECREATE" -eq 1 ] && [ -d "$VENV_DIR" ]; then
+    if [ "$VENV_DIR" != "$SCRIPT_DIR/.venv" ]; then
+        echo "错误：拒绝删除非预期虚拟环境目录 $VENV_DIR"
+        exit 1
+    fi
+    echo "==> 删除旧虚拟环境 $VENV_DIR"
+    rm -rf -- "$VENV_DIR"
+fi
 if [ ! -d "$VENV_DIR" ]; then
     echo "==> 创建虚拟环境 $VENV_DIR"
     "$PYTHON" -m venv "$VENV_DIR"
 else
     echo "==> 虚拟环境 $VENV_DIR 已存在，复用"
+fi
+if [ ! -x "$VENV_DIR/bin/python" ]; then
+    echo "错误：现有虚拟环境不可用，请重新运行 bash setup_env.sh --recreate"
+    exit 1
 fi
 # shellcheck disable=SC1091
 source "$VENV_DIR/bin/activate"
@@ -88,8 +103,10 @@ fi
 # ---- 7. 自检 ----
 echo "==> 自检导入"
 python -m pip check
-python -c "import numpy, pandas, scipy, sklearn, matplotlib, keras, tensorflow, pymoo, gymnasium, stable_baselines3, pyDOE, torch, mobo; print('torch', torch.__version__); print('mobo', mobo.__version__)"
+python -c "from importlib.metadata import version; import flask, requests, numpy, pandas, scipy, sklearn, matplotlib, keras, tensorflow, pymoo, gymnasium, stable_baselines3, pyDOE, torch, mobo; print('flask', version('flask')); print('torch', torch.__version__); print('mobo', mobo.__version__)"
 
 echo ""
 echo "✅ 环境安装完成。激活方式：source $VENV_DIR/bin/activate"
 echo "   运行测试：pytest -m 'not slow'"
+echo "   API启动：mobo-api"
+echo "   完整演示：python -m mobo.api.demo"

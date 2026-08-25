@@ -29,8 +29,10 @@
                          └───────────────────────────┘
 ```
 
-对外系统不直接依赖 CLI 或历史算法类，而是通过 `mobo.api` 的 JSON/字典门面调用
-`surrogate.service` 与 `optimization.service`。详细协议见 `PUBLIC_API.md`。
+对外系统不直接依赖 CLI 或历史算法类，而是通过 `mobo.api` 的 Flask HTTP 服务调用
+DOE 聚合服务。路由层位于 `api.handler`，实际处理层位于 `api.service`，每个 DOE 的
+样本、模型、训练与优化信息统一落盘到 `data/doe_tasks/<id>`。详细协议见
+`DOE_HTTP_API.md`。
 
 - **common**：最底层基础设施，被其余所有子包依赖。
 - **surrogate / optimization / extraction / automation**：业务子包。
@@ -42,7 +44,7 @@
 
 | 子包 | 模块 | 职责 |
 |---|---|---|
-| `common` | `paths.py` | 集中式路径解析（包括 `AUTO_SINGLE_DIR/AUTO_MULTI_DIR`）+ 环境变量覆盖 |
+| `common` | `paths.py` | 集中式路径解析（包括 `DOE_TASKS_DIR/AUTO_SINGLE_DIR/AUTO_MULTI_DIR`）+ 环境变量覆盖 |
 | `common` | `logging.py` | `GlobalLogger` 单例；显式 stdout 重定向 |
 | `common` | `task_store.py` | 任务状态持久化（`data/tasks/<id>/state.json`），三流程共用；`history` 完整记录阶段转移（只追加不覆盖），`resolve_req` 三路解析续跑参数（记录 > 传入 > 报错） |
 | `surrogate` | `common.py` | 数据加载/划分/标准化、指标、`save_model`、`Time`、DNN 构建 |
@@ -50,7 +52,8 @@
 | `surrogate` | `interface.py` | `Doe_surrogateModel` 统一训练接口 |
 | `surrogate` | `evaluate.py` | `SurrogateModelEvaluator` K 折交叉验证与报告 |
 | `surrogate` | `service.py` | `train_surrogate`/`query_model_status`：`model_id` 主键，req/resp 落盘 |
-| `api` | `validation.py` / `facade.py` | 优化与代理模型的 JSON 参数校验、字段适配和统一状态查询 |
+| `api` | `app.py` / `handler.py` / `service.py` | Flask 应用、HTTP 路由及 DOE 聚合处理层 |
+| `api` | `store.py` / `runtime.py` | DOE 独立目录持久化与后台任务中止控制 |
 | `optimization/ga` | `problem.py` | `SurrogateOptimizationProblem`（pymoo 问题）|
 | `optimization/ga` | `operators.py` | `AdaptiveSBX` 自适应交叉、Pareto 结果读写 |
 | `optimization/ga` | `run.py` | `NSGA2_run` 运行入口 |
@@ -150,6 +153,9 @@ TC4 碾环多工步任务由 `task_collection.TC4_RING_MULTI_TASK_1` 完整定�
   `process_info.json` 记录逐 DB 求解进度；启用增量数据集后，
   `incremental_dataset.json` 记录逐样本提取状态与数据行。`AUTO` 只保存样本、DB、KEY
   和结果数据。
+- HTTP 层以 `data/doe_tasks/<doe_id>/doe.json` 作为聚合状态入口，并在同一 DOE 目录下
+  隔离 `samples/models/training/optimization` 产物；底层代理训练和优化仍复用
+  `data/tasks/<model_id或optimization_id>` 记录，删除 DOE 时一并清理关联记录。
 
 ## 增量数据集与断点恢复
 

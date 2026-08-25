@@ -1,5 +1,10 @@
 # 接口参数文档
 
+> 本文件保留 Python 内部服务的历史协议和字段背景，不再作为 HTTP 调用依据
+> 当前 Flask 路径、请求字段和响应格式以 [DOE_HTTP_API.md](DOE_HTTP_API.md) 为准
+> 后端安装、启动和完整 Demo 测试见
+> [src/mobo/api/BACKEND_STARTUP.md](src/mobo/api/BACKEND_STARTUP.md)
+>
 > 实现对齐说明（2026-07）：本协议已在仓库落地为三个服务层，均以任务 ID 为主键把
 > 请求/状态/结果持久化到 `data/tasks/<id>/state.json`（见 `mobo.common.task_store`），
 > 从而支持「仅凭 ID 续跑」：
@@ -330,7 +335,7 @@ def TEST_CALL_OPT():
   `biz_params` 按各模型约定顺序转换；训练结果（模型路径/超参/耗时）落盘。
 
 已补充：
-- 稳定对外入口为 `mobo.api`，完整可执行协议与调用示例见 `PUBLIC_API.md`。
+- 稳定对外入口为 `mobo.api` Flask 服务，完整协议与调用示例见 `DOE_HTTP_API.md`。
 - 优化请求中的 `optimizer_config` / `decision_bounds` / `constraints` / `objective_config`
   已透传到新增参数化 NSGA-II 编排器；历史无参 `NSGA2_run` 示例保持不变。
 - 代理模型请求实际还必须提供 `data_file`、`all_var_list`、`input_var_count`。每个
@@ -339,6 +344,6 @@ def TEST_CALL_OPT():
 仍有限制：
 - 历史代理训练函数尚未消费 `model_par`，所以 `mobo.api` 只接受与当前代码一致的固定
   超参数，避免静默忽略自定义值。文档原示例中的 KM/DNN 参数与代码真实固定值不一致，
-  应以 `PUBLIC_API.md` 为准。
+  HTTP 调用应以 `DOE_HTTP_API.md` 为准。
 - 代理模型 resp 的 `metrics`（r2/rmse/mae/mse）需底层训练函数返回后才能落盘，
   当前 `data` 暂不含 metrics。
