@@ -33,6 +33,9 @@ DEF_ARM_CTL = os.environ.get("MOBO_DEF_ARM_CTL", "DEF_ARM_CTL.COM")
 # DEFORM 操作日志路径（集中到 LOGS_DIR）
 _OPERATION_LOG = os.path.join(str(LOGS_DIR), "deform_operation.log")
 
+# DEF_PRE_64 的 DB→KEY 导出不支持同一进程内并发执行。
+_DB_TO_KEY_LOCK = threading.Lock()
+
 
 def _run_pre_with_commands(commands: str) -> str:
     """把命令串写入临时文件，用输入重定向驱动 DEF_PRE_64，并记录输出到日志。
@@ -96,7 +99,8 @@ def db_to_key(db_path: str, key_path: str, step: str = "") -> None:
     :param step: 导出的步数（需准确，否则 DEFORM 报错）
     """
     commands = f"E\n2\n2\n{db_path}\n{step}\nE\nE\n8\n{key_path}\nE\nY\n"
-    _run_pre_with_commands(commands)
+    with _DB_TO_KEY_LOCK:
+        _run_pre_with_commands(commands)
 
 
 def query_db_steps(db_path: str) -> List[int]:
@@ -122,6 +126,11 @@ def solve_db_sync(db_path: str) -> None:
     """同步求解单个 DB，并以进程返回码和 LOG 的 NORMAL STOP 判定成功。"""
     work_dir = os.path.dirname(os.path.abspath(db_path))
     stem = os.path.splitext(os.path.basename(db_path))[0]
+    for name in ("FOR003", "FOR003.LOCK"):
+        residue = os.path.join(work_dir, name)
+        if os.path.exists(residue):
+            os.remove(residue)
+            logger.info(f"已清理 DEFORM 异常退出残留文件: {residue}")
     process = subprocess.Popen(
         DEF_ARM_CTL,
         stdin=subprocess.PIPE,

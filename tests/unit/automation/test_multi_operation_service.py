@@ -1,7 +1,7 @@
 from mobo.automation import multi_operation_service as service
 
 
-def test_init_does_not_pass_service_options_to_task(monkeypatch, tmp_path):
+def test_init_does_not_pass_incremental_option_to_task(monkeypatch, tmp_path):
     captured = {}
 
     class FakeTask:
@@ -23,10 +23,8 @@ def test_init_does_not_pass_service_options_to_task(monkeypatch, tmp_path):
     result = service.init_multi_operation_task(
         "multi", str(tmp_path / "samples.txt"), [{"name": "op"}],
         str(tmp_path / "runs"), incremental=True,
-        incremental_result_dir=str(tmp_path / "results"),
     )
 
     assert result["stage"] == "initialized"
     assert result["data"]["key_file_count"] == 2
     assert "incremental" not in captured
-    assert "incremental_result_dir" not in captured

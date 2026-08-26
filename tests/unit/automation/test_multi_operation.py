@@ -138,6 +138,7 @@ def test_prepare_parameterized_keys_keeps_fixed_stage_and_expands_shared_value(t
         "prepare", str(samples), operations, str(tmp_path / "runs"), dry_run=True
     )
     generated = [Path(path) for path in task.prepare_parameterized_keys()]
+    assert [path.name for path in generated] == ["1_parameterized.KEY", "2_parameterized.KEY"]
     assert generated[0].read_bytes() == first.read_bytes()
     text = generated[1].read_text(encoding="utf-8")
     assert "REFTMP 1 8.8000000000E+002" in text
@@ -171,7 +172,7 @@ def test_prepare_initial_db_reuses_existing_keys_and_db(tmp_path, monkeypatch):
         "multi", str(samples), operations, str(tmp_path / "runs"), dry_run=True
     )
     task.prepare_parameterized_keys()
-    db_path = tmp_path / "runs" / "0" / "result.DB"
+    db_path = tmp_path / "runs" / "0" / "op1" / "result.DB"
     db_path.touch()
     monkeypatch.setattr(
         task, "prepare_parameterized_keys",
@@ -191,6 +192,7 @@ def test_dry_run_completes_and_rebuild_skips_completed_operations(tmp_path):
     assert result["status"] == "completed"
     assert result["total"] == 1
     assert result["completed"] == 1
+    assert result["remaining"] == 0
     assert result["running"] == 0
     assert result["failed"] == 0
     assert result["pending"] == 0
@@ -200,6 +202,15 @@ def test_dry_run_completes_and_rebuild_skips_completed_operations(tmp_path):
     text = transition.read_text(encoding="utf-8")
     assert text.index("OBJPOS") < text.index("object1_control.KEY")
     assert "DIEGEO 1" not in text
+    for operation_index in (1, 2):
+        operation_dir = work_dir / "0" / f"op{operation_index}"
+        assert (operation_dir / "result.DB").exists()
+        assert (operation_dir / "terminal.KEY").exists()
+        assert (operation_dir / "checkpoint.DB").exists()
+        assert not (operation_dir / "operation.KEY").exists()
+    assert not (work_dir / "0" / "result.DB").exists()
+    assert not (work_dir / "0" / "terminal_1.KEY").exists()
+    assert not (work_dir / "0" / "checkpoint_1.DB").exists()
 
     rebuilt = MultiOperationTask("multi", str(samples), operations, str(work_dir), dry_run=True)
     assert rebuilt.run()["status"] == "completed"
@@ -220,11 +231,11 @@ def test_resume_reprepares_solving_operation_when_result_db_is_missing(tmp_path)
     })
     task._save()
 
-    assert not (work_dir / "0" / "result.DB").exists()
+    assert not (work_dir / "0" / "op1" / "result.DB").exists()
     result = task.run()
 
     assert result["status"] == "completed"
-    assert (work_dir / "0" / "result.DB").exists()
+    assert (work_dir / "0" / "op1" / "result.DB").exists()
     assert result["samples"]["0"]["operations"]["1"]["attempts"] == 1
 
 

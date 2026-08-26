@@ -15,6 +15,8 @@ from typing import Any, Callable, Dict, List, Sequence
 
 import pandas as pd
 
+from mobo.common.logging import logger
+
 from .keyfile import apply_parameters, write_parameterized_key
 from .sampling import generate_full_factorial, generate_lhs, save_samples
 from .solver import db_to_key, key_to_db, run_key_actions, solve_db_sync
@@ -198,7 +200,8 @@ def _atomic_json(path: str, value: Dict[str, Any]) -> None:
 class MultiOperationTask:
     """DEFORM 多工步连续换模批处理任务。
 
-    同一个样本的各工步共用一个结果 DB 并按顺序执行；不同样本之间可并行。
+    同一个样本的各工步按顺序执行，前一工步 DB 会复制到下一工步目录以继承历史场；
+    不同样本之间可并行。每个工步的 KEY、DB、日志和检查点集中在对应 ``op<n>`` 目录。
     每个工步完成后保存终态 KEY 和可选的 DB 检查点，任务状态按样本、工步和
     ``preparing/solving/completed`` 阶段原子落盘，进程中断后可据此继续运行。
 
@@ -209,7 +212,7 @@ class MultiOperationTask:
         ``position_offset``
     :param work_dir: 运行产物根目录；每个样本使用 ``<work_dir>/<sample_index>/``
     :param max_parallel_samples: 最大并行样本数；同一样本内部的工步仍然串行
-    :param keep_checkpoints: 是否在每个工步完成后保存 ``checkpoint_<n>.DB``
+    :param keep_checkpoints: 是否在每个工步目录保存 ``checkpoint.DB``
     :param dry_run: 为 True 时不调用 DEFORM，只生成文件并推进状态，用于测试
     :param state_file: 逐样本、逐工步恢复状态文件；未指定时保存到工作目录
     :param on_sample_completed: 单个样本全部工步完成后的可选回调，参数为样本序号；
@@ -272,6 +275,7 @@ class MultiOperationTask:
         statuses = [item.get("status", "pending") for item in state["samples"].values()]
         state["total"] = len(statuses)
         state["completed"] = statuses.count("completed")
+        state["remaining"] = state["total"] - state["completed"]
         state["running"] = statuses.count("running")
         state["failed"] = statuses.count("failed")
         state["pending"] = statuses.count("pending")
@@ -296,17 +300,30 @@ class MultiOperationTask:
         count = len(_parameters(self.operations[operation_index - 1]))
         return [str(v) for v in self.samples[sample_index][start:start + count]]
 
+    def _operation_dir(self, sample_index: int, operation_index: int) -> str:
+        return os.path.join(self.work_dir, str(sample_index), f"op{operation_index}")
+
+    def _parameterized_key_path(self, sample_index: int, operation_index: int) -> str:
+        template = Path(str(self.operations[operation_index - 1]["template_key"]))
+        return os.path.join(
+            self._operation_dir(sample_index, operation_index),
+            f"{template.stem}_parameterized.KEY",
+        )
+
     def prepare_parameterized_keys(self) -> List[str]:
         """补生成缺失的样本/工步参数化 KEY，已存在的文件直接复用。"""
         generated: List[str] = []
+        created_count = 0
+        reused_count = 0
         for sample_index in range(len(self.samples)):
             sample_dir = os.path.join(self.work_dir, str(sample_index))
             for operation_index, operation in enumerate(self.operations, 1):
                 operation_dir = os.path.join(sample_dir, f"op{operation_index}")
                 os.makedirs(operation_dir, exist_ok=True)
-                output_path = os.path.join(operation_dir, "parameterized_template.KEY")
+                output_path = self._parameterized_key_path(sample_index, operation_index)
                 generated.append(output_path)
                 if os.path.isfile(output_path) and os.path.getsize(output_path) > 0:
+                    reused_count += 1
                     continue
                 params = _parameters(operation)
                 if not params:
@@ -319,21 +336,28 @@ class MultiOperationTask:
                         operation["template_key"], output_path,
                         names, objects, values,
                     )
+                created_count += 1
+                logger.info(
+                    f"样本 {sample_index + 1} 工步 {operation_index} 参数化 KEY 已保存: "
+                    f"{output_path}"
+                )
+        logger.info(
+            f"参数化 KEY 准备完成：总数 {len(generated)}，新生成 {created_count}，"
+            f"复用 {reused_count}"
+        )
         return generated
 
     def parameterized_key_files(self) -> List[str]:
         """返回全部参数化 KEY 的确定性路径，不执行文件生成。"""
         return [
-            os.path.join(
-                self.work_dir, str(sample_index), f"op{operation_index}",
-                "parameterized_template.KEY",
-            )
+            self._parameterized_key_path(sample_index, operation_index)
             for sample_index in range(len(self.samples))
             for operation_index in range(1, len(self.operations) + 1)
         ]
 
     def prepare_initial_db_files(self) -> List[str]:
-        """串行把每个未完成样本的工步1参数化 KEY 转换为初始 DB。"""
+        """串行把每个未完成样本的工步1参数化 KEY 转换为初始 DB"""
+        # 1 生成参数化 KEY
         generated = self.parameterized_key_files()
         if any(not os.path.isfile(path) or os.path.getsize(path) == 0 for path in generated):
             generated = self.prepare_parameterized_keys()
@@ -342,9 +366,13 @@ class MultiOperationTask:
         for sample_index, key_path in enumerate(first_keys):
             sample_state = self.state["samples"][str(sample_index)]
             op_state = sample_state["operations"]["1"]
-            db_path = os.path.join(self.work_dir, str(sample_index), "result.DB")
+            operation_dir = self._operation_dir(sample_index, 1)
+            os.makedirs(operation_dir, exist_ok=True)
+            db_path = os.path.join(operation_dir, "result.DB")
             db_files.append(db_path)
-            if sample_state.get("status") == "completed" or os.path.exists(db_path):
+            if (sample_state.get("status") == "completed"
+                    or op_state.get("status") == "completed"
+                    or os.path.exists(db_path)):
                 continue
             self._set_operation(
                 sample_index, 1, status="pending", phase="preparing", error="",
@@ -371,30 +399,28 @@ class MultiOperationTask:
             self._set_operation(
                 sample_index, 1, status="pending", phase="prepared", error=""
             )
+            logger.info(f"样本 {sample_index + 1} 工步 1 初始 DB 已生成: {db_path}")
         return db_files
 
-    def _prepare_first(self, sample_index: int, operation_dir: str, db_path: str) -> None:
+    def _prepare_first(self, sample_index: int, db_path: str) -> None:
+        """使用工步1参数化 KEY 直接生成初始 DB"""
         operation = self.operations[0]
         params = _parameters(operation)
-        key_path = os.path.join(operation_dir, "operation.KEY")
-        parameterized = os.path.join(operation_dir, "parameterized_template.KEY")
-        if os.path.isfile(key_path):
-            pass
-        elif os.path.exists(parameterized):
-            shutil.copy2(parameterized, key_path)
-        elif params:
-            names, objects, values = _expanded_parameter_values(
-                params, self._values(sample_index, 1)
-            )
-            write_parameterized_key(
-                operation["template_key"], key_path, names, objects, values
-            )
-        else:
-            shutil.copy2(operation["template_key"], key_path)
+        parameterized = self._parameterized_key_path(sample_index, 1)
+        if not os.path.isfile(parameterized) or os.path.getsize(parameterized) == 0:
+            if params:
+                names, objects, values = _expanded_parameter_values(
+                    params, self._values(sample_index, 1)
+                )
+                write_parameterized_key(
+                    operation["template_key"], parameterized, names, objects, values
+                )
+            else:
+                shutil.copy2(operation["template_key"], parameterized)
         if self.dry_run:
             Path(db_path).touch()
         else:
-            key_to_db(key_path, db_path)
+            key_to_db(parameterized, db_path)
 
     def _prepare_transition(self, sample_index: int, operation_index: int,
                             operation_dir: str, db_path: str, previous_terminal: str) -> None:
@@ -403,7 +429,7 @@ class MultiOperationTask:
         params = _parameters(operation)
         values = self._values(sample_index, operation_index)
         names, objects, expanded_values = _expanded_parameter_values(params, values)
-        parameterized = os.path.join(operation_dir, "parameterized_template.KEY")
+        parameterized = self._parameterized_key_path(sample_index, operation_index)
 
         if os.path.exists(parameterized):
             parts = split_operation_key(parameterized, operation_dir)
@@ -457,44 +483,71 @@ class MultiOperationTask:
 
     def _run_sample(self, sample_index: int) -> None:
         """多工步核心处理函数逻辑"""
-        # 样本位置
         sample_dir = os.path.join(self.work_dir, str(sample_index))
         os.makedirs(sample_dir, exist_ok=True)
-        db_path = os.path.join(sample_dir, "result.DB")
         sample_state = self.state["samples"][str(sample_index)]
         sample_state["status"] = "running"
+        # {
+        #   "status": "running",
+        #   "current_operation": 2,
+        #   "operations": {
+        #     "1": {"status": "completed"},
+        #     "2": {"status": "running"},
+        #     "3": {"status": "pending"}
+        #   }
+        # }
         self._save()
+        logger.info(f"样本 {sample_index + 1} 开始运行")
 
-        # 多工步执行 1 2 3
+        # 多工步串行执行
         for operation_index in range(1, len(self.operations) + 1):
             operation = self.operations[operation_index - 1]
             op_state = sample_state["operations"][str(operation_index)]
             # 完成的就跳过
             if op_state["status"] == "completed":
                 continue
+            logger.info(
+                f"样本 {sample_index + 1} 工步 {operation_index}/{len(self.operations)} 开始"
+            )
+            # 一些必要路径初始化
             operation_dir = os.path.join(sample_dir, f"op{operation_index}")
             os.makedirs(operation_dir, exist_ok=True)
-            checkpoint = os.path.join(sample_dir, f"checkpoint_{operation_index}.DB")
-            previous_checkpoint = os.path.join(
-                sample_dir, f"checkpoint_{operation_index - 1}.DB"
-            )
-            previous_terminal = os.path.join(
-                sample_dir, f"terminal_{operation_index - 1}.KEY"
-            )
+            db_path = os.path.join(operation_dir, "result.DB")
+            terminal = os.path.join(operation_dir, "terminal.KEY")
+            checkpoint = os.path.join(operation_dir, "checkpoint.DB")
+
+            # 运行：1-从未开始 2-准备中 3-准备失败 4-不存在DB文件
             try:
-                # 重新运行：1-从未开始 2-准备中 3-准备失败 4-不存在DB文件
                 phase = op_state.get("phase", "pending")
-                if phase in {"pending", "preparing"} or (
-                        phase == "failed" and op_state.get("failed_phase") == "preparing"
-                ) or not os.path.exists(db_path):
+                if phase in {"pending", "preparing"} or (phase == "failed" and op_state.get("failed_phase") == "preparing") or not os.path.exists(db_path):
                     self._set_operation(sample_index, operation_index, status="running",
                                         phase="preparing", error="",
                                         attempts=int(op_state.get("attempts", 0)) + 1)
                     if operation_index == 1:
-                        self._prepare_first(sample_index, operation_dir, db_path)
+                        self._prepare_first(sample_index, db_path)
                     else:
-                        if self.keep_checkpoints and os.path.exists(previous_checkpoint):
-                            shutil.copy2(previous_checkpoint, db_path)
+                        previous_state = sample_state["operations"][str(operation_index - 1)]
+                        previous_dir = self._operation_dir(sample_index, operation_index - 1)
+                        previous_terminal = str(
+                            previous_state.get("terminal_key")
+                            or os.path.join(previous_dir, "terminal.KEY")
+                        )
+                        previous_db_candidates = [
+                            str(previous_state.get("checkpoint") or ""),
+                            str(previous_state.get("db_path") or ""),
+                            os.path.join(previous_dir, "checkpoint.DB"),
+                            os.path.join(previous_dir, "result.DB"),
+                        ]
+                        previous_db = next(
+                            (path for path in previous_db_candidates
+                             if path and os.path.isfile(path)),
+                            "",
+                        )
+                        if not previous_db:
+                            raise FileNotFoundError(
+                                f"工步 {operation_index} 缺少前一工步 DB"
+                            )
+                        shutil.copy2(previous_db, db_path)
                         # 执行换模逻辑 生成新的工步 DB
                         self._prepare_transition(sample_index, operation_index, operation_dir,
                                                  db_path, previous_terminal)
@@ -509,7 +562,6 @@ class MultiOperationTask:
                 if not self.dry_run:
                     solve_db_sync(db_path)
                     # 终态 KEY 文件 用于结果获取以及后续工步换模
-                    terminal = os.path.join(sample_dir, f"terminal_{operation_index}.KEY")
                     db_to_key(db_path, terminal, "")
                     # 下一个工步
                     next_operation = (
@@ -525,7 +577,6 @@ class MultiOperationTask:
                             f"工步 {operation_index} 终态 KEY 缺少工件 GRAIN 状态: {terminal}"
                         )
                 else:
-                    terminal = os.path.join(sample_dir, f"terminal_{operation_index}.KEY")
                     shutil.copy2(self.operations[operation_index - 1]["template_key"], terminal)
                 if self.keep_checkpoints:
                     shutil.copy2(db_path, checkpoint)
@@ -533,32 +584,56 @@ class MultiOperationTask:
                                     phase="completed", completed_at=_now(), error="",
                                     db_path=db_path, terminal_key=terminal,
                                     checkpoint=checkpoint if self.keep_checkpoints else "")
+                logger.info(
+                    f"样本 {sample_index + 1} 工步 {operation_index}/{len(self.operations)} 完成"
+                )
             except Exception as exc:
                 current_phase = sample_state["operations"][str(operation_index)].get("phase")
                 self._set_operation(sample_index, operation_index, status="failed", phase="failed",
                                     failed_phase=current_phase, error=str(exc))
                 sample_state["status"] = "failed"
                 self._save()
+                logger.error(
+                    f"样本 {sample_index + 1} 工步 {operation_index} 失败: {exc}"
+                )
                 raise
+        final_index = len(self.operations)
+        final_state = sample_state["operations"][str(final_index)]
         sample_state["status"] = "completed"
-        sample_state["db_path"] = db_path
-        sample_state["final_key"] = os.path.join(
-            sample_dir, f"terminal_{len(self.operations)}.KEY"
+        sample_state["db_path"] = str(
+            final_state.get("db_path")
+            or os.path.join(self._operation_dir(sample_index, final_index), "result.DB")
+        )
+        sample_state["final_key"] = str(
+            final_state.get("terminal_key")
+            or os.path.join(self._operation_dir(sample_index, final_index), "terminal.KEY")
         )
         self._save()
+        logger.info(
+            f"样本 {sample_index + 1} 全部工步完成；总体进度 "
+            f"{self.state['completed']}/{self.state['total']}，"
+            f"剩余 {self.state['remaining']}"
+        )
+        # 开始回调
         if self.on_sample_completed is not None:
             self.on_sample_completed(sample_index)
 
     def run(self) -> Dict[str, Any]:
-        """运行或续跑全部样本，已完成工步不会重复执行。"""
+        """运行或续跑全部样本，已完成工步不会重复执行"""
+        # 1 准备DB
         self.prepare_initial_db_files()
         self.state["status"] = "running"
         self._save()
-        # 一边计算一边生成
+        logger.info(
+            f"多工步任务开始：总样本 {self.state['total']}，"
+            f"已完成 {self.state['completed']}，待完成 {self.state['remaining']}"
+        )
+        # 2 如果有回调 先调用已完成样本的回调
         if self.on_sample_completed is not None:
             for sample_index in range(len(self.samples)):
                 if self.state["samples"][str(sample_index)]["status"] == "completed":
                     self.on_sample_completed(sample_index)
+        # 3 线程池并行执行未完成样本
         pending = [i for i in range(len(self.samples))
                    if self.state["samples"][str(i)]["status"] != "completed"]
         errors = []
@@ -572,6 +647,10 @@ class MultiOperationTask:
         self.state["status"] = "failed" if errors else "completed"
         self.state["errors"] = errors
         self._save()
+        logger.info(
+            f"多工步任务结束：已完成 {self.state['completed']}/{self.state['total']}，"
+            f"失败 {self.state['failed']}，剩余 {self.state['remaining']}"
+        )
         return self.state
 
     def result_db_files(self) -> List[str]:

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import shutil
 from typing import Any, Dict, Optional, Sequence
 
 from mobo.common import task_store
@@ -39,15 +38,13 @@ def init_multi_operation_task(task_id: str, sample_file: str,
                               max_parallel_samples: int = 24,
                               keep_checkpoints: bool = True,
                               dry_run: bool = False,
-                              incremental: bool = False,
-                              incremental_result_dir: str | None = None) -> Dict[str, Any]:
+                              incremental: bool = False) -> Dict[str, Any]:
     """初始化多工步计算任务；全部续跑参数写入 state.json。"""
     req = {"sample_file": os.path.abspath(sample_file), "operations": list(operations),
            "work_dir": os.path.abspath(work_dir),
            "max_parallel_samples": max_parallel_samples,
            "keep_checkpoints": keep_checkpoints, "dry_run": dry_run,
            "incremental": incremental,
-           "incremental_result_dir": incremental_result_dir,
            "state_file": _workflow_state_file(task_id)}
     task_store.init_state(task_id, _KIND, req)
     task_store.update(task_id, req=req)
@@ -71,10 +68,6 @@ def _rebuild(task_id: str, provided: Optional[Dict[str, Any]] = None) -> MultiOp
     required = ["sample_file", "operations", "work_dir"]
     req = task_store.resolve_req(task_id, _KIND, provided or {}, required)
     state_file = _workflow_state_file(task_id)
-    legacy_state = os.path.join(req["work_dir"], "multi_operation_state.json")
-    if not os.path.exists(state_file) and os.path.exists(legacy_state):
-        os.makedirs(os.path.dirname(state_file), exist_ok=True)
-        shutil.move(legacy_state, state_file)
     if req.get("state_file") != state_file:
         task_store.update(
             task_id,
@@ -93,26 +86,30 @@ def _rebuild(task_id: str, provided: Optional[Dict[str, Any]] = None) -> MultiOp
 
 def run_multi_operation_task(task_id: str, **provided: Any) -> Dict[str, Any]:
     """仅凭 task_id 从磁盘重建并运行或续跑多工步任务。"""
+    # 1 加载任务信息 可断点续跑
     task = _rebuild(task_id, provided)
     state = task_store.load(task_id) or {}
     req = state.get("req") or {}
+
+    # 2 是否在计算完成DB后立马提取数据
     incremental_enabled = bool(req.get("incremental"))
     incremental_state_file = ""
     incremental_output_file = ""
     if incremental_enabled:
         from .task_collection import get_multi_operation_task_definition
 
+        # 2.1 实时写入数据集初始化
         definition = get_multi_operation_task_definition(task_id)
-        result_dir = req.get("incremental_result_dir") or str(definition.workspace / "results")
         incremental_state_file = str(task_dir(task_id) / "incremental_dataset.json")
-        incremental_output_file = os.path.join(
-            result_dir, f"{task_id}_incremental_result.txt"
+        incremental_output_file = str(
+            definition.workspace / "results" / f"{task_id}_incremental_result.txt"
         )
         dataset = IncrementalDataset(
             incremental_state_file,
             incremental_output_file,
         )
 
+        # 2.2 注册样本实时更新回调
         def on_sample_completed(sample_index: int) -> None:
             if dataset.is_completed(sample_index):
                 return
@@ -123,6 +120,8 @@ def run_multi_operation_task(task_id: str, **provided: Any) -> Dict[str, Any]:
                 dataset.mark_failed(sample_index, str(exc))
 
         task.on_sample_completed = on_sample_completed
+
+    # 3 运行或续跑任务
     task_store.update(task_id, stage="solving", status="running")
     result = task.run()
     status = "finished" if result["status"] == "completed" else "failed"

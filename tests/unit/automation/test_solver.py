@@ -4,6 +4,8 @@
 构造与 :class:`DeformSolver` 的并发调度逻辑。
 """
 
+import threading
+import time
 
 import pytest
 
@@ -22,6 +24,33 @@ def test_db_to_key_command_string(monkeypatch):
     monkeypatch.setattr(solver, "_run_pre_with_commands", lambda cmd: captured.setdefault("cmd", cmd))
     solver.db_to_key("in.DB", "out.KEY", "5")
     assert captured["cmd"] == "E\n2\n2\nin.DB\n5\nE\nE\n8\nout.KEY\nE\nY\n"
+
+
+def test_db_to_key_exports_are_serialized(monkeypatch):
+    active = 0
+    max_active = 0
+    counter_lock = threading.Lock()
+
+    def fake_run(_command):
+        nonlocal active, max_active
+        with counter_lock:
+            active += 1
+            max_active = max(max_active, active)
+        time.sleep(0.02)
+        with counter_lock:
+            active -= 1
+
+    monkeypatch.setattr(solver, "_run_pre_with_commands", fake_run)
+    threads = [
+        threading.Thread(target=solver.db_to_key, args=(f"{index}.DB", f"{index}.KEY"))
+        for index in range(8)
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert max_active == 1
 
 
 def test_query_db_steps_parses_actual_saved_steps(monkeypatch):
@@ -77,8 +106,12 @@ def test_solve_db_sync_accepts_deform_normal_end_markers(
     monkeypatch.setattr(solver.subprocess, "Popen", lambda *args, **kwargs: _Process())
     db_path = tmp_path / "sample.DB"
     (tmp_path / "sample.LOG").write_text(normal_marker + "\n", encoding="utf-8")
+    (tmp_path / "FOR003").write_text("residue", encoding="utf-8")
+    (tmp_path / "FOR003.LOCK").write_text("residue", encoding="utf-8")
     solver.solve_db_sync(str(db_path))
     assert written == ["sample\nB\n"]
+    assert not (tmp_path / "FOR003").exists()
+    assert not (tmp_path / "FOR003.LOCK").exists()
 
 
 def test_key_to_db_batch(monkeypatch):

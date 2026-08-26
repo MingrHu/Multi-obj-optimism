@@ -167,7 +167,7 @@ class MultiOperationTaskDefinition:
                 state = task.state["samples"][str(sample_index)]
                 if state.get("status") != "completed":
                     continue
-                key_files = self._completed_key_files(task, sample_index)
+                key_files = self._completed_key_files(task, sample_index) # type: ignore
                 try:
                     targets = self.extract_targets(key_files)
                     stream.write("\t".join(
@@ -213,7 +213,7 @@ class MultiOperationTaskDefinition:
                 raise FileNotFoundError(
                     f"工步 {operation_index} 的全过程目标缺少检查点 DB"
                 )
-            output_dir = Path(terminal).parent / "extracted_steps" / f"op{operation_index}"
+            output_dir = Path(terminal).parent / "extracted_steps"
             result[operation_index] = export_saved_step_keys(
                 checkpoint, str(output_dir)
             )

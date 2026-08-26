@@ -1,5 +1,7 @@
 """TC4 碾环多工步批处理入口。"""
 
+from pathlib import Path
+
 from mobo.automation.multi_operation_service import (
     init_multi_operation_task,
     query_multi_operation_status,
@@ -11,21 +13,44 @@ from mobo.automation.task_collection import TC4_RING_MULTI_TASK_1
 _TASK = TC4_RING_MULTI_TASK_1
 _TASK_ID = _TASK.task_id
 
+# 采样方式只需在这里修改：
+# - "lhs"：随机生成 _LHS_SAMPLE_COUNT 个样本；
+# - "full"：按 _FULL_LEVEL_NUMS 生成全因子样本。
+_SAMPLE_METHOD = "full"
+_LHS_SAMPLE_COUNT = 256
+_FULL_LEVEL_NUMS = (1, 1, 1, 1, 1, 1)
+
 
 def _sample_file() -> str:
-    return str(_TASK.sample_dir / f"{_TASK_ID}-lhs.txt")
+    suffix = "lhs" if _SAMPLE_METHOD == "lhs" else "fullfactorial"
+    return str(_TASK.sample_dir / f"{_TASK_ID}-{suffix}.txt")
+
+
+def _generate_samples() -> str:
+    if _SAMPLE_METHOD == "lhs":
+        return _TASK.generate_samples(method="lhs", n_samples=_LHS_SAMPLE_COUNT)
+    if _SAMPLE_METHOD == "full":
+        return _TASK.generate_samples(method="full", level_nums=_FULL_LEVEL_NUMS)
+    raise ValueError(f"不支持的采样方式: {_SAMPLE_METHOD}")
+
+
+def _ensure_sample_file() -> str:
+    sample_file = _sample_file()
+    if not Path(sample_file).is_file():
+        return _generate_samples()
+    return sample_file
 
 
 def sample_generate_test() -> None:
-    """生成工步 2、3 的联合工艺参数样本。"""
-    print(_TASK.generate_samples(method="lhs", n_samples=256))
+    """按照文件顶部的采样配置重新生成样本。"""
+    print(_generate_samples())
 
 
 def generate_keyfile_test() -> None:
     """初始化任务、恢复状态并预生成全部样本和工步的参数化 KEY。"""
     print(init_multi_operation_task(
         _TASK_ID,
-        _sample_file(),
+        _ensure_sample_file(),
         _TASK.operation_configs(),
         str(_TASK.run_dir),
         max_parallel_samples=24,

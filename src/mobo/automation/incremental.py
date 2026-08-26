@@ -49,16 +49,28 @@ class IncrementalDataset:
         )
 
     def _ensure_state(self) -> None:
-        if os.path.exists(self.state_file):
-            return
-        now = self._now()
-        self._save({
-            "version": 1,
-            "output_file": self.output_file,
-            "created_at": now,
-            "updated_at": now,
-            "samples": {},
-        })
+        if not os.path.exists(self.state_file):
+            now = self._now()
+            self._save({
+                "version": 1,
+                "output_file": self.output_file,
+                "created_at": now,
+                "updated_at": now,
+                "samples": {},
+            })
+        if not os.path.exists(self.output_file):
+            self._rebuild_output()
+
+    def _rebuild_output(self, state: dict[str, Any] | None = None) -> None:
+        """根据状态中已完成的样本，按样本序号原子重建结果文件。"""
+        current = state if state is not None else self._load()
+        completed = (
+            current["samples"][key]
+            for key in sorted(current["samples"], key=int)
+            if current["samples"][key].get("status") == "completed"
+        )
+        content = "".join("\t".join(item["row"]) + "\n" for item in completed)
+        self._atomic_text(self.output_file, content)
 
     def is_completed(self, sample_index: int) -> bool:
         with self._lock:
@@ -102,13 +114,7 @@ class IncrementalDataset:
             }
             state["updated_at"] = self._now()
             self._save(state)
-            completed = (
-                state["samples"][key]
-                for key in sorted(state["samples"], key=int)
-                if state["samples"][key].get("status") == "completed"
-            )
-            content = "".join("\t".join(item["row"]) + "\n" for item in completed)
-            self._atomic_text(self.output_file, content)
+            self._rebuild_output(state)
 
 
 __all__ = ["IncrementalDataset"]

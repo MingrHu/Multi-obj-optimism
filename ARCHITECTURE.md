@@ -148,6 +148,9 @@ TC4 碾环多工步任务由 `task_collection.TC4_RING_MULTI_TASK_1` 完整定�
 - 支持环境变量覆盖：`MOBO_PROJECT_DIR`、`MOBO_DATA_DIR`。
 - 函数改造仅限「默认参数/路径来源」，算法体保持 byte-for-byte 不变。
 - 运行时工作区分为 `data/AUTO/single/<task>` 和 `data/AUTO/mult/<task>`。
+- 多工步样本按工步归档产物：`runs/<sample>/op<n>/` 内集中保存
+  `<模板名>_parameterized.KEY`、`result.DB`、`terminal.KEY`、`checkpoint.DB`、
+  DEFORM 日志及换模 KEY；下一工步从前一工步 DB 副本继续计算。
 - 任务状态集中在 `data/tasks/<task_id>/`：`state.json` 记录任务阶段，多工步的
   `multi_operation_state.json` 记录逐样本/逐工步恢复状态，单工步的
   `process_info.json` 记录逐 DB 求解进度；启用增量数据集后，
@@ -163,7 +166,8 @@ TC4 碾环多工步任务由 `task_collection.TC4_RING_MULTI_TASK_1` 完整定�
   导出各步 KEY 并提取该样本。未显式指定时，结果固定写入
   `<res_txt_path>/<task_id>_incremental_result.txt`。
 - 多工步调用 `init_multi_operation_task(..., incremental=True)` 启用；每个样本的最终
-  工步完成后立即使用各工步终态 KEY 提取该样本。可用 `incremental_result_dir` 指定目录。
+  工步完成后立即使用各工步终态 KEY 提取该样本，结果固定保存到任务工作区的
+  `results` 目录。
 - 检查点以样本序号为主键，重复恢复只覆盖同一行；数据集始终按样本序号排序，并通过
   临时文件加 `os.replace` 原子更新。求解已完成而提取未完成的样本会在续跑时补提取。
 

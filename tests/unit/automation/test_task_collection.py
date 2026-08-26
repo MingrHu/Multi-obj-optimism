@@ -156,7 +156,9 @@ def test_task_prepare_uses_temp_workspace_and_never_calls_solver(monkeypatch, tm
     paths = task.prepare_keys(sample, work_dir=tmp_path / "prepared")
     assert len(paths) == 3
     assert Path(paths[0]).read_bytes() == Path(templates[0]).read_bytes()
-    assert all(Path(path).name == "parameterized_template.KEY" for path in paths)
+    assert [Path(path).name for path in paths] == [
+        "1_parameterized.KEY", "2_parameterized.KEY", "3_parameterized.KEY",
+    ]
     assert Path(paths[0]).parts[-3:-1] == ("0", "op1")
     assert (tmp_path / "tasks" / task.task_id / "multi_operation_state.json").exists()
 

@@ -37,3 +37,16 @@ def test_incremental_dataset_failed_sample_can_resume(tmp_path):
     resumed.commit(4, ["x", "y"])
     assert resumed.is_completed(4)
     assert (tmp_path / "result.txt").read_text(encoding="utf-8") == "x\ty\n"
+
+
+def test_missing_output_is_rebuilt_from_state(tmp_path):
+    state_file = str(tmp_path / "incremental.json")
+    output = tmp_path / "result.txt"
+    dataset = IncrementalDataset(state_file, str(output))
+    dataset.commit(2, ["p2", "y2"])
+    dataset.commit(0, ["p0", "y0"])
+    output.unlink()
+
+    IncrementalDataset(state_file, str(output))
+
+    assert output.read_text(encoding="utf-8") == "p0\ty0\np2\ty2\n"
