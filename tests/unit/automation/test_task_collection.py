@@ -9,6 +9,7 @@ import pytest
 
 import mobo.automation.task_collection as task_collection
 from mobo.automation.task_collection import (
+    GH4169_RING_SINGLE_TASK_1,
     RING_7050_SINGLE_TASK_1,
     TC4_RING_MULTI_TASK_1,
     get_multi_operation_task_definition,
@@ -74,14 +75,14 @@ def test_tc4_task_is_registered_and_has_fixed_first_operation():
     assert load_target.in_progress is True
 
 
-def test_7050_single_task_is_registered_with_requested_design_space():
-    task = get_single_operation_task_definition("7050-ring-single-task-1")
-    assert task is RING_7050_SINGLE_TASK_1
-    assert task.workspace.parts[-2:] == ("single", "7050_ring_single_task_1")
+def test_gh4169_single_task_is_registered_with_requested_design_space():
+    task = get_single_operation_task_definition("gh4169-ring-single-task-1")
+    assert task is GH4169_RING_SINGLE_TASK_1
+    assert task.workspace.parts[-2:] == ("single", "gh4169_ring_single_task_1")
     assert [(item["name"], item["range"]) for item in task.parameters] == [
-        ("workpiece_temperature", [320.0, 450.0]),
-        ("ring_die_temperature", [150.0, 250.0]),
-        ("pressure_roll_constant_speed", [0.2, 2.0]),
+        ("workpiece_temperature", [1100.0, 1150.0]),
+        ("ring_die_temperature", [250.0, 350.0]),
+        ("pressure_roll_constant_speed", [0.1, 2.5]),
     ]
     assert [target.output_name for target in task.targets] == [
         "roundness_inner", "roundness_outer", "die_load_y",
@@ -98,15 +99,25 @@ def test_7050_single_task_is_registered_with_requested_design_space():
     assert task.targets[-1].verified is False
 
 
+def test_7050_single_task_remains_registered():
+    task = get_single_operation_task_definition("7050-ring-single-task-1")
+    assert task is RING_7050_SINGLE_TASK_1
+    assert [(item["name"], item["range"]) for item in task.parameters] == [
+        ("workpiece_temperature", [320.0, 450.0]),
+        ("ring_die_temperature", [150.0, 250.0]),
+        ("pressure_roll_constant_speed", [0.2, 2.0]),
+    ]
+
+
 def test_typed_task_getters_reject_the_wrong_task_kind():
     assert get_multi_operation_task_definition(
         "tc4-ring-multi-task-1"
     ) is TC4_RING_MULTI_TASK_1
     assert get_single_operation_task_definition(
-        "7050-ring-single-task-1"
-    ) is RING_7050_SINGLE_TASK_1
+        "gh4169-ring-single-task-1"
+    ) is GH4169_RING_SINGLE_TASK_1
     with pytest.raises(TypeError, match="不是多工步任务"):
-        get_multi_operation_task_definition("7050-ring-single-task-1")
+        get_multi_operation_task_definition("gh4169-ring-single-task-1")
     with pytest.raises(TypeError, match="不是单工步任务"):
         get_single_operation_task_definition("tc4-ring-multi-task-1")
 
@@ -135,6 +146,37 @@ def test_real_7050_template_has_grain_and_generates_parameterized_key(tmp_path):
     assert (
         "MOVCTL       3       1       0    0.0000000000E+000    "
         "1.0000000000E+000    0.0000000000E+000    2.0000000000E-001"
+    ) in rendered
+
+
+@pytest.mark.integration
+def test_real_gh4169_template_has_grain_and_generates_parameterized_key(tmp_path):
+    task = GH4169_RING_SINGLE_TASK_1
+    task.validate()
+    template = Path(task.template_key)
+    text = template.read_text(encoding="utf-8")
+    assert "TRANS        1       1       0       0       1" in text
+    assert "2.7500000000E-003" in text
+    assert "GRAIN        1   14400      16" in text
+    grain_start = text.index("GRAIN        1   14400      16")
+    assert text[grain_start:].splitlines()[1].split()[2:4] == [
+        "5.0000000000E+001", "5.0000000000E+001",
+    ]
+    assert text[grain_start:].splitlines()[1 + (14400 - 1) * 4].split()[2:4] == [
+        "5.0000000000E+001", "5.0000000000E+001",
+    ]
+
+    sample = tmp_path / "sample.txt"
+    sample.write_text("1100\t250\t0.1\n", encoding="utf-8")
+    generated = Path(task.prepare_keys(sample, workspace=tmp_path / "run")[0])
+    rendered = generated.read_text(encoding="utf-8")
+    assert "REFTMP       1    1.1000000000E+003" in rendered
+    assert "NDTMP        1       0    1.1000000000E+003" in rendered
+    for object_id in (2, 3, 4, 5):
+        assert f"REFTMP       {object_id}    2.5000000000E+002" in rendered
+    assert (
+        "MOVCTL       3       1       0    0.0000000000E+000    "
+        "1.0000000000E+000    0.0000000000E+000    1.0000000000E-001"
     ) in rendered
 
 

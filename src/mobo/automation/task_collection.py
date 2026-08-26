@@ -413,9 +413,40 @@ RING_7050_SINGLE_TASK_1 = SingleOperationTaskDefinition(
 )
 
 
+_GH4169_TEMPLATE_DIR = KEY_FILE_DIR / "gh4169_ring_single_task_1"
+
+# 模板的晶粒开关、GRNDAT 模型和 50 μm 初始晶粒状态取自 RINGROLL.KEY。
+GH4169_RING_SINGLE_TASK_1 = SingleOperationTaskDefinition(
+    task_id="gh4169-ring-single-task-1",
+    name="GH4169碾环单工步任务1",
+    workspace=AUTO_SINGLE_DIR / "gh4169_ring_single_task_1",
+    template_key=str(_GH4169_TEMPLATE_DIR / "GH4169.KEY"),
+    parameters=(
+        {"name": "workpiece_temperature", "object": "workpiece", "range": [1100.0, 1150.0]},
+        {"name": "ring_die_temperature", "object": "ring_dies", "range": [250.0, 350.0]},
+        {"name": "pressure_roll_constant_speed", "object": "pressure_roll", "range": [0.1, 2.5]},
+    ),
+    targets=(
+        TargetDefinition("roundness_inner", "roundness_inner", "workpiece", (1,),
+                         workpiece_type="ring", description="最终内圈圆度"),
+        TargetDefinition("roundness_outer", "roundness_outer", "workpiece", (1,),
+                         workpiece_type="ring", description="最终外圈圆度"),
+        TargetDefinition("die_load_y", "load", "driving_roll", (1,),
+                         select_component=1, in_progress=True, description="驱动辊Y向最大绝对载荷"),
+        TargetDefinition("effective_strain_std", "strain_std", "workpiece", (1,),
+                         description="最终单元等效应变标准差"),
+        TargetDefinition("average_grain_size", "grain_morph", "workpiece", (1,),
+                         select_component=1, description="最终平均晶粒尺寸"),
+        TargetDefinition("material_fill", "material_fill", "workpiece", (1,),
+                         workpiece_type="ring", description="材料填充性（待定义）", verified=False),
+    ),
+)
+
+
 TASK_COLLECTION: Dict[str, MultiOperationTaskDefinition | SingleOperationTaskDefinition] = {
     TC4_RING_MULTI_TASK_1.task_id: TC4_RING_MULTI_TASK_1,
     RING_7050_SINGLE_TASK_1.task_id: RING_7050_SINGLE_TASK_1,
+    GH4169_RING_SINGLE_TASK_1.task_id: GH4169_RING_SINGLE_TASK_1,
 }
 
 
@@ -449,6 +480,7 @@ __all__ = [
     "TASK_COLLECTION",
     "TC4_RING_MULTI_TASK_1",
     "RING_7050_SINGLE_TASK_1",
+    "GH4169_RING_SINGLE_TASK_1",
     "get_task_definition",
     "get_multi_operation_task_definition",
     "get_single_operation_task_definition",

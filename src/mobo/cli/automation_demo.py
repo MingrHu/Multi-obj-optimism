@@ -1,7 +1,7 @@
-"""7050 碾环单工步任务演示入口。
+"""GH4169 碾环单工步任务演示入口。
 
 任务的参数范围、模板 KEY、参数/目标表和工作目录均由
-``RING_7050_SINGLE_TASK_1`` 统一提供。初始化后，求解、提取和状态查询
+``GH4169_RING_SINGLE_TASK_1`` 统一提供。初始化后，求解、提取和状态查询
 都可以仅凭任务 ID 跨进程续跑。
 """
 
@@ -11,9 +11,9 @@ from mobo.automation.service import (
     run_execution_step,
     run_extract_data,
 )
-from mobo.automation.task_collection import RING_7050_SINGLE_TASK_1
+from mobo.automation.task_collection import GH4169_RING_SINGLE_TASK_1
 
-_TASK = RING_7050_SINGLE_TASK_1
+_TASK = GH4169_RING_SINGLE_TASK_1
 _TASK_ID = _TASK.task_id
 
 
