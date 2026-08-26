@@ -156,7 +156,7 @@ def test_real_gh4169_template_has_grain_and_generates_parameterized_key(tmp_path
     template = Path(task.template_key)
     text = template.read_text(encoding="utf-8")
     assert "TRANS        1       1       0       0       1" in text
-    assert "2.7500000000E-003" in text
+    assert "4.6590000000E-003" in text
     assert "GRAIN        1   14400      16" in text
     grain_start = text.index("GRAIN        1   14400      16")
     assert text[grain_start:].splitlines()[1].split()[2:4] == [

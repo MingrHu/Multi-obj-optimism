@@ -415,7 +415,7 @@ RING_7050_SINGLE_TASK_1 = SingleOperationTaskDefinition(
 
 _GH4169_TEMPLATE_DIR = KEY_FILE_DIR / "gh4169_ring_single_task_1"
 
-# 模板的晶粒开关、GRNDAT 模型和 50 μm 初始晶粒状态取自 RINGROLL.KEY。
+# 模板保留 GH4169 自带的 GRNDAT 晶粒模型，并启用 50 μm 初始晶粒状态。
 GH4169_RING_SINGLE_TASK_1 = SingleOperationTaskDefinition(
     task_id="gh4169-ring-single-task-1",
     name="GH4169碾环单工步任务1",
