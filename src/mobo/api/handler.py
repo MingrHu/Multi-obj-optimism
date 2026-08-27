@@ -110,6 +110,21 @@ def generate_training_dataset():
     return _post(service.generate_training_dataset, "训练数据集生成完成")
 
 
+#  @brief  按字段获取样本 数据集 优化或推理结果
+#  @return jsonify格式化信息 data仅包含请求字段到数据数组的映射
+#  @param  id DOE唯一标识 必填
+#  @param  data_type 数据类型 sample dataset optimization inference之一
+#  @param  fields 需要返回的字段名称列表 必填 可重复传递
+@doe_api.get("/api/v1/hust/doe/data/get")
+def get_data():
+    fields = request.args.getlist("fields")
+    return _ok(service.get_data({
+        "id": request.args.get("id", ""),
+        "data_type": request.args.get("data_type", ""),
+        "fields": fields,
+    }), "数据获取完成")
+
+
 #  @brief  查询DOE任务下代理模型的训练进度
 #  @return jsonify格式化信息 包含训练状态 当前阶段 训练进度 已训练模型和错误信息
 #  @param  id DOE唯一标识 GET查询参数 必填
@@ -157,9 +172,10 @@ def start_training():
 
 
 #  @brief  加载DOE代理模型并执行批量推理
-#  @return jsonify格式化信息 包含model_id targets和predictions
+#  @return jsonify格式化信息 data仅包含请求目标字段到预测数组的映射
 #  @param  id DOE唯一标识 必填
 #  @param  inputs 输入参数二维数值数组 必填 单个样本可使用一维数组
+#  @param  fields 需要返回的预测目标字段列表 可选 默认返回全部目标
 #  @param  model_id 指定代理模型标识 可选 未传入时自动选择评分最高模型
 #  @author Hu Mingrui
 #  @date   2026/08/25

@@ -28,11 +28,12 @@
 | `POST /api/v1/doe/delete` | `id` | 删除 DOE 及其样本、模型、训练和优化文件 |
 | `POST /api/v1/hust/doe/sample/generate` | `id`, `method`, `param_ranges`, `n_samples?`, `level_nums?` | LHS/全因子采样 |
 | `POST /api/v1/hust/doe/dataset/generate` | `id`, `param_ranges`, `target_names`, `input_names?`, `n_samples?`, `seed?`, `noise_ratio?` | 在 DOE 训练目录生成完整流程演示数据集 |
+| `GET /api/v1/hust/doe/data/get` | `id`, `data_type`, `fields` | 按字段获取样本、数据集、优化或最近一次推理结果 |
 | `GET /api/hust/v1/doe/train/progress?id=...` | `id` | 查询代理模型训练状态、阶段、进度及已训练模型 |
 | `POST /api/v1/hust/doe/train/delete` | `id` | 删除训练记录和代理模型 |
 | `POST /api/v1/hust/doe/train/stop` | `id` | 发出训练中止请求 |
 | `POST /api/v1/hust/doe/train/startTrain` | 见下文 | 后台训练并交叉验证 |
-| `POST /api/v1/hust/doe/inference/startInference` | `id`, `inputs`, `model_id?` | 代理模型批量推理 |
+| `POST /api/v1/hust/doe/inference/startInference` | `id`, `inputs`, `fields?`, `model_id?` | 代理模型批量推理并按目标字段返回 |
 | `POST /api/v1/hust/doe/optimize/start` | 见下文 | 后台提交 NSGA-II、单目标或 RL 优化 |
 | `POST /api/v1/hust/doe/optimize/stop` | `id` | 发出优化中止请求 |
 | `GET /api/v1/hust/doe/optimize/getById?id=...` | `id` | 查询优化状态、参数与结果文件 |
@@ -79,13 +80,56 @@
 ```json
 {
   "id": "doe_ring_001",
-  "inputs": [[950, 20], [1000, 30]],
+  "inputs": {
+    "temperature": [950, 1000],
+    "speed": [20, 30]
+  },
+  "fields": ["grain"],
   "model_id": null
 }
 ```
 
-不指定 `model_id` 时自动选择平均评价分最高的模型。响应中的 `targets` 给出列顺序，
-`predictions` 为相同顺序的二维数组。
+`inputs` 既可使用上述按字段组织的数组，也兼容原有二维数组。不指定 `model_id` 时自动
+选择平均评价分最高的模型；不传 `fields` 时返回模型的全部目标。响应示例：
+
+```json
+{
+  "code": 0,
+  "message": "推理完成",
+  "data": {"grain": [123.45, 120.67]}
+}
+```
+
+## 按字段获取数据
+
+样本、训练数据集、优化结果以及最近一次推理结果统一通过以下接口读取：
+
+```http
+GET /api/v1/hust/doe/data/get
+```
+
+请求中的 `data_type` 支持 `sample`、`dataset`、`optimization` 和 `inference`。例如只获取
+LHS 样本中的温度：
+
+```http
+GET /api/v1/hust/doe/data/get?id=doe_ring_001&data_type=sample&fields=temperature
+```
+
+多个字段重复传递 `fields`，例如
+`fields=temperature&fields=speed`。GET 接口不接收 JSON 请求体。
+
+响应只包含所请求的字段：
+
+```json
+{
+  "code": 0,
+  "message": "数据获取完成",
+  "data": {"temperature": [900.0, 925.5, 980.2, 1100.0]}
+}
+```
+
+优化结果文件为无表头 TSV。服务端在 DOE 状态中单独记录列顺序，典型顺序为决策变量、
+目标变量和 `feasible`；端上无需解析或依赖文件表头。
 
 ## 优化提交
 

@@ -59,7 +59,10 @@ def generate_sample(payload: dict[str, Any]) -> dict[str, Any]:
     output = generate_samples(
         doe_id, method, ranges, str(store.task_dir(doe_id) / "samples"), n_samples, levels
     )
-    sample = {"method": method, "param_ranges": ranges, "sample_file": output}
+    sample = {
+        "method": method, "param_ranges": ranges, "sample_file": output,
+        "columns": list(ranges),
+    }
     store.update(doe_id, status="ready", stage="sample_generated", progress=10)
     store.update_section(doe_id, "sample", **sample)
     return sample
@@ -328,9 +331,9 @@ def start_inference(payload: dict[str, Any]) -> dict[str, Any]:
 
     doe_id = _require_id(payload)
     record = _select_model(store.load(doe_id), payload.get("model_id"))
-    rows = payload.get("inputs")
-    if not isinstance(rows, list) or not rows:
-        raise ApiError("inputs 必须是非空二维数值数组")
+    state = store.load(doe_id)
+    rows = _normalize_inference_inputs(payload.get("inputs"), state)
+    fields = _normalize_fields(payload.get("fields"), record["target_names"])
     array = np.asarray(rows, dtype=float)
     if array.ndim == 1:
         array = array.reshape(1, -1)
@@ -343,8 +346,111 @@ def start_inference(payload: dict[str, Any]) -> dict[str, Any]:
         values = np.asarray(model.predict(scaled)).reshape(-1, 1) # type: ignore
         predictions.append(scalers[f"scaler_y_{index}"].inverse_transform(values).ravel())
     matrix = np.column_stack(predictions)
-    return {"id": doe_id, "model_id": record["model_id"], "targets": record["target_names"],
-            "predictions": matrix.tolist()}
+    all_results = {
+        target: matrix[:, index].tolist()
+        for index, target in enumerate(record["target_names"])
+    }
+    store.update_section(
+        doe_id, "inference", model_id=record["model_id"],
+        columns=record["target_names"], values=all_results,
+    )
+    return {field: all_results[field] for field in fields}
+
+
+def _normalize_inference_inputs(value: Any, state: dict[str, Any]) -> list[Any]:
+    if isinstance(value, dict):
+        request = state.get("training", {}).get("request") or {}
+        all_names = request.get("all_var_list") or []
+        count = request.get("input_var_count", 0)
+        input_names = all_names[:count]
+        if set(value) != set(input_names):
+            raise ApiError(f"inputs 字段必须为：{input_names}")
+        columns = [value[name] for name in input_names]
+        if not columns or not all(isinstance(column, list) and column for column in columns):
+            raise ApiError("inputs 的每个字段必须是非空数组")
+        if len({len(column) for column in columns}) != 1:
+            raise ApiError("inputs 的字段数组长度必须一致")
+        return [list(row) for row in zip(*columns)]
+    if not isinstance(value, list) or not value:
+        raise ApiError("inputs 必须是非空二维数值数组或字段数组对象")
+    return value
+
+
+def _normalize_fields(value: Any, available: list[str]) -> list[str]:
+    fields = available if value is None else value
+    if not isinstance(fields, list) or not fields:
+        raise ApiError("fields 必须是非空字符串数组")
+    if not all(isinstance(field, str) and field for field in fields):
+        raise ApiError("fields 必须是非空字符串数组")
+    if len(fields) != len(set(fields)):
+        raise ApiError("fields 不能包含重复字段")
+    unknown = [field for field in fields if field not in available]
+    if unknown:
+        raise ApiError(f"请求字段不存在：{unknown}；可用字段：{available}")
+    return fields
+
+
+def get_data(payload: dict[str, Any]) -> dict[str, list[Any]]:
+    doe_id = _require_id(payload)
+    state = store.load(doe_id)
+    if "fields" not in payload:
+        raise ApiError("fields 为必填的非空字符串数组")
+    data_type = payload.get("data_type")
+    if data_type == "sample":
+        section = state.get("sample") or {}
+        return _read_tabular_fields(section.get("sample_file"), section.get("columns"), payload)
+    if data_type == "dataset":
+        section = (state.get("training") or {}).get("dataset") or {}
+        return _read_tabular_fields(section.get("data_file"), section.get("all_var_list"), payload)
+    if data_type == "optimization":
+        section = (state.get("optimization") or {}).get("result") or {}
+        task_info = section.get("task_info") or {}
+        resources = section.get("file_resource") or {}
+        return _read_tabular_fields(
+            resources.get("solution_txt_path"), task_info.get("result_columns"), payload
+        )
+    if data_type == "inference":
+        section = state.get("inference") or {}
+        values = section.get("values")
+        if not isinstance(values, dict):
+            raise ConflictError("尚无可获取的推理结果")
+        fields = _normalize_fields(payload.get("fields"), list(values))
+        return {field: values[field] for field in fields}
+    raise ApiError("data_type 仅支持 sample、dataset、optimization、inference")
+
+
+def _read_tabular_fields(
+    file_name: Any, columns: Any, payload: dict[str, Any]
+) -> dict[str, list[Any]]:
+    if not isinstance(file_name, str) or not Path(file_name).is_file():
+        raise ConflictError("对应数据尚未生成或结果文件不存在")
+    if not isinstance(columns, list) or not all(isinstance(item, str) for item in columns):
+        raise ConflictError("服务端未记录对应文件的字段顺序")
+    fields = _normalize_fields(payload.get("fields"), columns)
+    selected = {field: [] for field in fields}
+    indices = {field: columns.index(field) for field in fields}
+    with Path(file_name).open("r", encoding="utf-8") as stream:
+        for line_number, line in enumerate(stream, 1):
+            cells = line.rstrip("\r\n").split("\t")
+            if cells == [""]:
+                continue
+            if len(cells) != len(columns):
+                raise ApiError(f"结果文件第 {line_number} 行列数与字段记录不一致", 500, 500)
+            for field, index in indices.items():
+                selected[field].append(_parse_cell(cells[index]))
+    return selected
+
+
+def _parse_cell(value: str) -> Any:
+    lowered = value.lower()
+    if lowered == "true":
+        return True
+    if lowered == "false":
+        return False
+    try:
+        return float(value)
+    except ValueError:
+        return value
 
 
 def _select_model(state: dict[str, Any], model_id: str | None) -> dict[str, Any]:
@@ -452,7 +558,7 @@ def get_optimization(doe_id: str) -> dict[str, Any]:
 
 __all__ = [
     "add_doe", "delete_doe", "delete_training", "generate_sample",
-    "generate_training_dataset", "get_optimization", "get_training_progress", "list_doe",
+    "generate_training_dataset", "get_data", "get_optimization", "get_training_progress", "list_doe",
     "start_inference", "start_optimization", "start_training",
     "stop_optimization", "stop_training",
 ]

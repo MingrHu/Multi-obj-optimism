@@ -37,44 +37,124 @@ def main() -> None:
     input_names = ["temperature", "speed"]
     target_names = ["grain", "load"]
     param_ranges = {"temperature": [900, 1100], "speed": [10, 50]}
+
+    # 1 创建 DOE 任务
     call("POST", "/api/v1/doe/add", json={
-        "id": doe_id, "name": "HTTP DOE 演示", "metadata": {"workpiece": "ring"},
+        "id": doe_id,
+        "name": "HTTP DOE 演示",
+        "metadata": {
+            "workpiece": "ring"
+        },
     })
+
+    # 2 生成 LHS 样本
+    call("POST", "/api/v1/hust/doe/sample/generate", json={
+        "id": doe_id,
+        "method": "lhs",
+        "param_ranges": param_ranges,
+        "n_samples": 12,
+    })
+
+    # 3 通过 GET 接口只获取样本中的温度字段
+    call("GET", "/api/v1/hust/doe/data/get", params=[
+        ("id", doe_id),
+        ("data_type", "sample"),
+        ("fields", "temperature"),
+    ])
+
+    # 4 生成测试训练数据集
     dataset = call("POST", "/api/v1/hust/doe/dataset/generate", json={
-        "id": doe_id, "input_names": input_names, "target_names": target_names,
-        "param_ranges": param_ranges, "n_samples": 80, "seed": 42,
+        "id": doe_id,
+        "input_names": input_names,
+        "target_names": target_names,
+        "param_ranges": param_ranges,
+        "n_samples": 80,
+        "seed": 42,
     })["data"]
+
+    # 5 按字段获取训练数据集
+    call("GET", "/api/v1/hust/doe/data/get", params=[
+        ("id", doe_id),
+        ("data_type", "dataset"),
+        ("fields", "temperature"),
+        ("fields", "grain"),
+    ])
+
+    # 6 训练代理模型并评价
     call("POST", "/api/v1/hust/doe/train/startTrain", json={
-        "id": doe_id, "data_file": dataset["data_file"],
+        "id": doe_id,
+        "data_file": dataset["data_file"],
         "all_var_list": dataset["all_var_list"],
         "input_var_count": dataset["input_var_count"],
         "models": [{"model_index": 2}],
-        "evaluation": {"enabled": True, "n_splits": 3, "random_state": 42},
+        "evaluation":{
+            "enabled": True,
+            "n_splits": 3,
+            "random_state": 42
+        },
     })
+
+    # 7 等待训练完成
     training = wait_for_terminal("/api/hust/v1/doe/train/progress", doe_id)
     if training["data"]["status"] != "finished":
         raise RuntimeError(f"代理模型训练未完成 {training['data']}")
 
+    # 8 推理测试 只返回 grain
     call("POST", "/api/v1/hust/doe/inference/startInference", json={
-        "id": doe_id, "inputs": [[1000, 30]],
+        "id": doe_id,
+        "inputs": {
+            "temperature": [1000],
+            "speed": [30]
+    },
+        "fields": ["grain"],
     })
+
+    # 9 通过统一 GET 接口获取最近一次推理的 load
+    call("GET", "/api/v1/hust/doe/data/get", params=[
+        ("id", doe_id),
+        ("data_type", "inference"),
+        ("fields", "load"),
+    ])
+
+    # 10 优化任务
     call("POST", "/api/v1/hust/doe/optimize/start", json={
-        "id": doe_id, "algorithm": "nsga2", "objective_names": target_names,
-        "all_var_list": [*input_names, *target_names], "input_var_count": 2,
-        "decision_var_indices": [0, 1], "decision_var_names": input_names,
+        "id": doe_id,
+        "algorithm": "nsga2",
+        "objective_names": target_names,
+        "all_var_list": [*input_names, *target_names],
+        "input_var_count": 2,
+        "decision_var_indices": [0, 1],
+        "decision_var_names": input_names,
         "decision_bounds": [
-            {"lower": 900, "upper": 1100}, {"lower": 10, "upper": 50},
+            {"lower": 900, "upper": 1100},
+            {"lower": 10, "upper": 50},
         ],
         "optimizer_config": {
-            "pop_size": 20, "n_offsprings": 10, "eliminate_duplicates": True,
-            "n_gen": 10, "seed": 42,
+            "pop_size": 20,
+            "n_offsprings": 10,
+            "eliminate_duplicates": True,
+            "n_gen": 10,
+            "seed": 42,
         },
     })
+
+    # 11 等待优化完成
     optimization = wait_for_terminal(
         "/api/v1/hust/doe/optimize/getById", doe_id
     )
+
+    # 12 检查优化结果
     if optimization["data"]["status"] != "finished":
         raise RuntimeError(f"优化任务未完成 {optimization['data']}")
+
+    # 13 按字段获取优化结果 文件本身无表头
+    call("GET", "/api/v1/hust/doe/data/get", params=[
+        ("id", doe_id),
+        ("data_type", "optimization"),
+        ("fields", "temperature"),
+        ("fields", "grain"),
+        ("fields", "feasible"),
+    ])
 
 
 if __name__ == "__main__":

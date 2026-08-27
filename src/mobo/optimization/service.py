@@ -115,6 +115,7 @@ def run_optimization(
                 "optimizer": optimizer,
                 "decision_var_names": resolved.get("decision_var_names"),
                 "objective_names": resolved.get("objective_names"),
+                "result_columns": result.get("columns") if constraint_check is not None else None,
                 "total_generation": (resolved.get("optimizer_config") or {}).get("n_gen"),
                 "pop_size": (resolved.get("optimizer_config") or {}).get("pop_size"),
                 "run_time_sec": cost,

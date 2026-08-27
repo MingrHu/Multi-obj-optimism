@@ -55,7 +55,6 @@ def _write_solutions(
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as stream:
             headers = [*decision_names, *[item["name"] for item in objective_config], "feasible"]
-            stream.write("\t".join(headers) + "\n")
             for row_index, x_row in enumerate(x_values):
                 values = [*x_row, *objective_values[row_index]]
                 cells = [f"{float(value):.12g}" for value in values]
@@ -69,6 +68,7 @@ def _write_solutions(
     return {
         "solution_count": int(len(x_values)),
         "all_solution_feasible": bool(np.all(feasible)) if len(feasible) else False,
+        "columns": headers,
     }
 
 

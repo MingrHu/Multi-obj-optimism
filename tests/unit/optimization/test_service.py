@@ -104,6 +104,7 @@ def test_parameterized_nsga2_uses_model_task(monkeypatch):
             "solution_txt_path": output_path,
             "solution_count": 4,
             "all_solution_feasible": True,
+            "columns": ["temperature", "grain", "feasible"],
         }
 
     monkeypatch.setattr(service, "run_parameterized_nsga2", fake_parameterized)
@@ -127,6 +128,9 @@ def test_parameterized_nsga2_uses_model_task(monkeypatch):
     assert captured["model_dir"] == "isolated/models"
     assert captured["output_path"].endswith("pareto_solutions.tsv")
     assert response["data"]["constraint_check"]["solution_count"] == 4
+    assert response["data"]["task_info"]["result_columns"] == [
+        "temperature", "grain", "feasible"
+    ]
 
 
 def test_parameterized_nsga2_rejects_variable_order_mismatch(monkeypatch):

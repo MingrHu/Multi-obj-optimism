@@ -29,9 +29,11 @@ def test_write_solutions_restores_maximized_objective_sign(tmp_path):
     )
 
     lines = output.read_text(encoding="utf-8").splitlines()
-    assert lines[0] == "temperature\tstrength\tgrain\tfeasible"
-    assert lines[1] == "900\t12.5\t3\ttrue"
-    assert summary == {"solution_count": 1, "all_solution_feasible": True}
+    assert lines == ["900\t12.5\t3\ttrue"]
+    assert summary == {
+        "solution_count": 1, "all_solution_feasible": True,
+        "columns": ["temperature", "strength", "grain", "feasible"],
+    }
 
 
 def test_run_parameterized_nsga2_end_to_end(tmp_path):
@@ -72,4 +74,5 @@ def test_run_parameterized_nsga2_end_to_end(tmp_path):
 
     assert summary["solution_count"] >= 1
     assert summary["solution_txt_path"] == str(output.resolve())
-    assert output.read_text(encoding="utf-8").startswith("x\tresult\tfeasible\n")
+    assert summary["columns"] == ["x", "result", "feasible"]
+    assert not output.read_text(encoding="utf-8").startswith("x\tresult\tfeasible\n")

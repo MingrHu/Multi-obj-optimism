@@ -54,6 +54,14 @@ def test_sample_generation_uses_doe_directory(monkeypatch, tmp_path):
     assert response.json["data"]["sample_file"].endswith("sample_1-fullfactorial.txt")
     assert (tmp_path / "doe_tasks" / "sample_1" / "samples").is_dir()
 
+    selected = client.get(
+        "/api/v1/hust/doe/data/get",
+        query_string=[("id", "sample_1"), ("data_type", "sample"),
+                      ("fields", "temperature")],
+    )
+    assert selected.status_code == 200
+    assert selected.json["data"] == {"temperature": [900.0, 900.0, 1000.0, 1000.0]}
+
 
 def test_training_dataset_generation_uses_doe_directory(monkeypatch, tmp_path):
     client = _client(monkeypatch, tmp_path)
@@ -73,6 +81,14 @@ def test_training_dataset_generation_uses_doe_directory(monkeypatch, tmp_path):
     assert data["all_var_list"] == ["temperature", "speed", "grain", "load"]
     assert len(dataset.read_text(encoding="utf-8").splitlines()) == 12
     assert all(len(line.split("\t")) == 4 for line in dataset.read_text().splitlines())
+
+    selected = client.get(
+        "/api/v1/hust/doe/data/get",
+        query_string=[("id", "dataset_1"), ("data_type", "dataset"),
+                      ("fields", "speed"), ("fields", "grain")],
+    )
+    assert list(selected.json["data"]) == ["speed", "grain"]
+    assert len(selected.json["data"]["speed"]) == 12
 
 
 def test_training_request_is_async(monkeypatch, tmp_path):
@@ -100,6 +116,7 @@ def test_all_documented_routes_exist(monkeypatch, tmp_path):
     assert {
         "/api/v1/doe/add", "/api/v1/doe/list", "/api/v1/doe/delete",
         "/api/v1/hust/doe/sample/generate", "/api/v1/hust/doe/dataset/generate",
+        "/api/v1/hust/doe/data/get",
         "/api/hust/v1/doe/train/progress",
         "/api/v1/hust/doe/train/delete", "/api/v1/hust/doe/train/stop",
         "/api/v1/hust/doe/train/startTrain",
@@ -108,6 +125,7 @@ def test_all_documented_routes_exist(monkeypatch, tmp_path):
         "/api/v1/hust/doe/optimize/getById",
     } <= routes
     assert "/api/v1/hust/doe/train/progress" not in routes
+    assert client.post("/api/v1/hust/doe/data/get", json={}).status_code == 405
 
 
 def test_training_worker_snapshots_model(monkeypatch, tmp_path):
@@ -165,6 +183,87 @@ def test_inference_loads_best_scored_model(monkeypatch, tmp_path):
         "score": 0.9,
     }])
 
-    result = service.start_inference({"id": "infer_1", "inputs": [[1.5]]})
-    assert result["model_id"] == "best"
-    assert result["predictions"][0][0] == pytest.approx(25.0)
+    result = service.start_inference({
+        "id": "infer_1", "inputs": [[1.5]], "fields": ["target"],
+    })
+    assert result["target"][0] == pytest.approx(25.0)
+    assert store.load("infer_1")["inference"]["model_id"] == "best"
+
+
+def test_inference_supports_named_inputs_and_selected_outputs(monkeypatch, tmp_path):
+    import joblib
+    import numpy as np
+    from sklearn.linear_model import LinearRegression
+    from sklearn.preprocessing import StandardScaler
+
+    from mobo.api import service
+
+    _client(monkeypatch, tmp_path)
+    store.create({"id": "infer_fields"})
+    model_dir = store.task_dir("infer_fields") / "models" / "best"
+    model_dir.mkdir(parents=True)
+    x = np.array([[0.0], [1.0], [2.0]])
+    scaler_x = StandardScaler().fit(x)
+    scalers = {"scaler_X": scaler_x}
+    for index, (target, factor) in enumerate((("grain", 10.0), ("load", 20.0))):
+        y = x * factor
+        scaler_y = StandardScaler().fit(y)
+        model = LinearRegression().fit(
+            scaler_x.transform(x), scaler_y.transform(y).ravel()
+        )
+        joblib.dump(model, model_dir / f"{target}_model.pkl")
+        scalers[f"scaler_y_{index}"] = scaler_y
+    joblib.dump(scalers, model_dir / "grain_scalers.pkl")
+    store.update_section("infer_fields", "training", status="finished", request={
+        "all_var_list": ["temperature", "grain", "load"], "input_var_count": 1,
+    }, models=[{
+        "model_id": "best", "model_dir": str(model_dir),
+        "target_names": ["grain", "load"], "score": 1.0,
+    }])
+
+    response = service.start_inference({
+        "id": "infer_fields", "inputs": {"temperature": [0.5, 1.5]},
+        "fields": ["load"],
+    })
+    assert response == {"load": pytest.approx([10.0, 30.0])}
+    fetched = service.get_data({
+        "id": "infer_fields", "data_type": "inference", "fields": ["load"],
+    })
+    assert fetched == {"load": pytest.approx([10.0, 30.0])}
+
+
+def test_get_optimization_data_uses_recorded_columns(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    store.create({"id": "opt_data"})
+    result_file = store.task_dir("opt_data") / "optimization" / "pareto.tsv"
+    result_file.write_text("900\t10\t2.5\ttrue\n950\t20\t2.0\tfalse\n", encoding="utf-8")
+    store.update_section("opt_data", "optimization", status="finished", result={
+        "task_info": {
+            "result_columns": ["temperature", "speed", "grain", "feasible"],
+        },
+        "file_resource": {"solution_txt_path": str(result_file)},
+    })
+
+    response = client.get(
+        "/api/v1/hust/doe/data/get",
+        query_string=[("id", "opt_data"), ("data_type", "optimization"),
+                      ("fields", "temperature"), ("fields", "feasible")],
+    )
+    assert response.status_code == 200
+    assert response.json["data"] == {
+        "temperature": [900.0, 950.0], "feasible": [True, False],
+    }
+
+
+def test_get_data_rejects_unknown_field(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    client.post("/api/v1/doe/add", json={"id": "bad_field"})
+    client.post("/api/v1/hust/doe/sample/generate", json={
+        "id": "bad_field", "method": "full",
+        "param_ranges": {"temperature": [900, 1000]}, "level_nums": [2],
+    })
+    response = client.get("/api/v1/hust/doe/data/get", query_string={
+        "id": "bad_field", "data_type": "sample", "fields": "speed",
+    })
+    assert response.status_code == 400
+    assert "可用字段" in response.json["message"]

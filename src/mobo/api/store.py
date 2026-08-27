@@ -71,6 +71,7 @@ def create(payload: dict[str, Any]) -> dict[str, Any]:
             "metadata": payload.get("metadata", {}),
             "status": "created", "stage": "created", "progress": 0,
             "created_at": now, "updated_at": now, "sample": {},
+            "inference": {},
             "training": {
                 "status": "not_started", "stage": "not_started",
                 "progress": 0, "models": [],
