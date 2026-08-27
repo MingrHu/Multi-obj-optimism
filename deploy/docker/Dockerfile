@@ -17,7 +17,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 # 先复制依赖描述，充分利用 Docker 构建缓存。torch 使用 CPU wheel，避免引入 CUDA 运行时。
-COPY pyproject.toml README.md ./
+COPY pyproject.toml ./
 COPY requirements/runtime.txt requirements/server.txt ./requirements/
 RUN --mount=type=cache,target=/root/.cache/pip \
     python -m pip install --upgrade pip setuptools wheel \

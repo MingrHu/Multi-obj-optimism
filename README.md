@@ -73,6 +73,102 @@ $env:MOBO_DEF_ARM_CTL = "C:\Program Files\SFTC\DEFORM\v11.0\3D\DEF_ARM_CTL.COM"
 
 安装脚本最后会运行 `pip check` 并导入数值计算、代理模型、优化和自动化所需依赖。
 
+## Docker 部署与更新
+
+Docker 部署适用于不希望在服务器宿主机安装 Python、TensorFlow、PyTorch 和算法依赖的场景。
+容器内自动启动 `mobo-api`，宿主机只需准备 Git、Docker Engine 和 Compose v2。
+
+### 新 Linux 宿主机首次部署
+
+按以下顺序在宿主机执行：
+
+```bash
+# 1. CentOS 尚未安装 Git 时先安装 Git
+sudo dnf install -y git
+
+# 2. 克隆仓库；仓库提供源码、Dockerfile、Compose、依赖锁定和部署脚本
+git clone https://github.com/MingrHu/Multi-obj-optimism.git
+
+# 3. 进入包含 compose.yaml 的仓库根目录
+cd Multi-obj-optimism
+
+# 4. 检查系统资源、Docker daemon、Compose v2 和 5000 端口
+bash scripts/check_docker_host.sh
+
+# 5. 仅当 CentOS Stream 9/10 尚未安装 Docker 时执行；其他系统使用官方对应安装方式
+bash scripts/install_docker_centos.sh --add-current-user
+
+# 6. 首次加入 docker 用户组后应注销并重新登录，再回到仓库根目录重新执行环境检查
+bash scripts/check_docker_host.sh
+
+# 7. 构建完整镜像并在后台启动 mobo-api
+docker compose up --build -d
+
+# 8. 等待容器状态变为 healthy
+docker compose ps
+
+# 9. 从当前宿主机直接请求容器映射出来的 HTTP 服务
+curl http://127.0.0.1:5000/health
+```
+
+如果第 4 步已经显示 Docker 和 Compose 均可用，则跳过第 5、6 步。CentOS Stream 8 已结束
+维护，仓库脚本不会在该系统上自动安装 Docker；若服务器已经具备可工作的 Docker，仍可在
+接受宿主机风险的前提下继续构建和启动。
+
+运行仓库自带的完整 HTTP Demo，无需在宿主机安装 Python 依赖：
+
+```bash
+# 在已经运行的容器内执行完整采样、训练、推理和优化 Demo
+docker exec \
+  -e MOBO_API_URL=http://127.0.0.1:5000 \
+  mobo-api \
+  python -m mobo.api.demo
+```
+
+查看服务日志：
+
+```bash
+# 在仓库根目录持续查看 Compose 服务日志；Ctrl+C 不会停止容器
+docker compose logs -f mobo-api
+
+# 不依赖 compose.yaml，在宿主机任意目录查看同一容器日志
+docker logs -f mobo-api
+```
+
+### 更新代码或文档并发布到容器
+
+宿主机仓库与运行中的容器是两个独立文件系统。`git pull` 只更新宿主机文件，不会实时改变
+当前容器；`docker compose restart` 也只会重启旧容器，不能应用新代码。正确更新流程为：
+
+```bash
+# 1. 在宿主机仓库中拉取已经提交的新代码和文档
+git pull --ff-only
+
+# 2. 重新构建镜像，并使用新镜像重新创建容器
+docker compose up --build -d
+
+# 3. 确认新容器健康
+docker compose ps
+
+# 4. 从宿主机验证新容器的 HTTP 服务
+curl http://127.0.0.1:5000/health
+```
+
+更新原理如下：
+
+1. `compose.yaml` 把仓库根目录作为 Docker 构建上下文，并使用
+   `deploy/docker/Dockerfile`。
+2. Dockerfile 先安装 `requirements/` 中的锁定依赖；依赖文件没变时直接复用缓存。
+3. `COPY . .` 将未被 `.dockerignore` 排除的源码、文档、脚本和配置复制到镜像 `/app`。
+4. `pip install . --no-deps` 将当前 `src/mobo` 构建并安装到镜像的 Python 环境。
+5. 每次构建产生新的不可变镜像；Compose 发现镜像变化后停止旧容器并创建新容器。
+6. `data` 和 `logs` 不进入镜像，而是挂载 Docker 命名卷，因此替换容器不会删除 DOE、模型、
+   优化结果和文件日志。
+
+这套 Compose 没有把宿主机源码绑定挂载到 `/app`，所以生产运行不会随宿主机文件即时变化；
+任何代码或文档更新都必须重新构建镜像。完整的 CentOS 准备、离线部署、远程访问、日志、
+数据备份和回滚说明见 [Docker 部署文档](docs/deployment/DOCKER_DEPLOYMENT.md)。
+
 ## 快速上手
 
 需要从外部系统通过 HTTP 调用 DOE 采样、代理训练/评价、推理与优化时，使用
@@ -91,16 +187,6 @@ python -m mobo.api.demo
 
 详细部署、健康检查、端口配置和故障排查见
 [API 后端启动文档](docs/deployment/BACKEND_STARTUP.md)。
-
-也可以通过 Docker Desktop / WSL2 构建完整 Linux 运行镜像并自动启动 API：
-
-```bash
-docker compose up --build -d
-curl http://127.0.0.1:5000/health
-```
-
-镜像包含 API、代理模型、优化、提取与批处理代码，`data` 和 `logs` 使用持久卷保存。
-构建、导出镜像及 CentOS Stream 8 部署方式见 [Docker 部署文档](docs/deployment/DOCKER_DEPLOYMENT.md)。
 
 样本、训练数据集、推理和优化结果可通过同一个 GET 接口按字段读取，端上无需解析文件：
 
