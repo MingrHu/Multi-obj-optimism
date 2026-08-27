@@ -1,0 +1,158 @@
+{
+  "api_routes": [
+    {
+      "method": "GET",
+      "path": "/api/hust/v1/doe/train/progress"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/doe/list"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/hust/doe/data/get"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/hust/doe/optimize/getById"
+    },
+    {
+      "method": "GET",
+      "path": "/health"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/doe/add"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/doe/delete"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/hust/doe/dataset/generate"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/hust/doe/inference/startInference"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/hust/doe/optimize/start"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/hust/doe/optimize/stop"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/hust/doe/sample/generate"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/hust/doe/train/delete"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/hust/doe/train/startTrain"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/hust/doe/train/stop"
+    }
+  ],
+  "cli_scripts": {
+    "mobo-api": "mobo.api.app:main",
+    "mobo-ga": "mobo.cli.ga:main",
+    "mobo-ring-roundness": "mobo.cli.ring_roundness:main",
+    "mobo-rl": "mobo.cli.rl:main",
+    "mobo-surrogate": "mobo.cli.surrogate:main"
+  },
+  "environment_variables": [
+    "MOBO_API_HOST",
+    "MOBO_API_PORT",
+    "MOBO_API_URL",
+    "MOBO_DATA_DIR",
+    "MOBO_DEF_ARM_CTL",
+    "MOBO_DEF_PRE_64",
+    "MOBO_PROJECT_DIR"
+  ],
+  "modules": [
+    "__init__.py",
+    "api/__init__.py",
+    "api/app.py",
+    "api/demo.py",
+    "api/errors.py",
+    "api/handler.py",
+    "api/runtime.py",
+    "api/service.py",
+    "api/store.py",
+    "automation/__init__.py",
+    "automation/config.py",
+    "automation/extract.py",
+    "automation/incremental.py",
+    "automation/keyfile.py",
+    "automation/multi_operation.py",
+    "automation/multi_operation_service.py",
+    "automation/pipeline.py",
+    "automation/sampling.py",
+    "automation/service.py",
+    "automation/solver.py",
+    "automation/task_collection.py",
+    "cli/__init__.py",
+    "cli/automation_demo.py",
+    "cli/ga.py",
+    "cli/multi_operation_demo.py",
+    "cli/ring_roundness.py",
+    "cli/rl.py",
+    "cli/surrogate.py",
+    "common/__init__.py",
+    "common/logging.py",
+    "common/paths.py",
+    "common/task_store.py",
+    "extraction/__init__.py",
+    "extraction/base.py",
+    "extraction/deform_targets.py",
+    "extraction/registry.py",
+    "extraction/ring_roundness.py",
+    "optimization/__init__.py",
+    "optimization/ga/__init__.py",
+    "optimization/ga/operators.py",
+    "optimization/ga/parameterized.py",
+    "optimization/ga/problem.py",
+    "optimization/ga/run.py",
+    "optimization/rl/__init__.py",
+    "optimization/rl/env.py",
+    "optimization/rl/run.py",
+    "optimization/service.py",
+    "replacement/__init__.py",
+    "replacement/base.py",
+    "replacement/deform_parameters.py",
+    "replacement/registry.py",
+    "surrogate/__init__.py",
+    "surrogate/common.py",
+    "surrogate/dnn.py",
+    "surrogate/evaluate.py",
+    "surrogate/interface.py",
+    "surrogate/kriging.py",
+    "surrogate/polynomial.py",
+    "surrogate/random_forest.py",
+    "surrogate/service.py",
+    "surrogate/svr.py"
+  ],
+  "packages": [
+    "api",
+    "automation",
+    "cli",
+    "common",
+    "extraction",
+    "optimization",
+    "replacement",
+    "surrogate"
+  ],
+  "pytest_markers": [
+    "deform",
+    "integration",
+    "slow"
+  ]
+}

@@ -1,0 +1,36 @@
+name: Documentation consistency
+
+on:
+  push:
+    paths:
+      - "*.md"
+      - "src/**"
+      - "tools/**"
+      - "pyproject.toml"
+      - "setup_env.*"
+      - ".github/workflows/docs-consistency.yml"
+  pull_request:
+    paths:
+      - "*.md"
+      - "src/**"
+      - "tools/**"
+      - "pyproject.toml"
+      - "setup_env.*"
+      - ".github/workflows/docs-consistency.yml"
+  schedule:
+    - cron: "0 1 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Check documentation consistency
+        run: python tools/check_docs.py

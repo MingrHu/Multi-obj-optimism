@@ -6,12 +6,15 @@
 
 ```text
 创建 DOE
+→ 生成 LHS 样本并按字段读取
 → 生成合成训练数据集
+→ 按字段读取训练数据集
 → 训练随机森林代理模型
 → 三折交叉验证评价
-→ 基于代理模型推理
+→ 基于代理模型按字段推理
+→ 查询最近一次推理结果
 → 提交 NSGA2 多目标优化
-→ 等待并查询优化结果
+→ 等待优化完成并按字段查询结果
 ```
 
 合成数据只用于验证 HTTP 接口和完整流程，不代表真实 DEFORM 仿真结果
@@ -163,6 +166,14 @@ Demo 会为本次运行生成唯一 DOE 标识，因此可以重复执行
 
 训练和优化是后台任务，Demo 会每两秒查询一次进度，默认最长等待十分钟
 
+Demo 中的字段查询使用 GET，例如：
+
+```text
+GET /api/v1/hust/doe/data/get?id=<demo_doe_id>&data_type=sample&fields=temperature
+```
+
+查询多个字段时重复传递 `fields`。端上无需打开响应中的服务端文件路径。
+
 ## 6 Demo 产物位置
 
 完整流程产物位于
@@ -181,7 +192,8 @@ data/doe_tasks/<demo_doe_id>/
 其中
 
 - `doe.json` 保存 DOE 元数据、训练状态和优化状态
-- `demo_training_dataset.tsv` 是 Demo 自动生成的无表头训练数据
+- 样本、`demo_training_dataset.tsv` 和 `pareto_solutions.tsv` 均无表头；列名顺序记录在
+  `doe.json`
 - `models` 保存代理模型及标准化器快照
 - `pareto_solutions.tsv` 保存 NSGA2 推荐参数和目标值
 

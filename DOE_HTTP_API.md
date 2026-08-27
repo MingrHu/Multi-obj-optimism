@@ -23,6 +23,7 @@
 
 | 方法与路径 | 关键请求参数 | 说明 |
 |---|---|---|
+| `GET /health` | - | 健康检查 |
 | `POST /api/v1/doe/add` | `id?`, `name?`, `description?`, `metadata?` | 创建 DOE；未传 ID 时自动生成 |
 | `GET /api/v1/doe/list` | - | 查询 DOE 列表 |
 | `POST /api/v1/doe/delete` | `id` | 删除 DOE 及其样本、模型、训练和优化文件 |
@@ -37,6 +38,29 @@
 | `POST /api/v1/hust/doe/optimize/start` | 见下文 | 后台提交 NSGA-II、单目标或 RL 优化 |
 | `POST /api/v1/hust/doe/optimize/stop` | `id` | 发出优化中止请求 |
 | `GET /api/v1/hust/doe/optimize/getById?id=...` | `id` | 查询优化状态、参数与结果文件 |
+
+除健康检查外，成功响应统一使用 `code/message/data`。GET 参数通过 query string 传递，
+POST 参数使用 JSON 对象；GET 接口不读取请求体。
+
+## 样本生成
+
+LHS 示例：
+
+```json
+{
+  "id": "doe_ring_001",
+  "method": "lhs",
+  "param_ranges": {
+    "temperature": [900, 1100],
+    "speed": [10, 50]
+  },
+  "n_samples": 20
+}
+```
+
+响应 `data` 包含 `method`、`param_ranges`、`sample_file` 和 `columns`。样本文件为无表头
+TSV，`columns` 保存文件列顺序。LHS 实现会在请求的随机样本之外追加上下界组合，因此
+实际行数可能大于 `n_samples`。
 
 ## 训练示例
 
@@ -58,6 +82,21 @@
   "noise_ratio": 0
 }
 ```
+
+数据集生成响应中的 `data` 格式为：
+
+```json
+{
+  "data_file": "<DOE目录>/training/demo_training_dataset.tsv",
+  "all_var_list": ["temperature", "speed", "grain", "load"],
+  "input_var_count": 2,
+  "sample_count": 80,
+  "input_names": ["temperature", "speed"],
+  "target_names": ["grain", "load"]
+}
+```
+
+`data_file` 是服务内部产物索引；端上读取数据应使用“按字段获取数据”接口。
 
 ```json
 {
@@ -100,6 +139,9 @@
 }
 ```
 
+服务会在 DOE 状态的 `inference` 区块保存本次所用 `model_id` 和所有目标的预测结果，
+因此之后可用字段取数接口读取最近一次推理的任意目标。新的推理会覆盖该区块。
+
 ## 按字段获取数据
 
 样本、训练数据集、优化结果以及最近一次推理结果统一通过以下接口读取：
@@ -108,8 +150,16 @@
 GET /api/v1/hust/doe/data/get
 ```
 
-请求中的 `data_type` 支持 `sample`、`dataset`、`optimization` 和 `inference`。例如只获取
-LHS 样本中的温度：
+请求中的 `data_type` 支持：
+
+| `data_type` | 数据来源 | 可用字段记录位置 |
+|---|---|---|
+| `sample` | 最近生成的 LHS/全因子样本 | `doe.json` 的 `sample.columns` |
+| `dataset` | Demo 合成训练数据集 | `training.dataset.all_var_list` |
+| `optimization` | 最近完成的参数化 NSGA-II 解集 | `optimization.result.task_info.result_columns` |
+| `inference` | 最近一次推理 | `inference.columns` |
+
+例如只获取 LHS 样本中的温度：
 
 ```http
 GET /api/v1/hust/doe/data/get?id=doe_ring_001&data_type=sample&fields=temperature
@@ -130,6 +180,9 @@ GET /api/v1/hust/doe/data/get?id=doe_ring_001&data_type=sample&fields=temperatur
 
 优化结果文件为无表头 TSV。服务端在 DOE 状态中单独记录列顺序，典型顺序为决策变量、
 目标变量和 `feasible`；端上无需解析或依赖文件表头。
+
+请求不存在的字段返回 HTTP 400；对应数据尚未生成或文件不存在返回 HTTP 409。该接口
+只读取当前协议生成的 DOE，不兼容开发阶段的旧状态格式。
 
 ## 优化提交
 

@@ -31,8 +31,9 @@
 
 ## 路径规范
 
-- 一切路径来自 `mobo.common.paths`（`PROJECT_DIR/DATA_DIR/MODELS_DIR/TEST_DIR/KEY_FILE_DIR`
-  与 `model_family_dir()`）。
+- 一切路径来自 `mobo.common.paths`（包括 `PROJECT_DIR`、`DATA_DIR`、`MODELS_DIR`、
+  `TEST_DIR`、`KEY_FILE_DIR`、`TASKS_DIR`、`DOE_TASKS_DIR`、`AUTO_SINGLE_DIR`、
+  `AUTO_MULTI_DIR`、`model_family_dir()` 与 `task_dir()`）。
 - 禁止新增 `../../data/...` 相对路径或平台绝对路径（macOS `/Users/...`、Windows `C:\...`）。
 - 跨平台路径拼接用 `os.path.join` 或 `pathlib.Path`，不要硬编码 `\\` 或 `/`。
 - 需要外置数据时用环境变量 `MOBO_PROJECT_DIR` / `MOBO_DATA_DIR`，不改代码。
@@ -42,6 +43,16 @@
 - 使用 `from mobo.common.logging import logger`。
 - **不要**在库代码/模块导入期劫持 `sys.stdout`；仅 CLI 入口可调用
   `logger.install_stdout_redirect()`。
+
+## HTTP API 规范
+
+- 外部系统只依赖 `mobo.api` 和 [DOE_HTTP_API.md](DOE_HTTP_API.md)，不要直接耦合 CLI、
+  历史算法入口或 `data/tasks` 内部状态。
+- 路由层 `api.handler` 只解析 HTTP 参数和组装统一响应；实际处理放在 `api.service`。
+- 只读查询使用 GET，创建、训练、推理、优化、停止和删除操作使用 POST。
+- 样本、训练数据集和优化结果文件均为无表头 TSV；字段顺序必须写入 DOE 状态。
+- 端上按字段取数统一使用 `GET /api/v1/hust/doe/data/get`，不要要求端上读取服务端路径。
+- 新增或修改路由时必须同步 `DOE_HTTP_API.md`、HTTP 单元测试和 `mobo.api.demo`。
 
 ## 新增「原子提取能力」的方式
 
@@ -69,13 +80,24 @@
 - 覆盖率：`--cov=mobo`，`fail_under=60`；核心纯逻辑模块（`surrogate/common`、`ga/problem`、
   `extraction/registry`、ring 纯函数）应保持高覆盖。
 
+## 文档维护
+
+- 根文档的职责以 [README.md](README.md)“文档知识库维护”一节为准；同一协议只保留一个
+  维护入口，其他历史文件只做索引，不复制正文。
+- 修改 API 路由、CLI 入口、环境变量、包/模块结构或 pytest marker 时，必须同步对应文档。
+- 完成文档更新后运行 `python tools/check_docs.py`。公共表面确实发生变化时，在人工确认
+  文档已经更新后运行 `python tools/check_docs.py --update-snapshot`，并提交快照。
+- 禁止在当前协议文档中加入平台绝对路径或 `../../data`；示例使用环境变量、仓库相对路径
+  或明确的 `/absolute/path/...` 占位符。
+
 ## 常用命令
 
 ```bash
 bash setup_env.sh                 # 安装环境（CPU torch + 本包 + dev）
 pytest -m "not slow"              # 跑测试
 pytest --cov=mobo                 # 覆盖率
-mobo-ga / mobo-rl / mobo-surrogate / mobo-ring-roundness   # CLI 入口
+python tools/check_docs.py        # 根文档与公共表面一致性
+mobo-api / mobo-ga / mobo-rl / mobo-surrogate / mobo-ring-roundness   # CLI 入口
 ```
 
 ## 提交规范

@@ -15,7 +15,8 @@ Python 工具包，覆盖从数据生成到多目标寻优的完整链路：
   并按 DOE ID 隔离运行状态与产物。
 - **命令行入口**（`mobo.cli`）：圆度提取、GA/RL 优化、代理模型评估。
 
-> 详细分层与数据流见 [ARCHITECTURE.md](ARCHITECTURE.md)；开发约定见 [AGENTS.md](AGENTS.md)。
+> 详细分层与数据流见 [ARCHITECTURE.md](ARCHITECTURE.md)；开发约定见 [AGENTS.md](AGENTS.md)；
+> HTTP 协议见 [DOE_HTTP_API.md](DOE_HTTP_API.md)。
 
 ---
 
@@ -91,6 +92,12 @@ python -m mobo.api.demo
 详细部署、健康检查、端口配置和故障排查见
 [API 后端启动文档](src/mobo/api/BACKEND_STARTUP.md)。
 
+样本、训练数据集、推理和优化结果可通过同一个 GET 接口按字段读取，端上无需解析文件：
+
+```text
+GET /api/v1/hust/doe/data/get?id=<doe_id>&data_type=sample&fields=temperature
+```
+
 ### 1. 训练 / 评估代理模型
 
 ```python
@@ -127,7 +134,7 @@ mobo-rl               # 或 python -m mobo.cli.rl
 ### 4. 碾环圆度提取（原子能力层）
 
 ```bash
-mobo-ring-roundness                         # 默认 data/KEY_FILE/RINGROLL.KEY
+mobo-ring-roundness                         # 默认 data/keyfile/RINGROLL.KEY
 mobo-ring-roundness path/to/model.KEY --plane-z 0
 ```
 
@@ -137,7 +144,7 @@ mobo-ring-roundness path/to/model.KEY --plane-z 0
 from mobo.extraction import registry
 
 spec = registry.resolve("ring", "roundness_inner")   # -> ExtractorSpec(kind="key_file")
-value = spec.fn("data/KEY_FILE/RINGROLL.KEY", samples=3000)
+value = spec.fn("data/keyfile/RINGROLL.KEY", samples=3000)
 ```
 
 ## 项目结构与文件说明
@@ -148,7 +155,9 @@ value = spec.fn("data/KEY_FILE/RINGROLL.KEY", samples=3000)
 Multi-obj-optimism/
 ├── src/mobo/          # 源码（src-layout 单包，pip install -e . 后以 mobo 导入）
 ├── tests/             # 单元测试（unit/）与集成测试（integration/）
-├── data/              # 数据集、训练好的模型、DEFORM KEY 文件（见下方布局）
+├── tools/             # 文档一致性等仓库维护工具
+├── .github/workflows/ # CI 与定期文档检查
+├── data/              # 本地运行数据与产物（整体忽略，不提交）
 ├── logs/              # 运行日志（DEFORM 操作日志等，不纳入版本管理）
 ├── pyproject.toml     # 打包与依赖配置、pytest/coverage 配置、CLI 入口点
 ├── requirements.txt   # 依赖清单（供不走 pyproject 的场景参考）
@@ -156,6 +165,9 @@ Multi-obj-optimism/
 ├── setup_env.ps1      # Windows 一键环境安装脚本
 ├── setup_env.sh       # 一键环境安装脚本（建 venv + CPU 版 torch + 本包）
 ├── DOE_HTTP_API.md    # DOE HTTP 接口、请求字段和响应格式
+├── interface_protocol.md # Python 内部任务服务协议
+├── 接口参数文档.md     # 文档索引（保留历史中文入口）
+├── DEFORM_KEY_KEYWORDS.md # DEFORM KEY 关键字与能力映射
 ├── README.md          # 本文件：总览、安装、上手、结构说明
 ├── ARCHITECTURE.md    # 分层架构、模块职责表与数据流
 └── AGENTS.md          # AI 代理协作的硬约束与开发约定
@@ -165,63 +177,18 @@ Multi-obj-optimism/
 
 ```
 src/mobo/
-├── __init__.py            # 包版本与顶层导出
-│
-├── api/                   # Flask DOE HTTP 服务
-│   ├── app.py             #   应用工厂与 mobo-api 启动入口
-│   ├── handler.py         #   HTTP 路由、请求解析与统一响应
-│   ├── service.py         #   采样、数据集、训练、推理和优化处理层
-│   ├── store.py           #   DOE 独立目录与 JSON 状态持久化
-│   ├── runtime.py         #   后台训练和优化任务控制
-│   ├── demo.py            #   完整 HTTP 优化流程 Demo
-│   └── BACKEND_STARTUP.md #   后端部署、启动、健康检查和 Demo 操作
-│
-├── common/                # 基础设施（被各子包复用）
-│   ├── paths.py           #   集中式路径解析：PROJECT_DIR/DATA_DIR/MODELS_DIR/... 与环境变量覆盖
-│   └── logging.py         #   全局 logger（单例 + 统一格式，仅 CLI 入口劫持 stdout）
-│
-├── surrogate/             # 代理模型：训练、评估、保存/加载
-│   ├── common.py          #   公共库：数据加载/预处理、划分、误差指标、模型保存
-│   ├── interface.py       #   统一训练入口 Doe_surrogateModel（按编号选模型）
-│   ├── dnn.py             #   DNN(keras) 训练：dnn_run
-│   ├── polynomial.py      #   多项式回归：prg_fun
-│   ├── svr.py             #   支持向量回归
-│   ├── random_forest.py   #   随机森林回归
-│   ├── kriging.py         #   Kriging / 高斯过程回归(GPR)
-│   ├── evaluate.py        #   K 折交叉验证评估与报告
-│   └── service.py         #   训练任务状态与 model_id 专属模型产物
-│
-├── optimization/          # 多目标优化
-│   ├── ga/                #   NSGA-II 遗传算法（pymoo）
-│   │   ├── operators.py   #     自定义交叉/变异算子
-│   │   ├── problem.py     #     多目标问题定义（加载代理模型做评估）
-│   │   └── run.py         #     NSGA2_run：装配并运行、输出 Pareto 前沿
-│   └── rl/                #   强化学习优化（stable-baselines3 PPO）
-│       ├── env.py         #     ForgingEnv 优化环境（gymnasium）
-│       └── run.py         #     train_and_optimize：训练 PPO 并导出解集
-│
-├── extraction/            # 原子能力层：按「工件类型 + 目标」分派的 KEY 文件提取
-│   ├── base.py            #   ExtractorSpec/Kind：两种调用约定（key_lines / key_file）
-│   ├── registry.py        #   注册表：register_fn / resolve（缺工件专属时回退 generic）
-│   ├── deform_targets.py  #   DEFORM 目标提取原子函数：应力/载荷/晶粒（_extract*）
-│   └── ring_roundness.py  #   碾环内外圈圆度纯函数 + extract_ring_roundness 适配器
-│
-├── automation/            # DEFORM 自动化流水线（真实执行依赖 Windows DEFORM）
-│   ├── config.py          #   DeformConfig：KEY 关键字/对象 ID/目标函数映射
-│   ├── sampling.py        #   采样：LHS / 全因子（纯逻辑，可独立测试）
-│   ├── keyfile.py         #   KEY 文件文本处理：数值格式化、路径派生、generate_key_files
-│   ├── solver.py          #   DEFORM 子进程驱动（KEY↔DB）与 DeformSolver 求解调度
-│   ├── extract.py         #   结果 DB→KEY 逐步导出与数据集提取编排
-│   ├── pipeline.py        #   TaskStatus 枚举 + ForgingTask 三阶段状态机
-│   └── service.py         #   任务级服务函数（创建/初始化/推进/查询状态）
-│
-└── cli/                   # 命令行入口（对应 pyproject 的 console_scripts）
-    ├── surrogate.py       #   mobo-surrogate：代理模型交叉验证评估
-    ├── ga.py              #   mobo-ga：NSGA-II 优化
-    ├── rl.py              #   mobo-rl：PPO 强化学习优化
-    ├── ring_roundness.py  #   mobo-ring-roundness：碾环圆度提取
-    └── automation_demo.py #   DEFORM 自动化流水线调用演示（非 pytest）
+├── api/          # Flask DOE 聚合服务、状态持久化、后台任务和 HTTP Demo
+├── common/       # 路径、日志及 data/tasks 通用任务状态
+├── surrogate/    # 五类代理模型、统一训练接口、评价和任务服务
+├── optimization/ # 参数化 NSGA-II、历史 GA 入口、RL/PPO 与优化服务
+├── extraction/   # 按工件类型和目标名称注册/分派结果提取能力
+├── replacement/  # 按参数名称注册/分派 DEFORM KEY 替换能力
+├── automation/   # 单/多工步 DEFORM、增量提取、断点恢复与任务集合
+└── cli/          # mobo-surrogate、mobo-ga、mobo-rl、圆度与自动化演示入口
 ```
+
+具体模块职责以 [ARCHITECTURE.md](ARCHITECTURE.md) 为准，避免在多个文档中维护重复的
+逐文件清单。
 
 ### 测试 `tests/`
 
@@ -233,7 +200,10 @@ tests/
 │   ├── surrogate/         #   代理模型公共库与评估
 │   ├── optimization/      #   GA 算子/问题、RL 环境
 │   ├── extraction/        #   原子能力层与提取函数
-│   └── automation/        #   采样/KEY 文件/求解/提取/流水线/服务
+│   ├── replacement/       #   KEY 参数替换能力
+│   ├── api/               #   HTTP 协议、状态和字段取数
+│   ├── automation/        #   采样/KEY 文件/求解/提取/流水线/服务
+│   └── tools/             #   文档一致性检查器
 └── integration/           # 集成测试（依赖 data/ 真实产物，缺失自动跳过）
 ```
 
@@ -251,20 +221,36 @@ data/
 └── keyfile/           # DEFORM KEY 文件（圆度提取用）
 ```
 
-自定义路径可用环境变量覆盖：`MOBO_PROJECT_DIR`、`MOBO_DATA_DIR`。
+`data/` 是运行期目录，已整体加入 `.gitignore`。容器部署时应挂载持久卷，并通过
+`MOBO_PROJECT_DIR`、`MOBO_DATA_DIR` 覆盖默认路径。
 
 ## 测试
 
 ```bash
-ruff check src tests scripts    # 静态检查（语法、未定义名称、可疑默认参数等）
+ruff check src tests scripts tools  # 静态检查（语法、未定义名称、可疑默认参数等）
 pytest -m "not slow"          # 默认跳过耗时（DNN 训练等）用例
 pytest                        # 全部用例
 pytest --cov=mobo             # 覆盖率
+python tools/check_docs.py    # 根文档、路由、CLI、包结构和链接一致性
 ```
 
 - `slow`：keras/DNN 训练等耗时用例（默认跳过）。
 - `deform`：依赖 Windows DEFORM 环境的用例（非 Windows 跳过）。
 - `integration`：依赖 `data/` 真实产物的集成用例（产物缺失自动跳过）。
+
+## 文档知识库维护
+
+- [README.md](README.md)：项目入口、安装、启动和目录总览。
+- [DOE_HTTP_API.md](DOE_HTTP_API.md)：端上调用的唯一 HTTP 协议。
+- [interface_protocol.md](interface_protocol.md)：Python 内部任务服务协议。
+- [ARCHITECTURE.md](ARCHITECTURE.md)：分层、数据流、持久化和平台边界。
+- [DEFORM_KEY_KEYWORDS.md](DEFORM_KEY_KEYWORDS.md)：KEY 关键字与仓库能力映射。
+- [接口参数文档.md](接口参数文档.md)：兼容历史文件名的文档索引。
+
+`python tools/check_docs.py` 会检查根文档链接、HTTP 路由、CLI 入口、包/模块清单和文档
+快照。代码公共表面变化后，应先更新文档，再执行
+`python tools/check_docs.py --update-snapshot` 确认新的基线。GitHub Actions 会在相关
+变更以及每周一自动执行检查。
 
 ## 可选 GUI 依赖
 

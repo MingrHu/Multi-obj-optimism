@@ -35,7 +35,7 @@ def prg_model_dir():
 
 @pytest.fixture
 def ringroll_key():
-    """碾环 KEY 文件 ``data/KEY_FILE/RINGROLL.KEY``（缺失则跳过）。"""
+    """碾环 KEY 文件 ``data/keyfile/RINGROLL.KEY``（缺失则跳过）。"""
     path = KEY_FILE_DIR / "RINGROLL.KEY"
     if not path.exists():
         pytest.skip(f"KEY 文件不存在：{path}")

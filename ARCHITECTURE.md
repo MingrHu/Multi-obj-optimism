@@ -52,7 +52,7 @@ DOE 聚合服务。路由层位于 `api.handler`，实际处理层位于 `api.se
 | `surrogate` | `interface.py` | `Doe_surrogateModel` 统一训练接口 |
 | `surrogate` | `evaluate.py` | `SurrogateModelEvaluator` K 折交叉验证与报告 |
 | `surrogate` | `service.py` | `train_surrogate`/`query_model_status`：`model_id` 主键，req/resp 落盘 |
-| `api` | `app.py` / `handler.py` / `service.py` | Flask 应用、HTTP 路由及 DOE 聚合处理层 |
+| `api` | `app.py` / `handler.py` / `service.py` | Flask 应用、HTTP 路由、按字段取数及 DOE 聚合处理层 |
 | `api` | `store.py` / `runtime.py` | DOE 独立目录持久化与后台任务中止控制 |
 | `optimization/ga` | `problem.py` | `SurrogateOptimizationProblem`（pymoo 问题）|
 | `optimization/ga` | `operators.py` | `AdaptiveSBX` 自适应交叉、Pareto 结果读写 |
@@ -97,6 +97,21 @@ DOE 聚合服务。路由层位于 `api.handler`，实际处理层位于 `api.se
                                             ▼
                           Pareto 前沿 / RL 解集（data/*.txt, *.png）
 ```
+
+## HTTP 聚合与结果协议
+
+外部系统通过 `mobo.api` 访问 DOE 聚合服务，不直接读取 CLI 输出或底层任务目录。一个
+`data/doe_tasks/<doe_id>/doe.json` 聚合样本、训练、模型、推理和优化状态；训练与优化在
+后台线程执行，路由层保持轻量。
+
+- 样本、演示训练数据集和参数化 NSGA-II 解集均以无表头 TSV 落盘。
+- `sample.columns`、`training.dataset.all_var_list` 和
+  `optimization.result.task_info.result_columns` 分别记录文件列顺序。
+- 推理响应按请求的 `fields` 返回，同时在 `inference.values` 保存最近一次完整目标结果。
+- `GET /api/v1/hust/doe/data/get` 根据 `id`、`data_type` 和重复的 `fields` 参数读取指定列，
+  端上无需访问或解析服务端文件路径。
+- HTTP 唯一协议入口是 `DOE_HTTP_API.md`；Python 内部任务接口记录在
+  `interface_protocol.md`。
 
 ## 原子能力层机制（extraction）
 
@@ -159,7 +174,8 @@ TC4 碾环多工步任务由 `task_collection.TC4_RING_MULTI_TASK_1` 完整定�
   `incremental_dataset.json` 记录逐样本提取状态与数据行。`AUTO` 只保存样本、DB、KEY
   和结果数据。
 - HTTP 层以 `data/doe_tasks/<doe_id>/doe.json` 作为聚合状态入口，并在同一 DOE 目录下
-  隔离 `samples/models/training/optimization` 产物；底层代理训练和优化仍复用
+  隔离 `samples/models/training/optimization` 产物，最近推理结果写入状态中的 `inference`；
+  底层代理训练和优化仍复用
   `data/tasks/<model_id或optimization_id>` 记录，删除 DOE 时一并清理关联记录。
 
 ## 增量数据集与断点恢复
@@ -194,3 +210,11 @@ pytest 的输出捕获。现调整为：
   `solver` 相关用例通过打桩 `subprocess.Popen` 验证命令串与调度逻辑。
 
 路径拼接已从 Windows 反斜杠改为跨平台的 `os.path.join`，其余逻辑不变。
+
+## 文档一致性边界
+
+`tools/check_docs.py` 使用 Python 标准库静态提取 Flask 路由、`pyproject.toml` CLI 入口、
+源码包/模块、环境变量和 pytest marker，并检查根文档中的本地链接与对应协议覆盖。
+`tools/docs_surface.json` 保存人工确认后的公共表面快照；代码公共表面变化但文档/快照未
+同步时，检查会失败。`.github/workflows/docs-consistency.yml` 在相关提交、拉取请求以及
+每周定时执行该检查。
