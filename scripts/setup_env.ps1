@@ -6,12 +6,13 @@
 )
 
 # 用法
-# .\setup_env.ps1
-# .\setup_env.ps1 -Recreate
-# .\setup_env.ps1 -PythonPath "C:\Python312\python.exe"
+# .\scripts\setup_env.ps1
+# .\scripts\setup_env.ps1 -Recreate
+# .\scripts\setup_env.ps1 -PythonPath "C:\Python312\python.exe"
 
 $ErrorActionPreference = "Stop"
-$ProjectDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$ProjectDir = Split-Path -Parent $ScriptDir
 $VenvDir = Join-Path $ProjectDir ".venv"
 $TorchVersion = "2.10.0"
 $TorchCpuIndex = "https://download.pytorch.org/whl/cpu"
@@ -54,7 +55,7 @@ if (-not (Test-Path $VenvDir)) {
 $Python = Join-Path $VenvDir "Scripts\python.exe"
 & $Python -c "import sys; assert (3, 11) <= sys.version_info[:2] < (3, 13)" 2>$null
 if ($LASTEXITCODE -ne 0) {
-    throw "现有虚拟环境不可用，请重新运行 .\setup_env.ps1 -Recreate"
+    throw "现有虚拟环境不可用，请重新运行 .\scripts\setup_env.ps1 -Recreate"
 }
 $PipArgs = @()
 if ($PipIndex) {
@@ -63,10 +64,10 @@ if ($PipIndex) {
 
 & $Python -m pip install --upgrade pip setuptools wheel @PipArgs
 & $Python -m pip install "torch==$TorchVersion" --index-url $TorchCpuIndex
-& $Python -m pip install -r (Join-Path $ProjectDir "requirements-dev.txt") @PipArgs
+& $Python -m pip install -r (Join-Path $ProjectDir "requirements\dev.txt") @PipArgs
 & $Python -m pip install -e $ProjectDir --no-deps
 if ($WithGui) {
-    & $Python -m pip install -r (Join-Path $ProjectDir "requirements-gui.txt") @PipArgs
+    & $Python -m pip install -r (Join-Path $ProjectDir "requirements\gui.txt") @PipArgs
 }
 
 & $Python -m pip check

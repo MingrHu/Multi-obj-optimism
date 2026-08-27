@@ -1,0 +1,2 @@
+# Linux 容器内承载 Flask API 的生产级 WSGI 服务。
+gunicorn==23.0.0

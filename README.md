@@ -15,8 +15,8 @@ Python 工具包，覆盖从数据生成到多目标寻优的完整链路：
   并按 DOE ID 隔离运行状态与产物。
 - **命令行入口**（`mobo.cli`）：圆度提取、GA/RL 优化、代理模型评估。
 
-> 详细分层与数据流见 [ARCHITECTURE.md](ARCHITECTURE.md)；开发约定见 [AGENTS.md](AGENTS.md)；
-> HTTP 协议见 [DOE_HTTP_API.md](DOE_HTTP_API.md)。
+> 详细分层与数据流见 [ARCHITECTURE.md](docs/ARCHITECTURE.md)；开发约定见 [AGENTS.md](AGENTS.md)；
+> HTTP 协议见 [DOE_HTTP_API.md](docs/api/DOE_HTTP_API.md)，其余资料见 [文档导航](docs/README.md)。
 
 ---
 
@@ -32,18 +32,18 @@ Windows PowerShell（DEFORM 自动化推荐）：
 
 ```powershell
 Set-ExecutionPolicy -Scope Process Bypass
-.\setup_env.ps1
+.\scripts\setup_env.ps1
 .\.venv\Scripts\Activate.ps1
 ```
 
-已有虚拟环境失效时使用 `.\setup_env.ps1 -Recreate`，也可通过 `-PythonPath` 指定
+已有虚拟环境失效时使用 `.\scripts\setup_env.ps1 -Recreate`，也可通过 `-PythonPath` 指定
 Python 3.11 或 3.12 解释器。
 
 Linux / macOS（不能真实调用 DEFORM，可运行其余功能）：
 
 ```bash
-bash setup_env.sh            # 核心 + 开发依赖
-bash setup_env.sh --with-gui # 额外安装 GUI (PySide6)
+bash scripts/setup_env.sh            # 核心 + 开发依赖
+bash scripts/setup_env.sh --with-gui # 额外安装 GUI (PySide6)
 ```
 
 或手动安装：
@@ -76,7 +76,7 @@ $env:MOBO_DEF_ARM_CTL = "C:\Program Files\SFTC\DEFORM\v11.0\3D\DEF_ARM_CTL.COM"
 ## 快速上手
 
 需要从外部系统通过 HTTP 调用 DOE 采样、代理训练/评价、推理与优化时，使用
-[`mobo.api`](DOE_HTTP_API.md)。该入口通过 Flask 暴露 DOE HTTP 服务，并以 DOE ID
+[`mobo.api`](docs/api/DOE_HTTP_API.md)。该入口通过 Flask 暴露 DOE HTTP 服务，并以 DOE ID
 隔离模型和优化产物。
 
 启动后端并运行完整训练、推理和 NSGA-II 优化 Demo：
@@ -90,7 +90,17 @@ python -m mobo.api.demo
 ```
 
 详细部署、健康检查、端口配置和故障排查见
-[API 后端启动文档](src/mobo/api/BACKEND_STARTUP.md)。
+[API 后端启动文档](docs/deployment/BACKEND_STARTUP.md)。
+
+也可以通过 Docker Desktop / WSL2 构建完整 Linux 运行镜像并自动启动 API：
+
+```bash
+docker compose up --build -d
+curl http://127.0.0.1:5000/health
+```
+
+镜像包含 API、代理模型、优化、提取与批处理代码，`data` 和 `logs` 使用持久卷保存。
+构建、导出镜像及 CentOS Stream 8 部署方式见 [Docker 部署文档](docs/deployment/DOCKER_DEPLOYMENT.md)。
 
 样本、训练数据集、推理和优化结果可通过同一个 GET 接口按字段读取，端上无需解析文件：
 
@@ -153,24 +163,19 @@ value = spec.fn("data/keyfile/RINGROLL.KEY", samples=3000)
 
 ```
 Multi-obj-optimism/
-├── src/mobo/          # 源码（src-layout 单包，pip install -e . 后以 mobo 导入）
-├── tests/             # 单元测试（unit/）与集成测试（integration/）
-├── tools/             # 文档一致性等仓库维护工具
-├── .github/workflows/ # CI 与定期文档检查
-├── data/              # 本地运行数据与产物（整体忽略，不提交）
-├── logs/              # 运行日志（DEFORM 操作日志等，不纳入版本管理）
-├── pyproject.toml     # 打包与依赖配置、pytest/coverage 配置、CLI 入口点
-├── requirements.txt   # 依赖清单（供不走 pyproject 的场景参考）
-├── requirements-dev.txt / requirements-gui.txt # 开发测试与可选 GUI 锁定依赖
-├── setup_env.ps1      # Windows 一键环境安装脚本
-├── setup_env.sh       # 一键环境安装脚本（建 venv + CPU 版 torch + 本包）
-├── DOE_HTTP_API.md    # DOE HTTP 接口、请求字段和响应格式
-├── interface_protocol.md # Python 内部任务服务协议
-├── 接口参数文档.md     # 文档索引（保留历史中文入口）
-├── DEFORM_KEY_KEYWORDS.md # DEFORM KEY 关键字与能力映射
-├── README.md          # 本文件：总览、安装、上手、结构说明
-├── ARCHITECTURE.md    # 分层架构、模块职责表与数据流
-└── AGENTS.md          # AI 代理协作的硬约束与开发约定
+├── src/mobo/          # src-layout 单包源码
+├── tests/             # 单元测试与集成测试
+├── docs/              # 架构、API、部署和 DEFORM 文档知识库
+├── requirements/      # runtime/dev/gui/server 锁定依赖
+├── deploy/docker/     # Dockerfile 与 Gunicorn 配置
+├── scripts/           # 环境安装及运维/性能脚本
+├── tools/             # 仓库维护和文档一致性工具
+├── .github/workflows/ # CI 与定期检查
+├── data/ / logs/      # 本地运行产物（忽略，不提交）
+├── compose.yaml       # 本地和服务器容器编排入口
+├── pyproject.toml     # 包、依赖声明、CLI 与测试配置
+├── README.md          # 项目入口与快速上手
+└── AGENTS.md          # AI 代理开发约定
 ```
 
 ### 源码 `src/mobo/`
@@ -187,7 +192,7 @@ src/mobo/
 └── cli/          # mobo-surrogate、mobo-ga、mobo-rl、圆度与自动化演示入口
 ```
 
-具体模块职责以 [ARCHITECTURE.md](ARCHITECTURE.md) 为准，避免在多个文档中维护重复的
+具体模块职责以 [ARCHITECTURE.md](docs/ARCHITECTURE.md) 为准，避免在多个文档中维护重复的
 逐文件清单。
 
 ### 测试 `tests/`
@@ -231,7 +236,7 @@ ruff check src tests scripts tools  # 静态检查（语法、未定义名称、
 pytest -m "not slow"          # 默认跳过耗时（DNN 训练等）用例
 pytest                        # 全部用例
 pytest --cov=mobo             # 覆盖率
-python tools/check_docs.py    # 根文档、路由、CLI、包结构和链接一致性
+python tools/check_docs.py    # 文档知识库、路由、CLI、包结构和链接一致性
 ```
 
 - `slow`：keras/DNN 训练等耗时用例（默认跳过）。
@@ -241,13 +246,15 @@ python tools/check_docs.py    # 根文档、路由、CLI、包结构和链接一
 ## 文档知识库维护
 
 - [README.md](README.md)：项目入口、安装、启动和目录总览。
-- [DOE_HTTP_API.md](DOE_HTTP_API.md)：端上调用的唯一 HTTP 协议。
-- [interface_protocol.md](interface_protocol.md)：Python 内部任务服务协议。
-- [ARCHITECTURE.md](ARCHITECTURE.md)：分层、数据流、持久化和平台边界。
-- [DEFORM_KEY_KEYWORDS.md](DEFORM_KEY_KEYWORDS.md)：KEY 关键字与仓库能力映射。
-- [接口参数文档.md](接口参数文档.md)：兼容历史文件名的文档索引。
+- [docs/README.md](docs/README.md)：文档知识库导航与职责边界。
+- [DOE_HTTP_API.md](docs/api/DOE_HTTP_API.md)：端上调用的唯一 HTTP 协议。
+- [interface_protocol.md](docs/api/interface_protocol.md)：Python 内部任务服务协议。
+- [ARCHITECTURE.md](docs/ARCHITECTURE.md)：分层、数据流、持久化和平台边界。
+- [DOCKER_DEPLOYMENT.md](docs/deployment/DOCKER_DEPLOYMENT.md)：容器构建、数据卷、发布与服务器部署。
+- [DEFORM_KEY_KEYWORDS.md](docs/deform/DEFORM_KEY_KEYWORDS.md)：KEY 关键字与能力映射。
+- [接口参数文档.md](docs/api/接口参数文档.md)：兼容历史文件名的文档索引。
 
-`python tools/check_docs.py` 会检查根文档链接、HTTP 路由、CLI 入口、包/模块清单和文档
+`python tools/check_docs.py` 会检查知识库链接、HTTP 路由、CLI 入口、包/模块清单和文档
 快照。代码公共表面变化后，应先更新文档，再执行
 `python tools/check_docs.py --update-snapshot` 确认新的基线。GitHub Actions 会在相关
 变更以及每周一自动执行检查。

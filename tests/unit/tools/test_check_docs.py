@@ -1,4 +1,4 @@
-"""根文档一致性检查器测试。"""
+"""文档知识库一致性检查器测试。"""
 
 import importlib.util
 from pathlib import Path

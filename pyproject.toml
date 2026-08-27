@@ -12,7 +12,7 @@ authors = [{ name = "Hu Mingrui" }]
 license = { text = "Proprietary" }
 
 # 直接依赖（不含纯传递依赖与 GUI）。
-# 注意：torch 为 CPU 构建，请用 setup_env.sh 从 https://download.pytorch.org/whl/cpu 安装；
+# 注意：torch 为 CPU 构建，请用 scripts/setup_env.sh 从 https://download.pytorch.org/whl/cpu 安装；
 # 此处仅声明版本下限，避免 pip 从 PyPI 拉取 GPU 版及大量 CUDA 包。
 dependencies = [
     "numpy",

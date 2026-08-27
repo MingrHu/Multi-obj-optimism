@@ -1,4 +1,4 @@
-"""检查根文档与仓库公共表面是否一致，仅依赖 Python 标准库。"""
+"""检查文档知识库与仓库公共表面是否一致，仅依赖 Python 标准库。"""
 
 from __future__ import annotations
 
@@ -13,16 +13,18 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 SNAPSHOT = ROOT / "tools" / "docs_surface.json"
-REQUIRED_ROOT_DOCS = {
+REQUIRED_DOCS = {
     "AGENTS.md",
-    "ARCHITECTURE.md",
-    "DEFORM_KEY_KEYWORDS.md",
-    "DOE_HTTP_API.md",
     "README.md",
-    "interface_protocol.md",
-    "接口参数文档.md",
+    "docs/README.md",
+    "docs/ARCHITECTURE.md",
+    "docs/api/DOE_HTTP_API.md",
+    "docs/api/interface_protocol.md",
+    "docs/api/接口参数文档.md",
+    "docs/deform/DEFORM_KEY_KEYWORDS.md",
+    "docs/deployment/BACKEND_STARTUP.md",
+    "docs/deployment/DOCKER_DEPLOYMENT.md",
 }
-EXTRA_DOCS = (ROOT / "src" / "mobo" / "api" / "BACKEND_STARTUP.md",)
 LINK_PATTERN = re.compile(r"(?<!!)\[[^]]+\]\(([^)]+)\)")
 ENV_PATTERN = re.compile(r"\bMOBO_[A-Z0-9_]+\b")
 
@@ -80,7 +82,10 @@ def extract_modules(root: Path) -> list[str]:
 
 def extract_environment_variables(root: Path) -> list[str]:
     variables: set[str] = set()
-    candidates = [*root.glob("setup_env.*"), *(root / "src" / "mobo").rglob("*.py")]
+    candidates = [
+        *(root / "scripts").glob("setup_env.*"),
+        *(root / "src" / "mobo").rglob("*.py"),
+    ]
     for path in candidates:
         variables.update(ENV_PATTERN.findall(path.read_text(encoding="utf-8")))
     return sorted(variables)
@@ -104,12 +109,15 @@ def build_surface(root: Path = ROOT) -> dict[str, Any]:
 
 
 def _document_paths(root: Path) -> list[Path]:
-    return [*sorted(root.glob("*.md")), *(root / path.relative_to(ROOT) for path in EXTRA_DOCS)]
+    return [
+        *sorted(root.glob("*.md")),
+        *sorted((root / "docs").rglob("*.md")),
+        root / "tools" / "README.md",
+    ]
 
 
 def _check_required_docs(root: Path) -> list[str]:
-    present = {path.name for path in root.glob("*.md")}
-    return [f"缺少根文档：{name}" for name in sorted(REQUIRED_ROOT_DOCS - present)]
+    return [f"缺少文档：{path}" for path in sorted(REQUIRED_DOCS) if not (root / path).is_file()]
 
 
 def _check_links(root: Path) -> list[str]:
@@ -132,10 +140,10 @@ def _check_links(root: Path) -> list[str]:
 
 def _check_document_coverage(root: Path, surface: dict[str, Any]) -> list[str]:
     errors: list[str] = []
-    api_text = (root / "DOE_HTTP_API.md").read_text(encoding="utf-8")
+    api_text = (root / "docs" / "api" / "DOE_HTTP_API.md").read_text(encoding="utf-8")
     readme = (root / "README.md").read_text(encoding="utf-8")
     agents = (root / "AGENTS.md").read_text(encoding="utf-8")
-    architecture = (root / "ARCHITECTURE.md").read_text(encoding="utf-8")
+    architecture = (root / "docs" / "ARCHITECTURE.md").read_text(encoding="utf-8")
 
     for route in surface["api_routes"]:
         signature = f"{route['method']} {route['path']}"
@@ -156,8 +164,10 @@ def _check_document_coverage(root: Path, surface: dict[str, Any]) -> list[str]:
         errors.append("README.md 和 AGENTS.md 必须记录文档检查命令")
 
     current_protocols = [
-        root / "README.md", root / "DOE_HTTP_API.md", root / "interface_protocol.md",
-        root / "接口参数文档.md",
+        root / "README.md",
+        root / "docs" / "api" / "DOE_HTTP_API.md",
+        root / "docs" / "api" / "interface_protocol.md",
+        root / "docs" / "api" / "接口参数文档.md",
     ]
     for document in current_protocols:
         text = document.read_text(encoding="utf-8")

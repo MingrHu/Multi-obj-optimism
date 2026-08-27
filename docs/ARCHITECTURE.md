@@ -32,7 +32,7 @@
 对外系统不直接依赖 CLI 或历史算法类，而是通过 `mobo.api` 的 Flask HTTP 服务调用
 DOE 聚合服务。路由层位于 `api.handler`，实际处理层位于 `api.service`，每个 DOE 的
 样本、模型、训练与优化信息统一落盘到 `data/doe_tasks/<id>`。详细协议见
-`DOE_HTTP_API.md`。
+[`DOE_HTTP_API.md`](api/DOE_HTTP_API.md)。
 
 - **common**：最底层基础设施，被其余所有子包依赖。
 - **surrogate / optimization / extraction / automation**：业务子包。
@@ -110,8 +110,8 @@ DOE 聚合服务。路由层位于 `api.handler`，实际处理层位于 `api.se
 - 推理响应按请求的 `fields` 返回，同时在 `inference.values` 保存最近一次完整目标结果。
 - `GET /api/v1/hust/doe/data/get` 根据 `id`、`data_type` 和重复的 `fields` 参数读取指定列，
   端上无需访问或解析服务端文件路径。
-- HTTP 唯一协议入口是 `DOE_HTTP_API.md`；Python 内部任务接口记录在
-  `interface_protocol.md`。
+- HTTP 唯一协议入口是 [`DOE_HTTP_API.md`](api/DOE_HTTP_API.md)；Python 内部任务接口记录在
+  [`interface_protocol.md`](api/interface_protocol.md)。
 
 ## 原子能力层机制（extraction）
 
@@ -211,10 +211,16 @@ pytest 的输出捕获。现调整为：
 
 路径拼接已从 Windows 反斜杠改为跨平台的 `os.path.join`，其余逻辑不变。
 
+Docker 镜像包含整个 Python 包，包括 `automation` 批处理代码，但以 Linux 用户空间运行，
+因此同样不能执行 Windows DEFORM 程序。容器默认由 Gunicorn 单 worker、多线程承载 API；
+单 worker 是因为训练、优化及中止控制当前使用进程内运行时协调。运行数据和日志分别挂载到
+`/app/data` 与 `/app/logs`，镜像更新不覆盖任务产物。构建和发布流程见
+[DOCKER_DEPLOYMENT.md](deployment/DOCKER_DEPLOYMENT.md)。
+
 ## 文档一致性边界
 
 `tools/check_docs.py` 使用 Python 标准库静态提取 Flask 路由、`pyproject.toml` CLI 入口、
-源码包/模块、环境变量和 pytest marker，并检查根文档中的本地链接与对应协议覆盖。
+源码包/模块、环境变量和 pytest marker，并检查文档知识库中的本地链接与对应协议覆盖。
 `tools/docs_surface.json` 保存人工确认后的公共表面快照；代码公共表面变化但文档/快照未
 同步时，检查会失败。`.github/workflows/docs-consistency.yml` 在相关提交、拉取请求以及
 每周定时执行该检查。

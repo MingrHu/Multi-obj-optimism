@@ -4,18 +4,26 @@ on:
   push:
     paths:
       - "*.md"
+      - "docs/**"
       - "src/**"
       - "tools/**"
+      - "deploy/**"
+      - "requirements/**"
       - "pyproject.toml"
-      - "setup_env.*"
+      - "compose.yaml"
+      - "scripts/setup_env.*"
       - ".github/workflows/docs-consistency.yml"
   pull_request:
     paths:
       - "*.md"
+      - "docs/**"
       - "src/**"
       - "tools/**"
+      - "deploy/**"
+      - "requirements/**"
       - "pyproject.toml"
-      - "setup_env.*"
+      - "compose.yaml"
+      - "scripts/setup_env.*"
       - ".github/workflows/docs-consistency.yml"
   schedule:
     - cron: "0 1 * * 1"

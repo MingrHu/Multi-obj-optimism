@@ -1,0 +1,27 @@
+services:
+  mobo-api:
+    build:
+      context: .
+      dockerfile: deploy/docker/Dockerfile
+    image: mobo-api:${MOBO_IMAGE_TAG:-1.0.0}
+    container_name: mobo-api
+    init: true
+    restart: unless-stopped
+    ports:
+      - "${MOBO_HTTP_PORT:-5000}:5000"
+    environment:
+      MOBO_PROJECT_DIR: /app
+      MOBO_DATA_DIR: /app/data
+      MOBO_API_HOST: 0.0.0.0
+      MOBO_API_PORT: 5000
+      MOBO_GUNICORN_THREADS: ${MOBO_GUNICORN_THREADS:-4}
+      MOBO_GUNICORN_TIMEOUT: ${MOBO_GUNICORN_TIMEOUT:-300}
+      TF_CPP_MIN_LOG_LEVEL: ${TF_CPP_MIN_LOG_LEVEL:-2}
+    volumes:
+      - mobo-data:/app/data
+      - mobo-logs:/app/logs
+    stop_grace_period: 30s
+
+volumes:
+  mobo-data:
+  mobo-logs:

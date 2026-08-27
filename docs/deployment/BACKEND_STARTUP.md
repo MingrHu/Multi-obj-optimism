@@ -34,33 +34,33 @@
 
 ```powershell
 Set-ExecutionPolicy -Scope Process Bypass
-.\setup_env.ps1
+.\scripts\setup_env.ps1
 .\.venv\Scripts\Activate.ps1
 ```
 
 如果 `.venv` 来自已经卸载或移动的 Python，使用重新创建参数
 
 ```powershell
-.\setup_env.ps1 -Recreate
+.\scripts\setup_env.ps1 -Recreate
 ```
 
 如果系统中的 `py` 没有注册 Python 3.11 或 3.12，可直接指定解释器
 
 ```powershell
-.\setup_env.ps1 -Recreate -PythonPath "C:\Python312\python.exe"
+.\scripts\setup_env.ps1 -Recreate -PythonPath "C:\Python312\python.exe"
 ```
 
 ### Linux 或 macOS
 
 ```bash
-bash setup_env.sh
+bash scripts/setup_env.sh
 source .venv/bin/activate
 ```
 
 需要重新创建虚拟环境时执行
 
 ```bash
-bash setup_env.sh --recreate
+bash scripts/setup_env.sh --recreate
 source .venv/bin/activate
 ```
 
@@ -70,6 +70,15 @@ source .venv/bin/activate
 
 `mobo-api` 使用 Flask 内置服务，适用于本地开发、接口联调和完整 Demo 验证
 正式生产部署时应由生产级 WSGI 服务承载 `mobo.api.app:create_app`
+
+本仓库提供的 Docker 方案已使用 Gunicorn 承载，并在容器启动时自动启动 API：
+
+```bash
+docker compose up --build -d
+curl http://127.0.0.1:5000/health
+```
+
+完整说明见 [`DOCKER_DEPLOYMENT.md`](DOCKER_DEPLOYMENT.md)。
 
 打开第一个终端，激活虚拟环境后执行
 
@@ -204,7 +213,7 @@ data/doe_tasks/<demo_doe_id>/
 说明 `.venv` 绑定的基础 Python 已失效，重新创建即可
 
 ```powershell
-.\setup_env.ps1 -Recreate
+.\scripts\setup_env.ps1 -Recreate
 ```
 
 ### 端口已被占用
@@ -231,6 +240,7 @@ GET /api/v1/hust/doe/optimize/getById?id=<doe_id>
 
 ## 8 相关文档
 
-- HTTP 接口定义见 [`DOE_HTTP_API.md`](../../../DOE_HTTP_API.md)
-- 分层结构见 [`ARCHITECTURE.md`](../../../ARCHITECTURE.md)
-- 环境及项目总览见 [`README.md`](../../../README.md)
+- HTTP 接口定义见 [`DOE_HTTP_API.md`](../api/DOE_HTTP_API.md)
+- 分层结构见 [`ARCHITECTURE.md`](../ARCHITECTURE.md)
+- 环境及项目总览见 [`README.md`](../../README.md)
+- Docker 构建和部署见 [`DOCKER_DEPLOYMENT.md`](DOCKER_DEPLOYMENT.md)

@@ -1,11 +1,11 @@
 # =============================================================================
-# 完整锁定依赖清单（用于精确复现环境）。
+# 完整锁定运行依赖清单（用于精确复现环境）。
 #
-# 推荐安装方式见 setup_env.sh / pyproject.toml：
+# 推荐安装方式见 scripts/setup_env.sh / pyproject.toml：
 #   - 核心直接依赖已在 pyproject.toml 的 [project].dependencies 声明；
 #   - torch 请从 CPU 源安装：pip install torch==2.10.0 --index-url \
 #       https://download.pytorch.org/whl/cpu （避免拉取 GPU 版与大量 CUDA 包）；
-#   - GUI 依赖见 requirements-gui.txt；开发/测试依赖见 requirements-dev.txt。
+#   - GUI 依赖见 requirements/gui.txt；开发/测试依赖见 requirements/dev.txt。
 #   - 支持 Python 3.11/3.12；DEFORM 自动化仅支持已安装 DEFORM 的 Windows。
 # =============================================================================
 about-time==4.2.1

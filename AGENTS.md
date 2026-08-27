@@ -1,7 +1,7 @@
 # AGENTS.md · 面向 AI 代理的开发约定
 
 本文件约定在本仓库中协作开发时的硬性规则与惯例。修改代码前请先阅读
-[ARCHITECTURE.md](ARCHITECTURE.md) 了解分层结构。
+[ARCHITECTURE.md](docs/ARCHITECTURE.md) 了解分层结构。
 
 ## 硬约束
 
@@ -46,13 +46,13 @@
 
 ## HTTP API 规范
 
-- 外部系统只依赖 `mobo.api` 和 [DOE_HTTP_API.md](DOE_HTTP_API.md)，不要直接耦合 CLI、
+- 外部系统只依赖 `mobo.api` 和 [DOE_HTTP_API.md](docs/api/DOE_HTTP_API.md)，不要直接耦合 CLI、
   历史算法入口或 `data/tasks` 内部状态。
 - 路由层 `api.handler` 只解析 HTTP 参数和组装统一响应；实际处理放在 `api.service`。
 - 只读查询使用 GET，创建、训练、推理、优化、停止和删除操作使用 POST。
 - 样本、训练数据集和优化结果文件均为无表头 TSV；字段顺序必须写入 DOE 状态。
 - 端上按字段取数统一使用 `GET /api/v1/hust/doe/data/get`，不要要求端上读取服务端路径。
-- 新增或修改路由时必须同步 `DOE_HTTP_API.md`、HTTP 单元测试和 `mobo.api.demo`。
+- 新增或修改路由时必须同步 `docs/api/DOE_HTTP_API.md`、HTTP 单元测试和 `mobo.api.demo`。
 
 ## 新增「原子提取能力」的方式
 
@@ -82,7 +82,7 @@
 
 ## 文档维护
 
-- 根文档的职责以 [README.md](README.md)“文档知识库维护”一节为准；同一协议只保留一个
+- 文档职责以 [README.md](README.md)“文档知识库维护”一节为准；同一协议只保留一个
   维护入口，其他历史文件只做索引，不复制正文。
 - 修改 API 路由、CLI 入口、环境变量、包/模块结构或 pytest marker 时，必须同步对应文档。
 - 完成文档更新后运行 `python tools/check_docs.py`。公共表面确实发生变化时，在人工确认
@@ -93,10 +93,10 @@
 ## 常用命令
 
 ```bash
-bash setup_env.sh                 # 安装环境（CPU torch + 本包 + dev）
+bash scripts/setup_env.sh         # 安装环境（CPU torch + 本包 + dev）
 pytest -m "not slow"              # 跑测试
 pytest --cov=mobo                 # 覆盖率
-python tools/check_docs.py        # 根文档与公共表面一致性
+python tools/check_docs.py        # 文档知识库与公共表面一致性
 mobo-api / mobo-ga / mobo-rl / mobo-surrogate / mobo-ring-roundness   # CLI 入口
 ```
 

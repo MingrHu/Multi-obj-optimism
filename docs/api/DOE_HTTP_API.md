@@ -3,8 +3,11 @@
 服务启动：`mobo-api`，默认监听 `0.0.0.0:5000`。可通过 `MOBO_API_HOST` 和
 `MOBO_API_PORT` 修改。客户端示例：`python -m mobo.api.demo`。
 
+Docker 环境可执行 `docker compose up --build -d`，容器会自动使用 Gunicorn 启动服务；
+详见 [Docker 部署文档](../deployment/DOCKER_DEPLOYMENT.md)。
+
 从环境安装到完整优化 Demo 的逐步操作见
-[API 后端启动文档](src/mobo/api/BACKEND_STARTUP.md)。
+[API 后端启动文档](../deployment/BACKEND_STARTUP.md)。
 
 ## 通用响应
 

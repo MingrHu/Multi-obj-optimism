@@ -12,16 +12,17 @@
 #   7. 自检导入
 #
 # 用法：
-#   bash setup_env.sh              # 安装核心 + 开发依赖
-#   bash setup_env.sh --with-gui   # 额外安装 GUI 依赖
-#   bash setup_env.sh --recreate   # 删除并重建失效的 .venv
+#   bash scripts/setup_env.sh              # 安装核心 + 开发依赖
+#   bash scripts/setup_env.sh --with-gui   # 额外安装 GUI 依赖
+#   bash scripts/setup_env.sh --recreate   # 删除并重建失效的 .venv
 # =============================================================================
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # ---- 可配置项 ----
-VENV_DIR="$SCRIPT_DIR/.venv"
+VENV_DIR="$PROJECT_DIR/.venv"
 TORCH_VERSION="2.10.0"
 TORCH_CPU_INDEX="https://download.pytorch.org/whl/cpu"
 # PyPI 镜像（留空则使用默认源）。国内可设为 https://mirrors.aliyun.com/pypi/simple/
@@ -55,7 +56,7 @@ echo "==> 使用 $($PYTHON --version)"
 
 # ---- 2. 创建虚拟环境 ----
 if [ "$RECREATE" -eq 1 ] && [ -d "$VENV_DIR" ]; then
-    if [ "$VENV_DIR" != "$SCRIPT_DIR/.venv" ]; then
+    if [ "$VENV_DIR" != "$PROJECT_DIR/.venv" ]; then
         echo "错误：拒绝删除非预期虚拟环境目录 $VENV_DIR"
         exit 1
     fi
@@ -69,7 +70,7 @@ else
     echo "==> 虚拟环境 $VENV_DIR 已存在，复用"
 fi
 if [ ! -x "$VENV_DIR/bin/python" ]; then
-    echo "错误：现有虚拟环境不可用，请重新运行 bash setup_env.sh --recreate"
+    echo "错误：现有虚拟环境不可用，请重新运行 bash scripts/setup_env.sh --recreate"
     exit 1
 fi
 # shellcheck disable=SC1091
@@ -91,13 +92,13 @@ python -m pip install "torch==${TORCH_VERSION}" --index-url "$TORCH_CPU_INDEX"
 
 # ---- 5. 安装本包 + 开发依赖 ----
 echo "==> 安装锁定的运行时、开发依赖并以可编辑模式安装 mobo"
-python -m pip install -r "$SCRIPT_DIR/requirements-dev.txt" "${PIP_ARGS[@]}"
-python -m pip install -e "$SCRIPT_DIR" --no-deps
+python -m pip install -r "$PROJECT_DIR/requirements/dev.txt" "${PIP_ARGS[@]}"
+python -m pip install -e "$PROJECT_DIR" --no-deps
 
 # ---- 6. 可选 GUI ----
 if [ "$WITH_GUI" -eq 1 ]; then
     echo "==> 安装 GUI 依赖 (PySide6)"
-    python -m pip install -r "$SCRIPT_DIR/requirements-gui.txt" "${PIP_ARGS[@]}"
+    python -m pip install -r "$PROJECT_DIR/requirements/gui.txt" "${PIP_ARGS[@]}"
 fi
 
 # ---- 7. 自检 ----

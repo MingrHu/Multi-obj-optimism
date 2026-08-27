@@ -57,6 +57,7 @@ Desktop.ini
 ~$*
 *.bak
 *.orig
+*.tar
 data/AUTO
 data/TEST/
 data/keyfile
