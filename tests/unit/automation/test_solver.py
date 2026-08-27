@@ -26,7 +26,7 @@ def test_db_to_key_command_string(monkeypatch):
     assert captured["cmd"] == "E\n2\n2\nin.DB\n5\nE\nE\n8\nout.KEY\nE\nY\n"
 
 
-def test_db_to_key_exports_are_serialized(monkeypatch):
+def test_all_pre_operations_are_serialized(monkeypatch):
     active = 0
     max_active = 0
     counter_lock = threading.Lock()
@@ -40,10 +40,12 @@ def test_db_to_key_exports_are_serialized(monkeypatch):
         with counter_lock:
             active -= 1
 
-    monkeypatch.setattr(solver, "_run_pre_with_commands", fake_run)
+    monkeypatch.setattr(solver, "_run_pre_with_commands_unlocked", fake_run)
     threads = [
-        threading.Thread(target=solver.db_to_key, args=(f"{index}.DB", f"{index}.KEY"))
-        for index in range(8)
+        threading.Thread(target=solver.db_to_key, args=("0.DB", "0.KEY")),
+        threading.Thread(target=solver.run_key_actions, args=("transition.KEY",)),
+        threading.Thread(target=solver.key_to_db, args=("input.KEY", "result.DB")),
+        threading.Thread(target=solver.db_to_key, args=("1.DB", "1.KEY")),
     ]
     for thread in threads:
         thread.start()

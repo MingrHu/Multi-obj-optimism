@@ -33,8 +33,8 @@ DEF_ARM_CTL = os.environ.get("MOBO_DEF_ARM_CTL", "DEF_ARM_CTL.COM")
 # DEFORM 操作日志路径（集中到 LOGS_DIR）
 _OPERATION_LOG = os.path.join(str(LOGS_DIR), "deform_operation.log")
 
-# DEF_PRE_64 的 DB→KEY 导出不支持同一进程内并发执行。
-_DB_TO_KEY_LOCK = threading.Lock()
+# DEF_PRE_64 的全部前处理操作在同一进程内串行执行。
+_PRE_LOCK = threading.Lock()
 
 
 def _run_pre_with_commands(commands: str) -> str:
@@ -42,6 +42,12 @@ def _run_pre_with_commands(commands: str) -> str:
 
     :param commands: 发送给 DEF_PRE_64 的完整命令串（含换行）
     """
+    with _PRE_LOCK:
+        return _run_pre_with_commands_unlocked(commands)
+
+
+def _run_pre_with_commands_unlocked(commands: str) -> str:
+    """执行一个已经取得全局前处理锁的 DEF_PRE_64 命令。"""
     os.makedirs(str(LOGS_DIR), exist_ok=True)
     fd, cmd_file = tempfile.mkstemp(prefix="deform_pre_", suffix=".txt", text=True)
     output_lines: List[str] = []
@@ -99,8 +105,7 @@ def db_to_key(db_path: str, key_path: str, step: str = "") -> None:
     :param step: 导出的步数（需准确，否则 DEFORM 报错）
     """
     commands = f"E\n2\n2\n{db_path}\n{step}\nE\nE\n8\n{key_path}\nE\nY\n"
-    with _DB_TO_KEY_LOCK:
-        _run_pre_with_commands(commands)
+    _run_pre_with_commands(commands)
 
 
 def query_db_steps(db_path: str) -> List[int]:
