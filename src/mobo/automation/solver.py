@@ -139,6 +139,8 @@ def solve_db_sync(db_path: str) -> None:
     process = subprocess.Popen(
         DEF_ARM_CTL,
         stdin=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.STDOUT,
         shell=False,
         cwd=work_dir,
         text=True,

@@ -88,6 +88,7 @@ def test_solve_db_sync_accepts_deform_normal_end_markers(
     monkeypatch, tmp_path, normal_marker
 ):
     written = []
+    popen_kwargs = {}
 
     class _Stdin:
         def write(self, value):
@@ -105,13 +106,19 @@ def test_solve_db_sync_accepts_deform_normal_end_markers(
         def wait(self):
             return 0
 
-    monkeypatch.setattr(solver.subprocess, "Popen", lambda *args, **kwargs: _Process())
+    def fake_popen(*args, **kwargs):
+        popen_kwargs.update(kwargs)
+        return _Process()
+
+    monkeypatch.setattr(solver.subprocess, "Popen", fake_popen)
     db_path = tmp_path / "sample.DB"
     (tmp_path / "sample.LOG").write_text(normal_marker + "\n", encoding="utf-8")
     (tmp_path / "FOR003").write_text("residue", encoding="utf-8")
     (tmp_path / "FOR003.LOCK").write_text("residue", encoding="utf-8")
     solver.solve_db_sync(str(db_path))
     assert written == ["sample\nB\n"]
+    assert popen_kwargs["stdout"] is solver.subprocess.DEVNULL
+    assert popen_kwargs["stderr"] is solver.subprocess.STDOUT
     assert not (tmp_path / "FOR003").exists()
     assert not (tmp_path / "FOR003.LOCK").exists()
 
