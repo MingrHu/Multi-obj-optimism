@@ -164,6 +164,72 @@ def test_prepare_parameterized_keys_reuses_existing_outputs(tmp_path):
     assert Path(generated[1]).read_text(encoding="utf-8") == "existing-key"
 
 
+def test_sample_range_uses_global_indices_for_keys_state_and_run(tmp_path):
+    operations = _operations(tmp_path)
+    samples = tmp_path / "samples.txt"
+    samples.write_text(
+        "900\t800\n901\t801\n902\t802\n903\t803\n",
+        encoding="utf-8",
+    )
+    work_dir = tmp_path / "runs"
+    completed_indices = []
+    task = MultiOperationTask(
+        "multi", str(samples), operations, str(work_dir), dry_run=True,
+        sample_start=2, sample_end=4,
+        on_sample_completed=completed_indices.append,
+    )
+
+    generated = [Path(path) for path in task.prepare_parameterized_keys()]
+
+    assert task.sample_indices == [2, 3]
+    assert set(task.state["samples"]) == {"2", "3"}
+    assert task.state["global_total"] == 4
+    assert task.state["total"] == 2
+    assert {path.parts[-3] for path in generated} == {"2", "3"}
+    assert "9.0200000000E+002" in generated[0].read_text(encoding="utf-8")
+    assert task.run()["completed"] == 2
+    assert completed_indices == [2, 3]
+    assert not (work_dir / "0").exists()
+    assert not (work_dir / "1").exists()
+    assert (work_dir / "2" / "op2" / "terminal.KEY").exists()
+    assert (work_dir / "3" / "op2" / "terminal.KEY").exists()
+
+
+@pytest.mark.parametrize("sample_start,sample_end", [
+    (-1, 2), (0, 0), (2, 2), (0, 5), (3, 2),
+])
+def test_sample_range_rejects_invalid_bounds(
+    tmp_path, sample_start, sample_end
+):
+    operations = _operations(tmp_path)
+    samples = tmp_path / "samples.txt"
+    samples.write_text("900\t800\n901\t801\n902\t802\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="样本范围必须满足"):
+        MultiOperationTask(
+            "multi", str(samples), operations, str(tmp_path / "runs"),
+            dry_run=True, sample_start=sample_start, sample_end=sample_end,
+        )
+
+
+def test_sample_range_resume_rejects_changed_sample_file(tmp_path):
+    operations = _operations(tmp_path)
+    samples = tmp_path / "samples.txt"
+    samples.write_text("900\t800\n901\t801\n902\t802\n", encoding="utf-8")
+    state_file = tmp_path / "state.json"
+    MultiOperationTask(
+        "multi", str(samples), operations, str(tmp_path / "runs"),
+        dry_run=True, state_file=str(state_file), sample_start=1, sample_end=3,
+    )
+    samples.write_text("900\t800\n999\t899\n902\t802\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="采样数据已发生变化"):
+        MultiOperationTask(
+            "multi", str(samples), operations, str(tmp_path / "runs"),
+            dry_run=True, state_file=str(state_file), sample_start=1, sample_end=3,
+        )
+
+
 def test_prepare_initial_db_reuses_existing_keys_and_db(tmp_path, monkeypatch):
     operations = _operations(tmp_path)
     samples = tmp_path / "samples.txt"

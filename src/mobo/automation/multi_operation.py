@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -215,6 +216,8 @@ class MultiOperationTask:
     :param keep_checkpoints: 是否在每个工步目录保存 ``checkpoint.DB``
     :param dry_run: 为 True 时不调用 DEFORM，只生成文件并推进状态，用于测试
     :param state_file: 逐样本、逐工步恢复状态文件；未指定时保存到工作目录
+    :param sample_start: 本分片处理的全局样本起始下标（从 0 开始）
+    :param sample_end: 本分片处理的全局样本结束下标（不包含）；默认处理到文件末尾
     :param on_sample_completed: 单个样本全部工步完成后的可选回调，参数为样本序号；
         增量数据集功能通过该回调接入
 
@@ -226,7 +229,8 @@ class MultiOperationTask:
                  work_dir: str, max_parallel_samples: int = 1,
                  keep_checkpoints: bool = True, dry_run: bool = False,
                  state_file: str | None = None,
-                 on_sample_completed: Callable[[int], None] | None = None) -> None:
+                 on_sample_completed: Callable[[int], None] | None = None,
+                 sample_start: int = 0, sample_end: int | None = None) -> None:
         if len(operations) < 2:
             raise ValueError("多工步任务至少需要两个工步")
         self.task_id = task_id
@@ -245,6 +249,17 @@ class MultiOperationTask:
         expected = sum(len(_parameters(op)) for op in self.operations)
         if any(len(row) != expected for row in self.samples):
             raise ValueError(f"样本列数必须为 {expected}")
+        self.global_total = len(self.samples)
+        self.sample_start = int(sample_start)
+        self.sample_end = self.global_total if sample_end is None else int(sample_end)
+        if not 0 <= self.sample_start < self.sample_end <= self.global_total:
+            raise ValueError(
+                f"样本范围必须满足 0 <= start < end <= {self.global_total}，"
+                f"当前为 [{self.sample_start}, {self.sample_end})"
+            )
+        self.sample_indices = list(range(self.sample_start, self.sample_end))
+        with open(self.sample_file, "rb") as stream:
+            self.sample_file_sha256 = hashlib.sha256(stream.read()).hexdigest()
         os.makedirs(self.work_dir, exist_ok=True)
         self.state = self._load_or_init_state()
 
@@ -252,19 +267,41 @@ class MultiOperationTask:
         if os.path.exists(self.state_file):
             with open(self.state_file, "r", encoding="utf-8") as f:
                 state = json.load(f)
+            expected_samples = {str(index) for index in self.sample_indices}
+            actual_samples = set((state.get("samples") or {}).keys())
+            if actual_samples != expected_samples:
+                raise ValueError(
+                    f"状态文件样本范围与当前分片不一致: {self.state_file}"
+                )
+            stored_hash = state.get("sample_file_sha256")
+            if stored_hash and stored_hash != self.sample_file_sha256:
+                raise ValueError(f"状态文件对应的采样数据已发生变化: {self.sample_file}")
+            state.update({
+                "version": 3,
+                "global_total": self.global_total,
+                "sample_start": self.sample_start,
+                "sample_end": self.sample_end,
+                "sample_file_sha256": self.sample_file_sha256,
+            })
             self._refresh_summary(state)
             _atomic_json(self.state_file, state)
             return state
         samples = {}
-        for sample_index in range(len(self.samples)):
+        for sample_index in self.sample_indices:
             samples[str(sample_index)] = {
                 "status": "pending", "current_operation": 1,
                 "operations": {str(i): {"status": "pending", "phase": "pending",
                                               "attempts": 0, "error": ""}
                                for i in range(1, len(self.operations) + 1)},
             }
-        state = {"version": 2, "task_id": self.task_id, "status": "pending",
-                 "created_at": _now(), "updated_at": _now(), "samples": samples}
+        state = {
+            "version": 3, "task_id": self.task_id, "status": "pending",
+            "created_at": _now(), "updated_at": _now(), "samples": samples,
+            "global_total": self.global_total,
+            "sample_start": self.sample_start,
+            "sample_end": self.sample_end,
+            "sample_file_sha256": self.sample_file_sha256,
+        }
         self._refresh_summary(state)
         _atomic_json(self.state_file, state)
         return state
@@ -315,7 +352,7 @@ class MultiOperationTask:
         generated: List[str] = []
         created_count = 0
         reused_count = 0
-        for sample_index in range(len(self.samples)):
+        for sample_index in self.sample_indices:
             sample_dir = os.path.join(self.work_dir, str(sample_index))
             for operation_index, operation in enumerate(self.operations, 1):
                 operation_dir = os.path.join(sample_dir, f"op{operation_index}")
@@ -351,7 +388,7 @@ class MultiOperationTask:
         """返回全部参数化 KEY 的确定性路径，不执行文件生成。"""
         return [
             self._parameterized_key_path(sample_index, operation_index)
-            for sample_index in range(len(self.samples))
+            for sample_index in self.sample_indices
             for operation_index in range(1, len(self.operations) + 1)
         ]
 
@@ -363,7 +400,7 @@ class MultiOperationTask:
             generated = self.prepare_parameterized_keys()
         first_keys = generated[::len(self.operations)]
         db_files: List[str] = []
-        for sample_index, key_path in enumerate(first_keys):
+        for sample_index, key_path in zip(self.sample_indices, first_keys, strict=True):
             sample_state = self.state["samples"][str(sample_index)]
             op_state = sample_state["operations"]["1"]
             operation_dir = self._operation_dir(sample_index, 1)
@@ -630,11 +667,11 @@ class MultiOperationTask:
         )
         # 2 如果有回调 先调用已完成样本的回调
         if self.on_sample_completed is not None:
-            for sample_index in range(len(self.samples)):
+            for sample_index in self.sample_indices:
                 if self.state["samples"][str(sample_index)]["status"] == "completed":
                     self.on_sample_completed(sample_index)
         # 3 线程池并行执行未完成样本
-        pending = [i for i in range(len(self.samples))
+        pending = [i for i in self.sample_indices
                    if self.state["samples"][str(i)]["status"] != "completed"]
         errors = []
         with ThreadPoolExecutor(max_workers=self.max_parallel_samples) as executor:

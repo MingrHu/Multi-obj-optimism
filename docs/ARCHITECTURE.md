@@ -168,6 +168,11 @@ TC4 碾环多工步任务由 `task_collection.TC4_RING_MULTI_TASK_1` 完整定�
 - 多工步样本按工步归档产物：`runs/<sample>/op<n>/` 内集中保存
   `<模板名>_parameterized.KEY`、`result.DB`、`terminal.KEY`、`checkpoint.DB`、
   DEFORM 日志及换模 KEY；下一工步从前一工步 DB 副本继续计算。
+- 多工步可通过 `sample_start` 与 `sample_end` 只处理完整采样 TXT 的指定行范围；
+  范围使用从 0 开始、结束下标不包含的全局样本编号，因此不同机器生成的
+  `runs/<sample>/` 可以无冲突汇总。分片状态文件使用
+  `multi_operation_state_<start>_<end>.json`，并记录完整采样文件哈希；默认完整范围仍使用
+  历史文件名 `multi_operation_state.json`。
 - 任务状态集中在 `data/tasks/<task_id>/`：`state.json` 记录任务阶段，多工步的
   `multi_operation_state.json` 记录逐样本/逐工步恢复状态，单工步的
   `process_info.json` 记录逐 DB 求解进度；启用增量数据集后，
@@ -185,7 +190,8 @@ TC4 碾环多工步任务由 `task_collection.TC4_RING_MULTI_TASK_1` 完整定�
   `<res_txt_path>/<task_id>_incremental_result.txt`。
 - 多工步调用 `init_multi_operation_task(..., incremental=True)` 启用；每个样本的最终
   工步完成后立即使用各工步终态 KEY 提取该样本，结果固定保存到任务工作区的
-  `results` 目录。
+  `results` 目录。指定样本范围后，增量状态与结果文件同样附带 `<start>_<end>` 后缀，
+  各机器独立写入，数据行仍以完整采样 TXT 的全局样本序号排序。
 - 检查点以样本序号为主键，重复恢复只覆盖同一行；数据集始终按样本序号排序，并通过
   临时文件加 `os.replace` 原子更新。求解已完成而提取未完成的样本会在续跑时补提取。
 

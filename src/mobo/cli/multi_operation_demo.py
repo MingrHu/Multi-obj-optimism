@@ -16,9 +16,15 @@ _TASK_ID = _TASK.task_id
 # 采样方式只需在这里修改：
 # - "lhs"：随机生成 _LHS_SAMPLE_COUNT 个样本；
 # - "full"：按 _FULL_LEVEL_NUMS 生成全因子样本。
-_SAMPLE_METHOD = "full"
+_SAMPLE_METHOD = "lhs"
 _LHS_SAMPLE_COUNT = 256
 _FULL_LEVEL_NUMS = (1, 1, 1, 1, 1, 1)
+
+# 只处理完整采样 TXT 的指定行范围：从 0 开始，结束下标不包含。
+# 例如 300 个样本分两台机器：机器 A 使用 (0, 200)，机器 B 使用 (200, 300)。
+# 使用 (0, None) 表示处理全部样本，并保持历史状态文件名。
+_SAMPLE_START = 0
+_SAMPLE_END = None
 
 
 def _sample_file() -> str:
@@ -47,7 +53,7 @@ def sample_generate_test() -> None:
 
 
 def generate_keyfile_test() -> None:
-    """初始化任务、恢复状态并预生成全部样本和工步的参数化 KEY。"""
+    """初始化任务并预生成指定 TXT 行范围内全部工步的参数化 KEY。"""
     print(init_multi_operation_task(
         _TASK_ID,
         _ensure_sample_file(),
@@ -56,6 +62,8 @@ def generate_keyfile_test() -> None:
         max_parallel_samples=24,
         keep_checkpoints=True,
         incremental=True,
+        sample_start=_SAMPLE_START,
+        sample_end=_SAMPLE_END,
     ))
 
 
@@ -76,8 +84,8 @@ def status_test() -> None:
 
 if __name__ == "__main__":
     # 每一步可单独运行，只要 _TASK_ID 一致即可接着上一步继续
-    # sample_generate_test()
+    sample_generate_test()
     # generate_keyfile_test()
-    run_process_test()
+    # run_process_test()
     # extra_data_test()
     # status_test()

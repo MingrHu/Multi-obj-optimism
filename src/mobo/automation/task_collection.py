@@ -91,6 +91,8 @@ class MultiOperationTaskDefinition:
         max_parallel_samples: int = 1,
         keep_checkpoints: bool = True,
         dry_run: bool = False,
+        sample_start: int = 0,
+        sample_end: int | None = None,
     ) -> MultiOperationTask:
         self.validate()
         return MultiOperationTask(
@@ -101,7 +103,16 @@ class MultiOperationTaskDefinition:
             max_parallel_samples=max_parallel_samples,
             keep_checkpoints=keep_checkpoints,
             dry_run=dry_run,
-            state_file=str(task_dir(self.task_id) / "multi_operation_state.json"),
+            state_file=str(task_dir(self.task_id) / (
+                "multi_operation_state.json"
+                if sample_start == 0 and sample_end is None
+                else (
+                    f"multi_operation_state_{sample_start}_"
+                    f"{sample_end if sample_end is not None else 'end'}.json"
+                )
+            )),
+            sample_start=sample_start,
+            sample_end=sample_end,
         )
 
     def prepare_keys(
@@ -109,8 +120,13 @@ class MultiOperationTaskDefinition:
         sample_file: str | os.PathLike[str],
         *,
         work_dir: str | os.PathLike[str] | None = None,
+        sample_start: int = 0,
+        sample_end: int | None = None,
     ) -> list[str]:
-        task = self.build(sample_file, work_dir=work_dir, dry_run=True)
+        task = self.build(
+            sample_file, work_dir=work_dir, dry_run=True,
+            sample_start=sample_start, sample_end=sample_end,
+        )
         return task.prepare_parameterized_keys()
 
     def run(
@@ -163,7 +179,9 @@ class MultiOperationTaskDefinition:
             datetime.now().strftime("%Y-%m-%d %H_%M_%S") + "_result.txt"
         )
         with output.open("w", encoding="utf-8") as stream:
-            for sample_index, sample in enumerate(task.samples):
+            sample_indices = getattr(task, "sample_indices", range(len(task.samples)))
+            for sample_index in sample_indices:
+                sample = task.samples[sample_index]
                 state = task.state["samples"][str(sample_index)]
                 if state.get("status") != "completed":
                     continue

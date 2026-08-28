@@ -14,8 +14,18 @@ from .incremental import IncrementalDataset
 _KIND = "automation_multi_operation"
 
 
-def _workflow_state_file(task_id: str) -> str:
-    return str(task_dir(task_id) / "multi_operation_state.json")
+def _range_suffix(sample_start: int, sample_end: int | None) -> str:
+    """返回多工步分片文件名后缀；完整范围保持历史文件名。"""
+    if sample_start == 0 and sample_end is None:
+        return ""
+    return f"_{sample_start}_{sample_end if sample_end is not None else 'end'}"
+
+
+def _workflow_state_file(
+    task_id: str, sample_start: int = 0, sample_end: int | None = None
+) -> str:
+    suffix = _range_suffix(sample_start, sample_end)
+    return str(task_dir(task_id) / f"multi_operation_state{suffix}.json")
 
 
 def create_multi_operation_sampling_task(task_id: str, operations: Sequence[Operation],
@@ -38,14 +48,17 @@ def init_multi_operation_task(task_id: str, sample_file: str,
                               max_parallel_samples: int = 24,
                               keep_checkpoints: bool = True,
                               dry_run: bool = False,
-                              incremental: bool = False) -> Dict[str, Any]:
-    """初始化多工步计算任务；全部续跑参数写入 state.json。"""
+                              incremental: bool = False,
+                              sample_start: int = 0,
+                              sample_end: int | None = None) -> Dict[str, Any]:
+    """初始化多工步任务，并为完整采样 TXT 的指定行范围预生成 KEY。"""
     req = {"sample_file": os.path.abspath(sample_file), "operations": list(operations),
            "work_dir": os.path.abspath(work_dir),
            "max_parallel_samples": max_parallel_samples,
            "keep_checkpoints": keep_checkpoints, "dry_run": dry_run,
            "incremental": incremental,
-           "state_file": _workflow_state_file(task_id)}
+           "sample_start": sample_start, "sample_end": sample_end,
+           "state_file": _workflow_state_file(task_id, sample_start, sample_end)}
     task_store.init_state(task_id, _KIND, req)
     task_store.update(task_id, req=req)
     task = MultiOperationTask(
@@ -57,6 +70,8 @@ def init_multi_operation_task(task_id: str, sample_file: str,
         keep_checkpoints=req["keep_checkpoints"],
         dry_run=req["dry_run"],
         state_file=req["state_file"],
+        sample_start=req["sample_start"],
+        sample_end=req["sample_end"],
     )
     key_files = task.prepare_parameterized_keys()
     return task_store.update(task_id, stage="initialized", status="running",
@@ -67,7 +82,10 @@ def init_multi_operation_task(task_id: str, sample_file: str,
 def _rebuild(task_id: str, provided: Optional[Dict[str, Any]] = None) -> MultiOperationTask:
     required = ["sample_file", "operations", "work_dir"]
     req = task_store.resolve_req(task_id, _KIND, provided or {}, required)
-    state_file = _workflow_state_file(task_id)
+    sample_start = int(req.get("sample_start", 0))
+    sample_end_value = req.get("sample_end")
+    sample_end = int(sample_end_value) if sample_end_value is not None else None
+    state_file = _workflow_state_file(task_id, sample_start, sample_end)
     if req.get("state_file") != state_file:
         task_store.update(
             task_id,
@@ -81,6 +99,8 @@ def _rebuild(task_id: str, provided: Optional[Dict[str, Any]] = None) -> MultiOp
         keep_checkpoints=req.get("keep_checkpoints", True),
         dry_run=req.get("dry_run", False),
         state_file=state_file,
+        sample_start=sample_start,
+        sample_end=sample_end,
     )
 
 
@@ -100,9 +120,18 @@ def run_multi_operation_task(task_id: str, **provided: Any) -> Dict[str, Any]:
 
         # 2.1 实时写入数据集初始化
         definition = get_multi_operation_task_definition(task_id)
-        incremental_state_file = str(task_dir(task_id) / "incremental_dataset.json")
+        requested_start = int(req.get("sample_start", 0))
+        requested_end_value = req.get("sample_end")
+        requested_end = (
+            int(requested_end_value) if requested_end_value is not None else None
+        )
+        suffix = _range_suffix(requested_start, requested_end)
+        incremental_state_file = str(
+            task_dir(task_id) / f"incremental_dataset{suffix}.json"
+        )
         incremental_output_file = str(
-            definition.workspace / "results" / f"{task_id}_incremental_result.txt"
+            definition.workspace / "results"
+            / f"{task_id}_incremental_result{suffix}.txt"
         )
         dataset = IncrementalDataset(
             incremental_state_file,
