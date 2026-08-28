@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Callable
 
 from flask import Blueprint, jsonify, request # type: ignore
+from werkzeug.exceptions import HTTPException
 
 from . import service
 from .errors import ApiError
@@ -81,7 +82,7 @@ def delete_doe():
 
 
 #  @brief  根据参数范围生成DOE样本
-#  @return jsonify格式化信息 包含采样方法 参数范围和样本文件路径
+#  @return jsonify格式化信息 包含DOE标识 采样方法 实际样本数量 字段顺序和样本文件路径
 #  @param  id DOE唯一标识 必填
 #  @param  method 采样方法 支持lhs和full 默认为lhs
 #  @param  param_ranges 参数范围JSON对象 每个参数对应lower和upper组成的数值数组
@@ -136,7 +137,7 @@ def training_progress():
 
 
 #  @brief  删除DOE任务下的训练记录和代理模型文件
-#  @return jsonify格式化信息 包含完成清理的DOE唯一标识
+#  @return jsonify格式化信息 包含DOE标识和清理后的训练状态 阶段及进度
 #  @param  id DOE唯一标识 必填
 #  @author Hu Mingrui
 #  @date   2026/08/25
@@ -146,24 +147,28 @@ def delete_training():
 
 
 #  @brief  中止DOE任务下正在运行的代理模型训练
-#  @return jsonify格式化信息 包含accepted中止请求是否被运行线程接受
+#  @return jsonify格式化信息 包含DOE标识 accepted及当前训练状态 阶段和进度
 #  @param  id DOE唯一标识 必填
 #  @author Hu Mingrui
 #  @date   2026/08/25
 @doe_api.post("/api/v1/hust/doe/train/stop")
 def stop_training():
-    accepted = service.stop_training(_body())
-    return _ok({"accepted": accepted}, "已发送中止请求" if accepted else "没有运行中的训练")
+    result = service.stop_training(_body())
+    message = "已发送中止请求" if result["accepted"] else "没有运行中的训练"
+    return _ok(result, message)
 
 
 #  @brief  提交代理模型训练和评价任务
-#  @return jsonify格式化信息和HTTP 202状态码 包含已提交的DOE唯一标识
+#  @return jsonify格式化信息和HTTP 202状态码 包含DOE标识 初始状态 样本信息和模型名称
 #  @param  id DOE唯一标识 必填
-#  @param  data_file 训练数据文件路径 必填
-#  @param  all_var_list 输入变量和目标变量名称列表 必填
-#  @param  input_var_count 输入变量数量 必填
-#  @param  models 待训练模型配置列表 可选 支持model_index和params
-#  @param  evaluation 模型评价配置 可选 支持enabled n_splits random_state
+#  @param  data_source 内嵌训练数据对象 必填 包含input_data和output_data
+#  @param  data_source.input_data 输入标签和二维样本数组 必填
+#  @param  data_source.output_data 输出标签和二维样本数组 必填
+#  @param  models 待训练模型配置列表 可选 支持name和params
+#  @param  evaluation 模型评价配置 可选 支持enabled method n_splits random_state
+#  @param  data_file 兼容字段 服务端已有训练数据文件路径
+#  @param  all_var_list 兼容字段 输入变量和目标变量名称列表
+#  @param  input_var_count 兼容字段 输入变量数量
 #  @author Hu Mingrui
 #  @date   2026/08/25
 @doe_api.post("/api/v1/hust/doe/train/startTrain")
@@ -185,20 +190,15 @@ def start_inference():
 
 
 #  @brief  提交单目标 多目标或强化学习优化任务
-#  @return jsonify格式化信息和HTTP 202状态码 包含已提交的DOE唯一标识
+#  @return jsonify格式化信息和HTTP 202状态码 包含DOE标识 初始状态 模式 算法 模型和目标
 #  @param  id DOE唯一标识 必填
-#  @param  algorithm 优化算法 可选 支持nsga2 single single_objective multi_objective rl和reinforcement_learning
 #  @param  model_id 指定代理模型标识 可选 未传入时自动选择评分最高模型
-#  @param  objective_names 优化目标名称列表 NSGA2优化时必填
-#  @param  all_var_list 输入变量和目标变量完整名称列表 NSGA2优化时必填
-#  @param  input_var_count 输入变量数量 NSGA2优化时必填
-#  @param  decision_var_names 决策变量名称列表 NSGA2优化时必填
-#  @param  decision_var_indices 决策变量在输入变量中的下标列表 NSGA2优化时必填
-#  @param  decision_bounds 决策变量上下界列表 NSGA2优化时必填
-#  @param  objective_config 目标最小化或最大化配置列表 可选
-#  @param  constraints 优化约束列表 可选
-#  @param  optimizer_config 优化算法参数JSON对象 可选
-#  @param  output_config 优化结果输出配置JSON对象 可选
+#  @param  mode 优化模式 必填 支持single multi reinforcement_learning
+#  @param  objectives 优化目标配置列表 必填 支持name direction和weight
+#  @param  objective_normalization 加权目标标准化方式 可选 当前支持standard
+#  @param  constraints 目标上下界约束列表 可选 支持name lower和upper
+#  @param  decision_variables 设计变量及上下界列表 必填 支持name lower和upper
+#  @param  algorithm 优化算法配置对象 必填 single和multi使用nsga2 强化学习使用ppo
 #  @author Hu Mingrui
 #  @date   2026/08/25
 @doe_api.post("/api/v1/hust/doe/optimize/start")
@@ -207,18 +207,19 @@ def start_optimization():
 
 
 #  @brief  中止DOE任务下正在运行的优化任务
-#  @return jsonify格式化信息 包含accepted中止请求是否被运行线程接受
+#  @return jsonify格式化信息 包含DOE标识 是否接受中止 当前状态 当前阶段和优化进度
 #  @param  id DOE唯一标识 必填
 #  @author Hu Mingrui
 #  @date   2026/08/25
 @doe_api.post("/api/v1/hust/doe/optimize/stop")
 def stop_optimization():
-    accepted = service.stop_optimization(_body())
-    return _ok({"accepted": accepted}, "已发送中止请求" if accepted else "没有运行中的优化")
+    result = service.stop_optimization(_body())
+    message = "已发送中止请求" if result["accepted"] else "没有运行中的优化"
+    return _ok(result, message)
 
 
 #  @brief  根据DOE唯一标识查询优化状态和结果
-#  @return jsonify格式化信息 包含优化状态 请求参数 错误信息和结果文件
+#  @return jsonify格式化信息 包含优化状态 阶段 进度 请求参数 结果 错误和更新时间
 #  @param  id DOE唯一标识 GET查询参数 必填
 #  @author Hu Mingrui
 #  @date   2026/08/25
@@ -250,6 +251,17 @@ def register_error_handlers(app) -> None:
     @app.errorhandler(ValueError)
     def handle_value_error(error):
         return jsonify({"code": 1, "message": str(error), "data": {}}), 400
+
+    #  @brief  保留Flask和Werkzeug生成的标准HTTP错误状态码
+    #  @return jsonify格式化错误信息和原HTTP状态码
+    #  @param  error HTTPException标准HTTP异常
+    #  @author Hu Mingrui
+    #  @date   2026/08/25
+    @app.errorhandler(HTTPException)
+    def handle_http_error(error):
+        return jsonify({
+            "code": error.code, "message": error.description, "data": {},
+        }), error.code
 
     #  @brief  记录未预期异常并转换为HTTP 500响应
     #  @return jsonify格式化错误信息和HTTP 500状态码

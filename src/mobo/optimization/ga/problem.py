@@ -31,6 +31,9 @@ class SurrogateOptimizationProblem(ElementwiseProblem):
         x_base: Optional[Sequence[float]] = None,
         fixed_values: Optional[Dict[int, float]] = None,
         constraints: Optional[Sequence[ConstraintSpec]] = None,
+        constraint_objectives: Optional[Sequence[ObjectiveSpec]] = None,
+        objective_mode: str = "multi",
+        objective_weights: Optional[Sequence[float]] = None,
         bounds_from_scaler_std: float = 3.0,
     ):
         if len(objectives) == 0:
@@ -39,7 +42,14 @@ class SurrogateOptimizationProblem(ElementwiseProblem):
         self.objectives: List[ObjectiveSpec] = list(objectives)
         self.scalers = scalers
         self.constraints: List[ConstraintSpec] = list(constraints or [])
+        self.constraint_objectives = list(constraint_objectives or [])
         self.fixed_values: Dict[int, float] = dict(fixed_values or {})
+        self.objective_mode = objective_mode
+        self.objective_weights = list(objective_weights or [])
+        if objective_mode not in {"single", "multi"}:
+            raise ValueError("objective_mode 仅支持 single 或 multi")
+        if objective_mode == "single" and len(self.objective_weights) != len(self.objectives):
+            raise ValueError("single 模式的 objective_weights 数量必须与 objectives 一致")
 
         if "scaler_X" not in self.scalers:
             raise KeyError("scalers 缺少 scaler_X（需要与 SurrogateModel/common.py 输出一致）")
@@ -81,7 +91,7 @@ class SurrogateOptimizationProblem(ElementwiseProblem):
 
         super().__init__(
             n_var=len(self.decision_var_indices),
-            n_obj=len(self.objectives),
+            n_obj=1 if self.objective_mode == "single" else len(self.objectives),
             n_constr=len(self.constraints),
             xl=xl,
             xu=xu,
@@ -89,7 +99,7 @@ class SurrogateOptimizationProblem(ElementwiseProblem):
 
         self._objective_index_by_name: Dict[str, int] = {o.name: i for i, o in enumerate(self.objectives)}
 
-        for o in self.objectives:
+        for o in [*self.objectives, *self.constraint_objectives]:
             key = f"scaler_y_{o.y_index}"
             if key not in self.scalers:
                 raise KeyError(
@@ -158,20 +168,30 @@ class SurrogateOptimizationProblem(ElementwiseProblem):
         x_scaled = self.scaler_X.transform(x_full.reshape(1, -1))
 
         raw_objective_vals: List[float] = []
+        scaled_objective_vals: List[float] = []
         raw_by_name: Dict[str, float] = {}
 
-        for obj in self.objectives:
+        prediction_specs = [*self.objectives, *self.constraint_objectives]
+        for index, obj in enumerate(prediction_specs):
             y_scaled = self._predict_scalar(obj.model, x_scaled)
             scaler_y = self.scalers[f"scaler_y_{obj.y_index}"]
             y_val = float(scaler_y.inverse_transform(np.array([[y_scaled]], dtype=float))[0, 0])
-
-            raw_objective_vals.append(y_val)
             raw_by_name[obj.name] = y_val
+            if index < len(self.objectives):
+                raw_objective_vals.append(y_val)
+                scaled_objective_vals.append(y_scaled)
 
-        F = []
-        for i, obj in enumerate(self.objectives):
-            v = raw_objective_vals[i]
-            F.append(v if obj.minimize else -v)
+        if self.objective_mode == "single":
+            signed = [
+                value if obj.minimize else -value
+                for obj, value in zip(self.objectives, scaled_objective_vals, strict=True)
+            ]
+            F = [float(np.dot(self.objective_weights, signed))]
+        else:
+            F = [
+                value if obj.minimize else -value
+                for obj, value in zip(self.objectives, raw_objective_vals, strict=True)
+            ]
 
         out["F"] = np.array(F, dtype=float)
 

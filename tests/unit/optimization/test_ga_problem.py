@@ -86,6 +86,27 @@ def test_evaluate_with_constraints(fake_scaler_cls, fake_model_cls):
     np.testing.assert_allclose(out["G"], [-5.0], rtol=1e-6)
 
 
+def test_weighted_single_uses_standardized_directional_objectives(
+    fake_scaler_cls, fake_model_cls
+):
+    problem = _make_problem(
+        fake_scaler_cls, fake_model_cls,
+        decision_var_indices=[0, 1, 2],
+        bounds=[(875, 965), (300, 700), (10, 50)],
+        objective_mode="single", objective_weights=[0.25, 0.75],
+    )
+    problem.objectives[1] = ObjectiveSpec(
+        name="load", model=fake_model_cls([0.0, 1.0, 0.0]),
+        y_index=1, minimize=False,
+    )
+    out = {}
+    problem._evaluate(np.array([910.0, 600.0, 30.0]), out)
+
+    assert problem.n_obj == 1
+    # scaled predictions are grain=1 and load=1; maximizing load changes its sign
+    np.testing.assert_allclose(out["F"], [-0.5], rtol=1e-6)
+
+
 def test_bounds_from_scaler_std_default(fake_scaler_cls, fake_model_cls):
     """未提供 bounds 时按 mean ± std*scale 推导。"""
     prob = _make_problem(fake_scaler_cls, fake_model_cls, decision_var_indices=[0])

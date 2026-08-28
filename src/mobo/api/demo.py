@@ -31,6 +31,11 @@ def wait_for_terminal(path: str, doe_id: str, timeout: int = 600):
     raise TimeoutError(f"等待任务完成超时 {doe_id}")
 
 
+def rows_by_fields(data: dict, fields: list[str]) -> list[list[float]]:
+    # 按字段顺序把接口返回的列式数据转换为训练接口需要的二维样本
+    return [list(row) for row in zip(*(data[field] for field in fields), strict=True)]
+
+
 def main() -> None:
     # 演示完整 DOE 生命周期 创建数据 训练评价 推理 优化 查询结果
     doe_id = f"demo_doe_{int(time.time())}"
@@ -48,12 +53,14 @@ def main() -> None:
     })
 
     # 2 生成 LHS 样本
-    call("POST", "/api/v1/hust/doe/sample/generate", json={
+    sample = call("POST", "/api/v1/hust/doe/sample/generate", json={
         "id": doe_id,
         "method": "lhs",
         "param_ranges": param_ranges,
         "n_samples": 12,
     })
+    if sample["data"]["sample_count"] < sample["data"]["n_samples"]:
+        raise RuntimeError(f"样本数量异常 {sample['data']}")
 
     # 3 通过 GET 接口只获取样本中的温度字段
     call("GET", "/api/v1/hust/doe/data/get", params=[
@@ -63,32 +70,42 @@ def main() -> None:
     ])
 
     # 4 生成测试训练数据集
-    dataset = call("POST", "/api/v1/hust/doe/dataset/generate", json={
+    call("POST", "/api/v1/hust/doe/dataset/generate", json={
         "id": doe_id,
         "input_names": input_names,
         "target_names": target_names,
         "param_ranges": param_ranges,
         "n_samples": 80,
         "seed": 42,
-    })["data"]
+    })
 
     # 5 按字段获取训练数据集
-    call("GET", "/api/v1/hust/doe/data/get", params=[
+    dataset = call("GET", "/api/v1/hust/doe/data/get", params=[
         ("id", doe_id),
         ("data_type", "dataset"),
         ("fields", "temperature"),
+        ("fields", "speed"),
         ("fields", "grain"),
-    ])
+        ("fields", "load"),
+    ])["data"]
 
     # 6 训练代理模型并评价
     call("POST", "/api/v1/hust/doe/train/startTrain", json={
         "id": doe_id,
-        "data_file": dataset["data_file"],
-        "all_var_list": dataset["all_var_list"],
-        "input_var_count": dataset["input_var_count"],
-        "models": [{"model_index": 2}],
-        "evaluation":{
+        "data_source": {
+            "input_data": {
+                "labels": input_names,
+                "samples": rows_by_fields(dataset, input_names),
+            },
+            "output_data": {
+                "labels": target_names,
+                "samples": rows_by_fields(dataset, target_names),
+            },
+        },
+        "models": [{"name": "RF", "params": {"n_estimators": 300, "n_jobs": -1}}],
+        "evaluation": {
             "enabled": True,
+            "method": "k_fold",
             "n_splits": 3,
             "random_state": 42
         },
@@ -105,7 +122,7 @@ def main() -> None:
         "inputs": {
             "temperature": [1000],
             "speed": [30]
-    },
+        },
         "fields": ["grain"],
     })
 
@@ -119,22 +136,25 @@ def main() -> None:
     # 10 优化任务
     call("POST", "/api/v1/hust/doe/optimize/start", json={
         "id": doe_id,
-        "algorithm": "nsga2",
-        "objective_names": target_names,
-        "all_var_list": [*input_names, *target_names],
-        "input_var_count": 2,
-        "decision_var_indices": [0, 1],
-        "decision_var_names": input_names,
-        "decision_bounds": [
-            {"lower": 900, "upper": 1100},
-            {"lower": 10, "upper": 50},
+        "mode": "multi",
+        "objectives": [
+            {"name": "grain", "direction": "min"},
+            {"name": "load", "direction": "min"},
         ],
-        "optimizer_config": {
-            "pop_size": 20,
-            "n_offsprings": 10,
-            "eliminate_duplicates": True,
-            "n_gen": 10,
-            "seed": 42,
+        "constraints": [],
+        "decision_variables": [
+            {"name": "temperature", "lower": 900, "upper": 1100},
+            {"name": "speed", "lower": 10, "upper": 50},
+        ],
+        "algorithm": {
+            "name": "nsga2",
+            "params": {
+                "pop_size": 20,
+                "n_offsprings": 10,
+                "eliminate_duplicates": True,
+                "n_gen": 10,
+                "seed": 42,
+            },
         },
     })
 

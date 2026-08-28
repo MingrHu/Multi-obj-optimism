@@ -76,7 +76,10 @@ def create(payload: dict[str, Any]) -> dict[str, Any]:
                 "status": "not_started", "stage": "not_started",
                 "progress": 0, "models": [],
             },
-            "optimization": {"status": "not_started"},
+            "optimization": {
+                "status": "not_started", "stage": "not_started", "progress": 0,
+                "request": None, "result": None, "error": None,
+            },
         }
         _write(state)
         # 创建固定子目录使同一 DOE 的样本 模型和优化结果互不混放
@@ -144,14 +147,16 @@ def reset_training(doe_id: str) -> None:
             if target.exists():
                 shutil.rmtree(target)
             target.mkdir(parents=True)
-        update_section(doe_id, "training", status="not_started", stage="not_started",
-                       progress=0, models=[], error=None)
+        update(doe_id, training={
+            "status": "not_started", "stage": "not_started",
+            "progress": 0, "models": [], "error": None,
+        })
 
 
 def _delete_legacy_artifacts(state: dict[str, Any]) -> None:
     for model in state.get("training", {}).get("models", []):
         _remove_legacy_task(model.get("model_id"))
-    result = state.get("optimization", {}).get("result", {})
+    result = state.get("optimization", {}).get("result") or {}
     _remove_legacy_task(result.get("optimization_id"))
 
 

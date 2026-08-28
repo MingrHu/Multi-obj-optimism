@@ -28,6 +28,7 @@ def _write_solutions(
     output_path: Path,
     decision_names: list[str],
     objective_config: list[dict[str, Any]],
+    objective_values: np.ndarray | None = None,
 ) -> dict[str, Any]:
     """以 UTF-8 TSV 原子写出解集，并返回可用于响应的汇总信息。"""
     if result.X is None or result.F is None:
@@ -35,11 +36,14 @@ def _write_solutions(
         objective_values = np.empty((0, len(objective_config)), dtype=float)
     else:
         x_values = np.atleast_2d(np.asarray(result.X, dtype=float))
-        minimized_values = np.atleast_2d(np.asarray(result.F, dtype=float))
-        signs = np.array(
-            [1.0 if item["minimize"] else -1.0 for item in objective_config], dtype=float
-        )
-        objective_values = minimized_values * signs
+        if objective_values is None:
+            minimized_values = np.atleast_2d(np.asarray(result.F, dtype=float))
+            signs = np.array(
+                [1.0 if item["minimize"] else -1.0 for item in objective_config], dtype=float
+            )
+            objective_values = minimized_values * signs
+        else:
+            objective_values = np.atleast_2d(np.asarray(objective_values, dtype=float))
 
     raw_constraints = getattr(result, "G", None)
     if raw_constraints is None or len(x_values) == 0:
@@ -72,6 +76,20 @@ def _write_solutions(
     }
 
 
+def _predict_raw_objectives(problem, x_values, objectives) -> np.ndarray:
+    rows = []
+    for decision_values in x_values:
+        full_x = problem._assemble_full_x(decision_values)
+        scaled_x = problem.scaler_X.transform(full_x.reshape(1, -1))
+        row = []
+        for spec in objectives:
+            scaled_y = problem._predict_scalar(spec.model, scaled_x)
+            scaler_y = problem.scalers[f"scaler_y_{spec.y_index}"]
+            row.append(float(scaler_y.inverse_transform([[scaled_y]])[0, 0]))
+        rows.append(row)
+    return np.asarray(rows, dtype=float)
+
+
 def run_parameterized_nsga2(
     request: dict[str, Any],
     *,
@@ -101,6 +119,18 @@ def run_parameterized_nsga2(
             minimize=minimize_by_name[name],
         ))
 
+    constraint_names = list(dict.fromkeys(
+        item["target_obj"] for item in request["constraints"]
+        if isinstance(item["target_obj"], str) and item["target_obj"] not in objective_names
+    ))
+    constraint_objectives = [
+        ObjectiveSpec(
+            name=name, model=_load_model(model_dir, name),
+            y_index=output_names.index(name), minimize=True,
+        )
+        for name in constraint_names
+    ]
+
     constraints = [
         ConstraintSpec(
             objective=item["target_obj"],
@@ -116,6 +146,9 @@ def run_parameterized_nsga2(
         decision_var_indices=request["decision_var_indices"],
         bounds=bounds,
         constraints=constraints,
+        constraint_objectives=constraint_objectives,
+        objective_mode=request.get("mode", "multi"),
+        objective_weights=[item.get("weight", 0.0) for item in request["objective_config"]],
     )
 
     config = request["optimizer_config"]
@@ -136,11 +169,16 @@ def run_parameterized_nsga2(
         save_history=False,
     )
 
+    x_values = np.empty((0, len(request["decision_var_names"])), dtype=float)
+    if result.X is not None:
+        x_values = np.atleast_2d(np.asarray(result.X, dtype=float))
+    raw_objectives = _predict_raw_objectives(problem, x_values, objectives)
     summary = _write_solutions(
         result,
         Path(output_path),
         request["decision_var_names"],
         request["objective_config"],
+        raw_objectives,
     )
     return {
         "solution_txt_path": str(Path(output_path).resolve()),

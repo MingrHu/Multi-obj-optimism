@@ -51,7 +51,12 @@ def test_sample_generation_uses_doe_directory(monkeypatch, tmp_path):
         "level_nums": [2, 2],
     })
     assert response.status_code == 200
-    assert response.json["data"]["sample_file"].endswith("sample_1-fullfactorial.txt")
+    data = response.json["data"]
+    assert data["id"] == "sample_1"
+    assert data["method"] == "full"
+    assert data["sample_count"] == 4
+    assert data["level_nums"] == [2, 2]
+    assert data["sample_file"].endswith("sample_1-fullfactorial.txt")
     assert (tmp_path / "doe_tasks" / "sample_1" / "samples").is_dir()
 
     selected = client.get(
@@ -60,7 +65,50 @@ def test_sample_generation_uses_doe_directory(monkeypatch, tmp_path):
                       ("fields", "temperature")],
     )
     assert selected.status_code == 200
-    assert selected.json["data"] == {"temperature": [900.0, 900.0, 1000.0, 1000.0]}
+    assert sorted(selected.json["data"]["temperature"]) == [900.0, 900.0, 1000.0, 1000.0]
+
+
+def test_lhs_response_reports_requested_and_actual_counts(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    client.post("/api/v1/doe/add", json={"id": "lhs_1"})
+    response = client.post("/api/v1/hust/doe/sample/generate", json={
+        "id": "lhs_1", "method": "lhs",
+        "param_ranges": {"temperature": [900, 1000], "speed": [10, 20]},
+        "n_samples": 4,
+    })
+
+    assert response.status_code == 200
+    data = response.json["data"]
+    assert data["id"] == "lhs_1"
+    assert data["n_samples"] == 4
+    assert data["sample_count"] >= data["n_samples"]
+    lines = Path(data["sample_file"]).read_text(encoding="utf-8").splitlines()
+    assert len(lines) == data["sample_count"]
+
+
+def test_sample_generation_returns_documented_failures(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    client.post("/api/v1/doe/add", json={"id": "invalid_sample"})
+    invalid = client.post("/api/v1/hust/doe/sample/generate", json={
+        "id": "invalid_sample", "method": "full",
+        "param_ranges": {"x1": [0, 1], "x2": [10, 20]},
+        "level_nums": [3],
+    })
+    missing = client.post("/api/v1/hust/doe/sample/generate", json={
+        "id": "missing_doe", "method": "lhs",
+        "param_ranges": {"x": [0, 1]}, "n_samples": 4,
+    })
+
+    assert invalid.status_code == 400
+    assert invalid.json == {
+        "code": 1,
+        "message": "full 的 level_nums 必须是与 param_ranges 等长的正整数数组",
+        "data": {},
+    }
+    assert missing.status_code == 404
+    assert missing.json == {
+        "code": 404, "message": "DOE 任务不存在：missing_doe", "data": {},
+    }
 
 
 def test_training_dataset_generation_uses_doe_directory(monkeypatch, tmp_path):
@@ -105,9 +153,131 @@ def test_training_request_is_async(monkeypatch, tmp_path):
         "id": "train_1", "data_file": str(dataset),
         "all_var_list": ["x", "y"], "input_var_count": 1,
         "models": [{"model_index": 2}],
+        "evaluation": {"enabled": False},
     })
     assert response.status_code == 202
+    assert response.json["data"] == {
+        "id": "train_1", "status": "queued", "stage": "queued", "progress": 0,
+        "sample_count": 2, "input_names": ["x"], "target_names": ["y"],
+        "models": ["RF"],
+    }
     assert captured == [("train_1", "training")]
+
+
+def test_training_accepts_inline_data_and_model_names(monkeypatch, tmp_path):
+    from mobo.api import service
+
+    client = _client(monkeypatch, tmp_path)
+    client.post("/api/v1/doe/add", json={"id": "inline_train"})
+    captured = []
+    monkeypatch.setattr(service.registry, "start", lambda *args: captured.append(args[:2]))
+    response = client.post("/api/v1/hust/doe/train/startTrain", json={
+        "id": "inline_train",
+        "data_source": {
+            "input_data": {"labels": ["x1", "x2"], "samples": [[1, 2], [2, 3], [3, 4]]},
+            "output_data": {"labels": ["y"], "samples": [[3], [5], [7]]},
+        },
+        "models": [{"name": "RF", "params": {"n_estimators": 20, "n_jobs": 1}}],
+        "evaluation": {"enabled": True, "method": "k_fold", "n_splits": 3},
+    })
+
+    assert response.status_code == 202
+    assert response.json["data"]["sample_count"] == 3
+    assert response.json["data"]["models"] == ["RF"]
+    assert captured == [("inline_train", "training")]
+    state = store.load("inline_train")["training"]
+    dataset = Path(state["dataset"]["data_file"])
+    assert dataset.parent == tmp_path / "doe_tasks" / "inline_train" / "training"
+    assert dataset.read_text(encoding="utf-8").splitlines() == ["1\t2\t3", "2\t3\t5", "3\t4\t7"]
+    assert state["request"]["models"] == [{
+        "model_index": 2, "params": {"n_estimators": 20, "n_jobs": 1},
+    }]
+
+
+def test_training_rejects_mismatched_inline_rows(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    client.post("/api/v1/doe/add", json={"id": "bad_inline"})
+    response = client.post("/api/v1/hust/doe/train/startTrain", json={
+        "id": "bad_inline",
+        "data_source": {
+            "input_data": {"labels": ["x"], "samples": [[1], [2]]},
+            "output_data": {"labels": ["y"], "samples": [[3]]},
+        },
+        "models": [{"name": "RF"}],
+        "evaluation": {"enabled": False},
+    })
+
+    assert response.status_code == 400
+    assert response.json == {
+        "code": 1, "message": "输入样本数量与输出样本数量必须一致", "data": {},
+    }
+
+
+def test_training_stop_uses_doe_id_and_reports_state(monkeypatch, tmp_path):
+    from mobo.api import service
+
+    client = _client(monkeypatch, tmp_path)
+    client.post("/api/v1/doe/add", json={"id": "stop_train"})
+    store.update_section(
+        "stop_train", "training", status="running", stage="training", progress=40,
+    )
+    monkeypatch.setattr(service.registry, "stop", lambda *args: True)
+
+    response = client.post("/api/v1/hust/doe/train/stop", json={"id": "stop_train"})
+
+    assert response.status_code == 200
+    assert response.json == {
+        "code": 0, "message": "已发送中止请求",
+        "data": {
+            "id": "stop_train", "accepted": True, "status": "stopping",
+            "stage": "stopping", "progress": 40,
+        },
+    }
+
+
+def test_training_delete_clears_files_and_records(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    client.post("/api/v1/doe/add", json={"id": "delete_train"})
+    task = store.task_dir("delete_train")
+    (task / "training" / "dataset.tsv").write_text("1\t2\n", encoding="utf-8")
+    (task / "models" / "snapshot").mkdir()
+    store.update_section(
+        "delete_train", "training", status="finished", stage="finished", progress=100,
+        dataset={"data_file": "removed"}, request={"models": []}, models=[],
+    )
+
+    response = client.post("/api/v1/hust/doe/train/delete", json={"id": "delete_train"})
+
+    assert response.status_code == 200
+    assert response.json["data"] == {
+        "id": "delete_train", "status": "not_started",
+        "stage": "not_started", "progress": 0,
+    }
+    assert store.load("delete_train")["training"] == {
+        "status": "not_started", "stage": "not_started",
+        "progress": 0, "models": [], "error": None,
+    }
+    assert not any((task / "training").iterdir())
+    assert not any((task / "models").iterdir())
+
+
+def test_training_lifecycle_returns_documented_failures(monkeypatch, tmp_path):
+    from mobo.api import service
+
+    client = _client(monkeypatch, tmp_path)
+    client.post("/api/v1/doe/add", json={"id": "running_train"})
+    monkeypatch.setattr(service.registry, "running", lambda *args: True)
+
+    conflict = client.post("/api/v1/hust/doe/train/delete", json={"id": "running_train"})
+    missing = client.get("/api/hust/v1/doe/train/progress?id=missing_train")
+    invalid = client.post("/api/v1/hust/doe/train/stop", json={"TrainId": 10011})
+
+    assert conflict.status_code == 409
+    assert conflict.json["message"] == "训练正在运行，请先中止"
+    assert missing.status_code == 404
+    assert missing.json["message"] == "DOE 任务不存在：missing_train"
+    assert invalid.status_code == 400
+    assert "id 只能包含" in invalid.json["message"]
 
 
 def test_all_documented_routes_exist(monkeypatch, tmp_path):
@@ -184,7 +354,7 @@ def test_inference_loads_best_scored_model(monkeypatch, tmp_path):
     }])
 
     result = service.start_inference({
-        "id": "infer_1", "inputs": [[1.5]], "fields": ["target"],
+        "id": "infer_1", "inputs": [1.5], "fields": ["target"],
     })
     assert result["target"][0] == pytest.approx(25.0)
     assert store.load("infer_1")["inference"]["model_id"] == "best"
@@ -230,6 +400,170 @@ def test_inference_supports_named_inputs_and_selected_outputs(monkeypatch, tmp_p
         "id": "infer_fields", "data_type": "inference", "fields": ["load"],
     })
     assert fetched == {"load": pytest.approx([10.0, 30.0])}
+
+
+def test_inference_returns_documented_failures(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    store.create({"id": "bad_inference"})
+    store.update_section("bad_inference", "training", request={
+        "all_var_list": ["x1", "x2", "y"], "input_var_count": 2,
+    }, models=[{
+        "model_id": "selected", "model_dir": "unused",
+        "target_names": ["y"], "score": 1.0,
+    }])
+    store.create({"id": "no_model"})
+
+    invalid = client.post("/api/v1/hust/doe/inference/startInference", json={
+        "id": "bad_inference", "inputs": [1.0],
+    })
+    unavailable = client.post("/api/v1/hust/doe/inference/startInference", json={
+        "id": "no_model", "inputs": [1.0, 2.0],
+    })
+    missing = client.post("/api/v1/hust/doe/inference/startInference", json={
+        "id": "missing_inference", "inputs": [1.0, 2.0],
+    })
+
+    assert invalid.status_code == 400
+    assert invalid.json["message"] == "inputs[0] 的参数数量必须为 2"
+    assert unavailable.status_code == 409
+    assert unavailable.json["message"] == "没有可用的已训练代理模型"
+    assert missing.status_code == 404
+    assert missing.json["message"] == "DOE 任务不存在：missing_inference"
+
+
+def _prepare_optimization_doe(doe_id):
+    store.create({"id": doe_id})
+    store.update_section(doe_id, "training", status="finished", request={
+        "all_var_list": ["x1", "x2", "y1", "y2", "limit"],
+        "input_var_count": 2,
+    }, models=[{
+        "model_id": f"model_{doe_id}", "model_dir": "unused",
+        "target_names": ["y1", "y2", "limit"], "score": 1.0,
+    }])
+
+
+def test_optimization_accepts_multi_and_weighted_single(monkeypatch, tmp_path):
+    from mobo.api import service
+
+    client = _client(monkeypatch, tmp_path)
+    captured = []
+    monkeypatch.setattr(service.registry, "start", lambda *args: captured.append(args[:2]))
+    _prepare_optimization_doe("multi_opt")
+    multi = client.post("/api/v1/hust/doe/optimize/start", json={
+        "id": "multi_opt", "mode": "multi",
+        "objectives": [
+            {"name": "y1", "direction": "min"},
+            {"name": "y2", "direction": "max"},
+        ],
+        "constraints": [{"name": "limit", "lower": 1, "upper": 5}],
+        "decision_variables": [
+            {"name": "x1", "lower": 0, "upper": 1},
+            {"name": "x2", "lower": 10, "upper": 20},
+        ],
+        "algorithm": {"name": "nsga2", "params": {"pop_size": 10, "n_gen": 2}},
+    })
+    _prepare_optimization_doe("single_opt")
+    single = client.post("/api/v1/hust/doe/optimize/start", json={
+        "id": "single_opt", "mode": "single",
+        "objectives": [
+            {"name": "y1", "direction": "min", "weight": 0.7},
+            {"name": "y2", "direction": "max", "weight": 0.3},
+        ],
+        "decision_variables": [{"name": "x1", "lower": 0, "upper": 1}],
+        "algorithm": {"name": "nsga2", "params": {}},
+    })
+
+    assert multi.status_code == 202
+    assert multi.json["data"]["mode"] == "multi"
+    assert multi.json["data"]["algorithm"] == "nsga2"
+    request = store.load("multi_opt")["optimization"]["request"]
+    assert request["decision_var_indices"] == [0, 1]
+    assert request["constraints"] == [
+        {"target_obj": "limit", "constraint_kind": "lower", "limit_value": 1.0},
+        {"target_obj": "limit", "constraint_kind": "upper", "limit_value": 5.0},
+    ]
+    assert single.status_code == 202
+    assert store.load("single_opt")["optimization"]["request"]["objective_config"][0]["weight"] == 0.7
+    assert captured == [("multi_opt", "optimization"), ("single_opt", "optimization")]
+
+
+def test_optimization_accepts_rl_and_rejects_unsupported_algorithm(monkeypatch, tmp_path):
+    from mobo.api import service
+
+    client = _client(monkeypatch, tmp_path)
+    monkeypatch.setattr(service.registry, "start", lambda *args: None)
+    _prepare_optimization_doe("rl_opt")
+    request = {
+        "id": "rl_opt", "mode": "reinforcement_learning",
+        "objectives": [
+            {"name": "y1", "direction": "min", "weight": 0.6},
+            {"name": "y2", "direction": "max", "weight": 0.4},
+        ],
+        "constraints": [{"name": "limit", "upper": 5}],
+        "decision_variables": [{"name": "x1", "lower": 0, "upper": 1}],
+        "algorithm": {"name": "ppo", "params": {"total_timesteps": 10}},
+    }
+    accepted = client.post("/api/v1/hust/doe/optimize/start", json=request)
+    request["algorithm"] = {"name": "pso", "params": {}}
+    rejected = client.post("/api/v1/hust/doe/optimize/start", json=request)
+
+    assert accepted.status_code == 202
+    assert accepted.json["data"]["mode"] == "reinforcement_learning"
+    assert accepted.json["data"]["algorithm"] == "ppo"
+    assert store.load("rl_opt")["optimization"]["request"]["optimizer"] == "rl"
+    assert rejected.status_code == 400
+    assert rejected.json["message"] == "reinforcement_learning模式当前仅支持ppo"
+
+
+def test_stop_optimization_returns_current_state(monkeypatch, tmp_path):
+    from mobo.api import service
+
+    client = _client(monkeypatch, tmp_path)
+    store.create({"id": "stop_opt"})
+    store.update_section(
+        "stop_opt", "optimization", status="running", stage="optimizing", progress=10,
+    )
+    monkeypatch.setattr(service.registry, "stop", lambda *args: True)
+
+    response = client.post("/api/v1/hust/doe/optimize/stop", json={"id": "stop_opt"})
+
+    assert response.status_code == 200
+    assert response.json == {
+        "code": 0, "message": "已发送中止请求", "data": {
+            "id": "stop_opt", "accepted": True, "status": "stopping",
+            "stage": "stopping", "progress": 10,
+        },
+    }
+
+
+def test_get_optimization_returns_stable_fields(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    store.create({"id": "query_opt"})
+
+    response = client.get(
+        "/api/v1/hust/doe/optimize/getById", query_string={"id": "query_opt"},
+    )
+
+    assert response.status_code == 200
+    assert response.json["data"] == {
+        "id": "query_opt", "status": "not_started", "stage": "not_started",
+        "progress": 0, "request": None, "result": None, "error": None,
+        "updated_at": store.load("query_opt")["updated_at"],
+    }
+
+
+def test_optimization_control_returns_documented_failures(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+
+    invalid = client.post("/api/v1/hust/doe/optimize/stop", json={})
+    missing = client.get(
+        "/api/v1/hust/doe/optimize/getById", query_string={"id": "missing_opt"},
+    )
+
+    assert invalid.status_code == 400
+    assert "id 只能包含" in invalid.json["message"]
+    assert missing.status_code == 404
+    assert missing.json["message"] == "DOE 任务不存在：missing_opt"
 
 
 def test_get_optimization_data_uses_recorded_columns(monkeypatch, tmp_path):

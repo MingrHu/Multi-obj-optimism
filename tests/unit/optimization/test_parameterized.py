@@ -76,3 +76,41 @@ def test_run_parameterized_nsga2_end_to_end(tmp_path):
     assert summary["solution_txt_path"] == str(output.resolve())
     assert summary["columns"] == ["x", "result", "feasible"]
     assert not output.read_text(encoding="utf-8").startswith("x\tresult\tfeasible\n")
+
+
+def test_run_weighted_single_nsga2_exports_raw_objectives(tmp_path):
+    model_dir = tmp_path / "weighted_models"
+    model_dir.mkdir()
+    x = np.array([[0.0], [1.0], [2.0], [3.0]])
+    scaler_x = StandardScaler().fit(x)
+    scalers = {"scaler_X": scaler_x}
+    for index, (name, y) in enumerate((("y1", 2 * x), ("y2", 10 - x))):
+        scaler_y = StandardScaler().fit(y)
+        model = LinearRegression().fit(
+            scaler_x.transform(x), scaler_y.transform(y).ravel()
+        )
+        joblib.dump(model, model_dir / f"{name}_model.pkl")
+        scalers[f"scaler_y_{index}"] = scaler_y
+    joblib.dump(scalers, model_dir / "y1_scalers.pkl")
+    output = tmp_path / "weighted.tsv"
+    request = {
+        "mode": "single", "objective_names": ["y1", "y2"],
+        "all_var_list": ["x", "y1", "y2"], "input_var_count": 1,
+        "objective_config": [
+            {"name": "y1", "minimize": True, "weight": 0.6},
+            {"name": "y2", "minimize": False, "weight": 0.4},
+        ],
+        "constraints": [], "decision_bounds": [{"lower": 0.0, "upper": 3.0}],
+        "decision_var_indices": [0], "decision_var_names": ["x"],
+        "optimizer_config": {
+            "pop_size": 10, "n_offsprings": 10, "eliminate_duplicates": True,
+            "n_gen": 2, "seed": 42,
+        },
+    }
+
+    summary = run_parameterized_nsga2(
+        request, model_dir=str(model_dir), output_path=str(output)
+    )
+
+    assert summary["columns"] == ["x", "y1", "y2", "feasible"]
+    assert all(len(line.split("\t")) == 4 for line in output.read_text().splitlines())

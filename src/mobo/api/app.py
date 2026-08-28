@@ -10,6 +10,7 @@ from flask import Flask
 def create_app(config: dict | None = None) -> Flask:
     # 使用应用工厂便于生产部署 测试环境也可以传入独立配置
     app = Flask(__name__)
+    app.json.sort_keys = False
     if config:
         app.config.update(config)
 

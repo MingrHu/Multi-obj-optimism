@@ -165,3 +165,37 @@ def test_parameterized_nsga2_rejects_variable_order_mismatch(monkeypatch):
 
     assert response["code"] == 1
     assert "变量顺序不一致" in response["msg"]
+
+
+def test_parameterized_rl_uses_model_task(monkeypatch):
+    task_store.init_state(
+        "tr_rl_model", "surrogate", {"vars_out": ["x", "y"], "n_vars": 1},
+    )
+    task_store.update(
+        "tr_rl_model", status="finished", stage="train", data={"model_dir": "rl/models"},
+    )
+    captured = {}
+
+    def fake_rl(request, *, model_dir, output_path):
+        captured.update(request=request, model_dir=model_dir, output_path=output_path)
+        return {
+            "solution_txt_path": output_path, "solution_count": 3,
+            "all_solution_feasible": True, "columns": ["x", "y", "feasible"],
+        }
+
+    monkeypatch.setattr(service, "run_parameterized_rl", fake_rl)
+    request = {
+        "model_id": "tr_rl_model", "mode": "single", "objective_names": ["y"],
+        "input_var_count": 1, "all_var_list": ["x", "y"],
+        "decision_var_indices": [0], "decision_var_names": ["x"],
+        "decision_bounds": [{"lower": 0.0, "upper": 1.0}], "constraints": [],
+        "objective_config": [{"name": "y", "minimize": True, "weight": 1.0}],
+        "optimizer_config": {"total_timesteps": 2}, "output_config": {},
+    }
+
+    response = service.run_optimization(request, optimizer="rl", task_id="opt_rl_params")
+
+    assert response["code"] == 0
+    assert captured["model_dir"] == "rl/models"
+    assert captured["output_path"].endswith("rl_solutions.tsv")
+    assert response["data"]["task_info"]["result_columns"] == ["x", "y", "feasible"]

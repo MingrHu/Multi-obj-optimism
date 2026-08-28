@@ -221,15 +221,15 @@ curl http://127.0.0.1:8000/health
 若 CentOS 服务器不能访问外网，应在可联网且架构相同的机器构建镜像：
 
 ```bash
-MOBO_IMAGE_TAG=1.0.0 docker compose build mobo-api
-docker save mobo-api:1.0.0 -o mobo-api-1.0.0.tar
+MOBO_IMAGE_TAG=1.1.0 docker compose build mobo-api
+docker save mobo-api:1.1.0 -o mobo-api-1.1.0.tar
 ```
 
 将镜像 tar、`compose.yaml` 和仓库中 `deploy/` 目录传到服务器，然后执行：
 
 ```bash
-docker load -i mobo-api-1.0.0.tar
-MOBO_IMAGE_TAG=1.0.0 docker compose up -d --no-build
+docker load -i mobo-api-1.1.0.tar
+MOBO_IMAGE_TAG=1.1.0 docker compose up -d --no-build
 ```
 
 使用 Compose 启动时仍建议保留完整仓库，以保证 Compose 路径、版本说明和运维脚本完全一致；

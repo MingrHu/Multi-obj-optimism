@@ -21,6 +21,7 @@ from mobo.common.logging import logger
 from mobo.common.paths import DATA_DIR
 from mobo.optimization.ga.parameterized import run_parameterized_nsga2
 from mobo.optimization.ga.run import NSGA2_run
+from mobo.optimization.rl.parameterized import run_parameterized_rl
 from mobo.optimization.rl.run import train_and_optimize
 
 _KIND = "optimization"
@@ -33,6 +34,24 @@ _PARAMETERIZED_NSGA2_KEYS = (
     "decision_var_indices", "decision_var_names", "decision_bounds",
     "constraints", "objective_config", "optimizer_config", "output_config",
 )
+
+
+def _resolve_model_dir(resolved: Dict[str, Any]) -> str:
+    model_id = resolved["model_id"]
+    model_state = task_store.load(model_id)
+    if model_state is None or model_state.get("kind") != "surrogate":
+        raise ValueError(f"代理模型任务不存在：{model_id}")
+    if model_state.get("status") != "finished":
+        raise ValueError(f"代理模型任务尚未完成：{model_id}")
+    training_request = model_state.get("req") or {}
+    if training_request.get("vars_out") != resolved["all_var_list"]:
+        raise ValueError("all_var_list 与 model_id 训练时记录的变量顺序不一致")
+    if training_request.get("n_vars") != resolved["input_var_count"]:
+        raise ValueError("input_var_count 与 model_id 训练时记录不一致")
+    model_dir = (model_state.get("data") or {}).get("model_dir")
+    if not model_dir:
+        raise ValueError(f"代理模型任务缺少 model_dir：{model_id}")
+    return model_dir
 
 
 def _new_task_id() -> str:
@@ -68,25 +87,15 @@ def run_optimization(
     try:
         started = time.time()
         constraint_check = None
-        if optimizer == "nsga2" and all(key in resolved for key in _PARAMETERIZED_NSGA2_KEYS):
-            model_id = resolved["model_id"]
-            model_state = task_store.load(model_id)
-            if model_state is None or model_state.get("kind") != "surrogate":
-                raise ValueError(f"代理模型任务不存在：{model_id}")
-            if model_state.get("status") != "finished":
-                raise ValueError(f"代理模型任务尚未完成：{model_id}")
-            training_request = model_state.get("req") or {}
-            if training_request.get("vars_out") != resolved["all_var_list"]:
-                raise ValueError("all_var_list 与 model_id 训练时记录的变量顺序不一致")
-            if training_request.get("n_vars") != resolved["input_var_count"]:
-                raise ValueError("input_var_count 与 model_id 训练时记录不一致")
-            model_dir = (model_state.get("data") or {}).get("model_dir")
-            if not model_dir:
-                raise ValueError(f"代理模型任务缺少 model_dir：{model_id}")
-
+        if optimizer in {"nsga2", "rl"} and all(
+            key in resolved for key in _PARAMETERIZED_NSGA2_KEYS
+        ):
+            model_dir = _resolve_model_dir(resolved)
             configured_path = resolved["output_config"].get("pareto_txt_path")
-            default_path = str(Path(task_store.state_path(task_id)).parent / "pareto_solutions.tsv")
-            result = run_parameterized_nsga2(
+            filename = "pareto_solutions.tsv" if optimizer == "nsga2" else "rl_solutions.tsv"
+            default_path = str(Path(task_store.state_path(task_id)).parent / filename)
+            runner = run_parameterized_nsga2 if optimizer == "nsga2" else run_parameterized_rl
+            result = runner(
                 resolved,
                 model_dir=model_dir,
                 output_path=configured_path or default_path,
@@ -113,6 +122,7 @@ def run_optimization(
             "task_info": {
                 "model_id": resolved.get("model_id"),
                 "optimizer": optimizer,
+                "mode": resolved.get("mode"),
                 "decision_var_names": resolved.get("decision_var_names"),
                 "objective_names": resolved.get("objective_names"),
                 "result_columns": result.get("columns") if constraint_check is not None else None,
@@ -125,7 +135,7 @@ def run_optimization(
         if constraint_check is not None:
             data["constraint_check"] = constraint_check
         task_store.update(task_id, stage="optimize", status="finished", data=data)
-        return {"code": 0, "msg": "多目标优化计算完成", "task_id": task_id, "data": data}
+        return {"code": 0, "msg": "优化计算完成", "task_id": task_id, "data": data}
     except Exception as exc:
         logger.error(f"多目标优化失败：{exc}")
         task_store.update(task_id, stage="optimize", status="failed")
