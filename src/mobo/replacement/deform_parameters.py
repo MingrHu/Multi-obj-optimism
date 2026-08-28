@@ -107,6 +107,45 @@ def replace_movctl_constant_speed(
     return replace_keyword_last_value(line, binding, keyword="MOVCTL")
 
 
+def replace_movctl_profile_peak_speed(
+    lines: Sequence[str], bindings: Sequence[ParameterBinding]
+) -> list[str]:
+    """替换压力辊五点速度曲线中的非零速度，保留启停阶段的零速度。"""
+    result = list(lines)
+    for binding in bindings:
+        if binding.name != "pressure_roll_profile_peak_speed" or binding.object_id is None:
+            continue
+        magnitude = abs(float(binding.value))
+        for index, line in enumerate(result):
+            tokens = line.split()
+            if (
+                len(tokens) < 8
+                or tokens[0] != "MOVCTL"
+                or tokens[1] != binding.object_id
+                or tokens[3] != "2"
+            ):
+                continue
+            count = int(tokens[-1])
+            for offset in range(1, count + 1):
+                point_index = index + offset
+                if point_index >= len(result):
+                    break
+                speed = parse_speed(result[point_index])
+                if speed is None or speed == 0.0:
+                    continue
+                body, newline = (
+                    (result[point_index][:-1], "\n")
+                    if result[point_index].endswith("\n")
+                    else (result[point_index], "")
+                )
+                head, separator, _ = body.rpartition(" ")
+                value = -magnitude if speed < 0 else magnitude
+                result[point_index] = (
+                    head + separator + format_deform_float(str(value)) + newline
+                )
+    return result
+
+
 def collect_speed_scale_specs(
     bindings: Sequence[ParameterBinding],
 ) -> Dict[str, Tuple[float, float]]:
@@ -212,7 +251,7 @@ def scale_movctl_block(lines: List[str], specs: Dict[str, Tuple[float, float]]) 
     return result
 
 
-def replace_pressure_roll_speed_profile(
+def rescale_movctl_speed_profile(
     lines: Sequence[str], bindings: Sequence[ParameterBinding]
 ) -> list[str]:
     """根据同一对象的速度上下界替换完整 MOVCTL 控制点块。"""
@@ -226,9 +265,10 @@ __all__ = [
     "parse_speed",
     "replace_keyword_last_value",
     "replace_movctl_constant_speed",
+    "replace_movctl_profile_peak_speed",
     "replace_object_temperature",
     "replace_ring_die_temperature",
-    "replace_pressure_roll_speed_profile",
+    "rescale_movctl_speed_profile",
     "scale_abs",
     "scale_movctl_block",
     "scale_speed_line",

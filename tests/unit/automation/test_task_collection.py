@@ -82,7 +82,7 @@ def test_gh4169_single_task_is_registered_with_requested_design_space():
     assert [(item["name"], item["range"]) for item in task.parameters] == [
         ("workpiece_temperature", [1100.0, 1150.0]),
         ("ring_die_temperature", [250.0, 350.0]),
-        ("pressure_roll_constant_speed", [0.1, 2.5]),
+        ("pressure_roll_profile_peak_speed", [0.1, 2.5]),
     ]
     assert [target.output_name for target in task.targets] == [
         "roundness_inner", "roundness_outer", "die_load_y",
@@ -175,9 +175,15 @@ def test_real_gh4169_template_has_grain_and_generates_parameterized_key(tmp_path
     for object_id in (2, 3, 4, 5):
         assert f"REFTMP       {object_id}    2.5000000000E+002" in rendered
     assert (
-        "MOVCTL       3       1       0    0.0000000000E+000    "
-        "1.0000000000E+000    0.0000000000E+000    1.0000000000E-001"
+        "MOVCTL       3       1       2    0.0000000000E+000    "
+        "1.0000000000E+000    0.0000000000E+000       5"
     ) in rendered
+    assert rendered.count(
+        "4.0000000000E-001"
+    ) == text.count("4.0000000000E-001") - 2
+    assert rendered.count(
+        "1.0000000000E-001"
+    ) == text.count("1.0000000000E-001") + 2
 
 
 def test_task_prepare_uses_temp_workspace_and_never_calls_solver(monkeypatch, tmp_path):

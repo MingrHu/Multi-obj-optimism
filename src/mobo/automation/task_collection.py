@@ -424,7 +424,7 @@ GH4169_RING_SINGLE_TASK_1 = SingleOperationTaskDefinition(
     parameters=(
         {"name": "workpiece_temperature", "object": "workpiece", "range": [1100.0, 1150.0]},
         {"name": "ring_die_temperature", "object": "ring_dies", "range": [250.0, 350.0]},
-        {"name": "pressure_roll_constant_speed", "object": "pressure_roll", "range": [0.1, 2.5]},
+        {"name": "pressure_roll_profile_peak_speed", "object": "pressure_roll", "range": [0.1, 2.5]},
     ),
     targets=(
         TargetDefinition("roundness_inner", "roundness_inner", "workpiece", (1,),
