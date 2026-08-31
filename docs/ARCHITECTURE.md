@@ -113,6 +113,18 @@ DOE 聚合服务。路由层位于 `api.handler`，实际处理层位于 `api.se
 - HTTP 唯一协议入口是 [`DOE_HTTP_API.md`](api/DOE_HTTP_API.md)；Python 内部任务接口记录在
   [`interface_protocol.md`](api/interface_protocol.md)。
 
+## 质量与安全流水线
+
+- `tools/quality_score.py` 汇总 Radon、Ruff、Vulture、pytest-cov 与文档检查，生成本地
+  100分制趋势报告；第三方包仍由开发依赖管理。
+- `.github/workflows/quality.yml` 执行测试、覆盖率、复杂度门禁和评分。
+- `.github/workflows/security.yml` 执行 Semgrep CE 与 pip-audit 扫描。
+- `.github/workflows/scorecard.yml` 生成 OpenSSF Scorecard 并上传 SARIF。
+- `.github/dependabot.yml` 定期检查 Python、Actions 与 Docker 依赖更新。
+
+安全扫描和 OpenSSF 分数不并入本地工程质量总分，避免把不同风险维度压缩成不可解释的
+单一指标。
+
 ## 原子能力层机制（extraction）
 
 上游按 `(workpiece_type, target_name)` 请求提取能力，注册表返回一个

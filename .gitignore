@@ -72,6 +72,7 @@ logs/
 .coverage.*
 htmlcov/
 coverage.xml
+quality-reports/
 
 # 代理/工具产物
 .trae/

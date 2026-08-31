@@ -324,11 +324,45 @@ pytest -m "not slow"          # 默认跳过耗时（DNN 训练等）用例
 pytest                        # 全部用例
 pytest --cov=mobo             # 覆盖率
 python tools/check_docs.py    # 文档知识库、路由、CLI、包结构和链接一致性
+python tools/run_quality_checks.py  # 执行全部本地质量检查并生成汇总报告
+python tools/quality_score.py --run-tests  # 测试后生成本地工程质量评分
+xenon --max-absolute D --max-modules C --max-average B src/mobo
+vulture src/mobo --min-confidence 100
+pip-audit -r requirements/runtime.txt -r requirements/server.txt --no-deps --disable-pip
 ```
 
 - `slow`：keras/DNN 训练等耗时用例（默认跳过）。
 - `deform`：依赖 Windows DEFORM 环境的用例（非 Windows 跳过）。
 - `integration`：依赖 `data/` 真实产物的集成用例（产物缺失自动跳过）。
+
+## 工程质量与技术债
+
+`tools/quality_score.py` 汇总 Radon、Ruff、Vulture、pytest-cov 和文档一致性结果，生成
+`quality-reports/quality-score.json` 与 `quality-score.md`。这个 100 分制分数用于观察本仓库
+自身的质量趋势，不替代 SonarQube、安全审计或人工评审。
+
+日常完整检查使用 `python tools/run_quality_checks.py`，输出每项日志以及
+`quality-check-summary.json` 和 `quality-check-summary.md`。需要联网检查依赖漏洞时增加
+`--with-security`。
+
+| 维度 | 分值 | 数据来源 |
+|---|---:|---|
+| 可维护性 | 25 | Radon Maintainability Index |
+| 圈复杂度 | 20 | Radon 复杂度等级 |
+| 测试覆盖率 | 30 | pytest-cov |
+| 静态问题 | 15 | Ruff |
+| 确定死代码 | 5 | Vulture 100%置信度结果 |
+| 文档一致性 | 5 | `tools/check_docs.py` |
+
+GitHub Actions 自动执行以下检查：
+
+- `quality.yml`：测试、覆盖率、Xenon 复杂度门禁和本地质量评分；
+- `security.yml`：Semgrep CE 源码扫描和 pip-audit 依赖漏洞扫描；
+- `scorecard.yml`：OpenSSF Scorecard 仓库供应链安全评分；
+- `docs-consistency.yml`：文档与公共接口一致性。
+
+Dependabot 每周检查 Python、GitHub Actions 和 Docker 依赖。SonarQube Cloud 属于可选的
+托管技术债平台，需要仓库管理员在 SonarQube Cloud 授权 GitHub 仓库后单独接入。
 
 ## 文档知识库维护
 

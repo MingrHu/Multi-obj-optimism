@@ -35,7 +35,16 @@ dependencies = [
 
 [project.optional-dependencies]
 gui = ["PySide6==6.11.0"]
-dev = ["pytest", "pytest-cov", "pytest-mock", "ruff==0.12.12"]
+dev = [
+    "pytest",
+    "pytest-cov",
+    "pytest-mock",
+    "ruff==0.12.12",
+    "radon==6.0.1",
+    "xenon==0.9.3",
+    "vulture==2.16",
+    "pip-audit==2.10.1",
+]
 
 [project.scripts]
 mobo-ring-roundness = "mobo.cli.ring_roundness:main"
@@ -63,6 +72,12 @@ extend-exclude = ["data", "logs", ".venv"]
 
 [tool.ruff.lint]
 select = ["E4", "E7", "E9", "F", "B"]
+
+[tool.vulture]
+paths = ["src/mobo"]
+exclude = [".venv", "data", "logs"]
+min_confidence = 100
+sort_by_size = true
 
 [tool.coverage.run]
 source = ["mobo"]

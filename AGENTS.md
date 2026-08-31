@@ -97,6 +97,8 @@ bash scripts/setup_env.sh         # 安装环境（CPU torch + 本包 + dev）
 pytest -m "not slow"              # 跑测试
 pytest --cov=mobo                 # 覆盖率
 python tools/check_docs.py        # 文档知识库与公共表面一致性
+python tools/run_quality_checks.py # 本地完整质量检查与汇总报告
+python tools/quality_score.py --run-tests  # 本地工程质量评分
 mobo-api / mobo-ga / mobo-rl / mobo-surrogate / mobo-ring-roundness   # CLI 入口
 ```
 
