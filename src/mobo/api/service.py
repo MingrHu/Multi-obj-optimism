@@ -28,11 +28,19 @@ def _require_id(payload: dict[str, Any]) -> str:
 def add_doe(payload: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(payload.get("metadata", {}), dict):
         raise ApiError("metadata 必须是 JSON 对象")
-    return store.create(payload)
+    return _doe_summary(store.create(payload))
 
 
 def list_doe() -> list[dict[str, Any]]:
-    return store.list_all()
+    return [_doe_summary(state) for state in store.list_all()]
+
+
+def _doe_summary(state: dict[str, Any]) -> dict[str, Any]:
+    fields = (
+        "id", "name", "description", "metadata", "status", "stage", "progress",
+        "created_at", "updated_at",
+    )
+    return {field: state.get(field) for field in fields}
 
 
 def delete_doe(payload: dict[str, Any]) -> str:
@@ -59,9 +67,12 @@ def generate_sample(payload: dict[str, Any]) -> dict[str, Any]:
     output = generate_samples(
         doe_id, method, ranges, str(store.task_dir(doe_id) / "samples"), n_samples, levels
     )
+    resource = store.register_resource(
+        doe_id, "sample", list(ranges), path=output,
+    )
     sample = {
         "id": doe_id, "method": method, "param_ranges": ranges,
-        "sample_file": output, "columns": list(ranges),
+        "sample_file": output, **resource,
         "sample_count": _count_data_rows(output),
     }
     if method == "lhs":
@@ -70,7 +81,7 @@ def generate_sample(payload: dict[str, Any]) -> dict[str, Any]:
         sample["level_nums"] = list(levels)
     store.update(doe_id, status="ready", stage="sample_generated", progress=10)
     store.update_section(doe_id, "sample", **sample)
-    return sample
+    return {key: value for key, value in sample.items() if key != "sample_file"}
 
 
 def _normalize_sampling_config(method, ranges, n_samples, levels):
@@ -119,13 +130,16 @@ def generate_training_dataset(payload: dict[str, Any]) -> dict[str, Any]:
     output = store.task_dir(doe_id) / "training" / "demo_training_dataset.tsv"
     np.savetxt(output, np.column_stack([inputs, targets]), delimiter="\t", fmt="%.8f")
 
+    resource = store.register_resource(
+        doe_id, "dataset", [*input_names, *target_names], path=str(output),
+    )
     data = {
         "data_file": str(output), "all_var_list": [*input_names, *target_names], # type: ignore
         "input_var_count": len(input_names), "sample_count": n_samples,
-        "input_names": input_names, "target_names": target_names,
+        "input_names": input_names, "target_names": target_names, **resource,
     }
     store.update_section(doe_id, "training", dataset=data)
-    return data
+    return {key: value for key, value in data.items() if key != "data_file"}
 
 
 def _validate_dataset_request(input_names, target_names, ranges, n_samples, seed, noise_ratio):
@@ -185,13 +199,20 @@ def _normalize_ranges(value: Any) -> dict[str, tuple[float, float]]:
 def get_training_progress(doe_id: str) -> dict[str, Any]:
     state = store.load(store.validate_id(doe_id))
     training = state.get("training") or {}
+    models = [
+        {key: value for key, value in model.items() if key != "model_dir"}
+        for model in training.get("models", [])
+    ]
     return {
         "id": doe_id,
         "status": training.get("status", "not_started"),
         "stage": training.get("stage", "not_started"),
         "progress": training.get("progress", 0),
-        "models": training.get("models", []),
-        "error": training.get("error"),
+        "models": models,
+        "error": (
+            "代理模型训练失败，内部异常详情由服务端维护"
+            if training.get("error") else None
+        ),
         "updated_at": state["updated_at"],
     }
 
@@ -268,7 +289,7 @@ def _normalize_file_dataset(payload: dict[str, Any]) -> dict[str, Any]:
     count = payload.get("input_var_count")
     data_file = Path(str(payload.get("data_file", ""))).expanduser().resolve()
     if not data_file.is_file():
-        raise ApiError(f"data_file 不存在：{data_file}")
+        raise ApiError("data_file 不存在或不可访问")
     if not isinstance(names, list) or not all(isinstance(x, str) and x for x in names):
         raise ApiError("all_var_list 必须是非空字符串数组")
     if not isinstance(count, int) or not 0 < count < len(names):
@@ -301,6 +322,9 @@ def _normalize_inline_dataset(doe_id: str, value: Any) -> dict[str, Any] | None:
         "input_var_count": len(input_names), "sample_count": len(inputs),
         "input_names": input_names, "target_names": target_names,
     }
+    dataset.update(store.register_resource(
+        doe_id, "dataset", dataset["all_var_list"], path=str(output),
+    ))
     store.update_section(doe_id, "training", dataset=dataset)
     return dataset
 
@@ -506,11 +530,17 @@ def start_inference(payload: dict[str, Any]) -> dict[str, Any]:
         target: matrix[:, index].tolist()
         for index, target in enumerate(record["target_names"])
     }
+    resource = store.register_resource(
+        doe_id, "inference", record["target_names"], values=all_results,
+    )
     store.update_section(
         doe_id, "inference", model_id=record["model_id"],
-        columns=record["target_names"], values=all_results,
+        values=all_results, **resource,
     )
-    return {field: all_results[field] for field in fields}
+    return {
+        "id": doe_id, "model_id": record["model_id"], **resource,
+        "predictions": {field: all_results[field] for field in fields},
+    }
 
 
 def _normalize_inference_inputs(value: Any, state: dict[str, Any]) -> list[Any]:
@@ -562,33 +592,23 @@ def _normalize_fields(value: Any, available: list[str]) -> list[str]:
     return fields
 
 
-def get_data(payload: dict[str, Any]) -> dict[str, list[Any]]:
+def get_data(payload: dict[str, Any]) -> dict[str, Any]:
     doe_id = _require_id(payload)
-    state = store.load(doe_id)
-    if "fields" not in payload:
-        raise ApiError("fields 为必填的非空字符串数组")
-    data_type = payload.get("data_type")
-    if data_type == "sample":
-        section = state.get("sample") or {}
-        return _read_tabular_fields(section.get("sample_file"), section.get("columns"), payload)
-    if data_type == "dataset":
-        section = (state.get("training") or {}).get("dataset") or {}
-        return _read_tabular_fields(section.get("data_file"), section.get("all_var_list"), payload)
-    if data_type == "optimization":
-        section = (state.get("optimization") or {}).get("result") or {}
-        task_info = section.get("task_info") or {}
-        resources = section.get("file_resource") or {}
-        return _read_tabular_fields(
-            resources.get("solution_txt_path"), task_info.get("result_columns"), payload
-        )
-    if data_type == "inference":
-        section = state.get("inference") or {}
-        values = section.get("values")
-        if not isinstance(values, dict):
-            raise ConflictError("尚无可获取的推理结果")
+    resource_id = payload.get("resource_id")
+    resource = store.resolve_resource(doe_id, resource_id)
+    columns = resource.get("columns")
+    values = resource.get("values")
+    if isinstance(values, dict):
         fields = _normalize_fields(payload.get("fields"), list(values))
-        return {field: values[field] for field in fields}
-    raise ApiError("data_type 仅支持 sample、dataset、optimization、inference")
+        selected = {field: values[field] for field in fields}
+    else:
+        selected = _read_tabular_fields(resource.get("path"), columns, payload)
+    row_count = len(next(iter(selected.values()), []))
+    return {
+        "id": doe_id, "resource_id": resource_id,
+        "resource_type": resource.get("kind"), "row_count": row_count,
+        "values": selected,
+    }
 
 
 def _read_tabular_fields(
@@ -853,7 +873,15 @@ def _collect_optimization_result(doe_id, response) -> dict[str, Any]:
             destination = output_dir / path.name
             shutil.copy2(path, destination)
             resources[key] = str(destination)
-    return {"optimization_id": response["task_id"], **data, "file_resource": resources}
+    columns = (data.get("task_info") or {}).get("result_columns") or []
+    resource = store.register_resource(
+        doe_id, "optimization", columns,
+        path=resources.get("solution_txt_path", ""),
+    )
+    return {
+        "optimization_id": response["task_id"], **data,
+        "file_resource": resources, **resource,
+    }
 
 
 def stop_optimization(payload: dict[str, Any]) -> dict[str, Any]:
@@ -875,14 +903,20 @@ def stop_optimization(payload: dict[str, Any]) -> dict[str, Any]:
 def get_optimization(doe_id: str) -> dict[str, Any]:
     state = store.load(store.validate_id(doe_id))
     optimization = state.get("optimization") or {}
+    result = optimization.get("result")
+    if isinstance(result, dict):
+        result = {key: value for key, value in result.items() if key != "file_resource"}
     return {
         "id": doe_id,
         "status": optimization.get("status", "not_started"),
         "stage": optimization.get("stage", "not_started"),
         "progress": optimization.get("progress", 0),
         "request": optimization.get("request"),
-        "result": optimization.get("result"),
-        "error": optimization.get("error"),
+        "result": result,
+        "error": (
+            "优化执行失败，内部异常详情由服务端维护"
+            if optimization.get("error") else None
+        ),
         "updated_at": state["updated_at"],
     }
 

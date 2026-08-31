@@ -19,6 +19,7 @@ from mobo.common.paths import task_dir as legacy_task_dir
 from .errors import ConflictError, NotFoundError
 
 _ID = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+_RESOURCE_ID = re.compile(r"^tos-[a-f0-9]{20}$")
 # 可重入锁允许 update_section 在持锁状态下继续调用 update 和 load
 _LOCK = threading.RLock()
 
@@ -71,7 +72,7 @@ def create(payload: dict[str, Any]) -> dict[str, Any]:
             "metadata": payload.get("metadata", {}),
             "status": "created", "stage": "created", "progress": 0,
             "created_at": now, "updated_at": now, "sample": {},
-            "inference": {},
+            "inference": {}, "resources": {},
             "training": {
                 "status": "not_started", "stage": "not_started",
                 "progress": 0, "models": [],
@@ -127,6 +128,39 @@ def list_all() -> list[dict[str, Any]]:
     return states
 
 
+def register_resource(
+    doe_id: str, kind: str, columns: list[str], *, path: str = "",
+    values: dict[str, list[Any]] | None = None,
+) -> dict[str, Any]:
+    """注册服务端结果并返回不包含真实路径的公开资源描述"""
+    with _LOCK:
+        state = load(doe_id)
+        resources = {
+            key: value for key, value in (state.get("resources") or {}).items()
+            if value.get("kind") != kind
+        }
+        resource_id = f"tos-{uuid.uuid4().hex[:20]}"
+        resources[resource_id] = {
+            "kind": kind, "columns": list(columns), "path": path,
+            "values": values, "created_at": _now(),
+        }
+        update(doe_id, resources=resources)
+        return {
+            "resource_id": resource_id, "resource_type": kind,
+            "columns": list(columns),
+        }
+
+
+def resolve_resource(doe_id: str, resource_id: Any) -> dict[str, Any]:
+    """在指定DOE范围内解析资源索引"""
+    if not isinstance(resource_id, str) or not _RESOURCE_ID.fullmatch(resource_id):
+        raise NotFoundError(f"数据资源不存在：{resource_id}")
+    resource = (load(doe_id).get("resources") or {}).get(resource_id)
+    if not isinstance(resource, dict):
+        raise NotFoundError(f"数据资源不存在：{resource_id}")
+    return resource
+
+
 def delete(doe_id: str) -> None:
     with _LOCK:
         state = load(doe_id)
@@ -147,10 +181,18 @@ def reset_training(doe_id: str) -> None:
             if target.exists():
                 shutil.rmtree(target)
             target.mkdir(parents=True)
-        update(doe_id, training={
-            "status": "not_started", "stage": "not_started",
-            "progress": 0, "models": [], "error": None,
-        })
+        resources = {
+            key: value for key, value in (state.get("resources") or {}).items()
+            if value.get("kind") != "dataset"
+        }
+        update(
+            doe_id,
+            training={
+                "status": "not_started", "stage": "not_started",
+                "progress": 0, "models": [], "error": None,
+            },
+            resources=resources,
+        )
 
 
 def _delete_legacy_artifacts(state: dict[str, Any]) -> None:
@@ -168,6 +210,6 @@ def _remove_legacy_task(task_id: Any) -> None:
 
 
 __all__ = [
-    "create", "delete", "list_all", "load", "reset_training", "task_dir",
-    "update", "update_section", "validate_id",
+    "create", "delete", "list_all", "load", "register_resource", "reset_training",
+    "resolve_resource", "task_dir", "update", "update_section", "validate_id",
 ]

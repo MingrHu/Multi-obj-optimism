@@ -178,10 +178,11 @@ Demo 会为本次运行生成唯一 DOE 标识，因此可以重复执行
 Demo 中的字段查询使用 GET，例如：
 
 ```text
-GET /api/v1/hust/doe/data/get?id=<demo_doe_id>&data_type=sample&fields=temperature
+GET /api/v1/hust/doe/data/get?id=<demo_doe_id>&resource_id=<tos-resource-id>&fields=temperature
 ```
 
-查询多个字段时重复传递 `fields`。端上无需打开响应中的服务端文件路径。
+`resource_id` 来自样本生成、数据集生成、推理或优化查询响应。查询多个字段时重复传递
+`fields`，端上不会收到也无需打开服务端文件路径。
 
 ## 6 Demo 产物位置
 
@@ -230,7 +231,7 @@ $env:MOBO_API_URL = "http://127.0.0.1:8000"
 先查询对应响应中的 `error` 字段，再检查服务终端的异常日志
 
 ```text
-GET /api/hust/v1/doe/train/progress?id=<doe_id>
+GET /api/v1/hust/doe/train/progress?id=<doe_id>
 GET /api/v1/hust/doe/optimize/getById?id=<doe_id>
 ```
 

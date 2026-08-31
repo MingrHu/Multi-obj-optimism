@@ -188,10 +188,11 @@ python -m mobo.api.demo
 详细部署、健康检查、端口配置和故障排查见
 [API 后端启动文档](docs/deployment/BACKEND_STARTUP.md)。
 
-样本、训练数据集、推理和优化结果可通过同一个 GET 接口按字段读取，端上无需解析文件：
+样本、训练数据集、推理和优化结果可通过同一个 GET 接口按字段读取。`resource_id`
+取自对应生成、推理或优化接口的响应，端上无需接触服务器文件路径：
 
 ```text
-GET /api/v1/hust/doe/data/get?id=<doe_id>&data_type=sample&fields=temperature
+GET /api/v1/hust/doe/data/get?id=<doe_id>&resource_id=<tos-resource-id>&fields=temperature
 ```
 
 ### 1. 训练 / 评估代理模型

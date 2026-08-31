@@ -65,12 +65,12 @@ def main() -> None:
     # 3 通过 GET 接口只获取样本中的温度字段
     call("GET", "/api/v1/hust/doe/data/get", params=[
         ("id", doe_id),
-        ("data_type", "sample"),
+        ("resource_id", sample["data"]["resource_id"]),
         ("fields", "temperature"),
     ])
 
     # 4 生成测试训练数据集
-    call("POST", "/api/v1/hust/doe/dataset/generate", json={
+    generated_dataset = call("POST", "/api/v1/hust/doe/dataset/generate", json={
         "id": doe_id,
         "input_names": input_names,
         "target_names": target_names,
@@ -82,12 +82,12 @@ def main() -> None:
     # 5 按字段获取训练数据集
     dataset = call("GET", "/api/v1/hust/doe/data/get", params=[
         ("id", doe_id),
-        ("data_type", "dataset"),
+        ("resource_id", generated_dataset["data"]["resource_id"]),
         ("fields", "temperature"),
         ("fields", "speed"),
         ("fields", "grain"),
         ("fields", "load"),
-    ])["data"]
+    ])["data"]["values"]
 
     # 6 训练代理模型并评价
     call("POST", "/api/v1/hust/doe/train/startTrain", json={
@@ -112,12 +112,12 @@ def main() -> None:
     })
 
     # 7 等待训练完成
-    training = wait_for_terminal("/api/hust/v1/doe/train/progress", doe_id)
+    training = wait_for_terminal("/api/v1/hust/doe/train/progress", doe_id)
     if training["data"]["status"] != "finished":
         raise RuntimeError(f"代理模型训练未完成 {training['data']}")
 
     # 8 推理测试 只返回 grain
-    call("POST", "/api/v1/hust/doe/inference/startInference", json={
+    inference = call("POST", "/api/v1/hust/doe/inference/startInference", json={
         "id": doe_id,
         "inputs": {
             "temperature": [1000],
@@ -129,7 +129,7 @@ def main() -> None:
     # 9 通过统一 GET 接口获取最近一次推理的 load
     call("GET", "/api/v1/hust/doe/data/get", params=[
         ("id", doe_id),
-        ("data_type", "inference"),
+        ("resource_id", inference["data"]["resource_id"]),
         ("fields", "load"),
     ])
 
@@ -170,7 +170,7 @@ def main() -> None:
     # 13 按字段获取优化结果 文件本身无表头
     call("GET", "/api/v1/hust/doe/data/get", params=[
         ("id", doe_id),
-        ("data_type", "optimization"),
+        ("resource_id", optimization["data"]["result"]["resource_id"]),
         ("fields", "temperature"),
         ("fields", "grain"),
         ("fields", "feasible"),

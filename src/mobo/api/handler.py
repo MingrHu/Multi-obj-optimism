@@ -82,7 +82,7 @@ def delete_doe():
 
 
 #  @brief  根据参数范围生成DOE样本
-#  @return jsonify格式化信息 包含DOE标识 采样方法 实际样本数量 字段顺序和样本文件路径
+#  @return jsonify格式化信息 包含DOE标识 采样方法 实际样本数量 字段顺序和资源索引
 #  @param  id DOE唯一标识 必填
 #  @param  method 采样方法 支持lhs和full 默认为lhs
 #  @param  param_ranges 参数范围JSON对象 每个参数对应lower和upper组成的数值数组
@@ -96,7 +96,7 @@ def generate_sample():
 
 
 #  @brief  在DOE目标目录下生成演示用代理模型训练数据集
-#  @return jsonify格式化信息 包含数据文件路径 变量名称和样本数量
+#  @return jsonify格式化信息 包含数据资源索引 变量名称和样本数量
 #  @param  id DOE唯一标识 必填
 #  @param  param_ranges 输入参数范围JSON对象 必填
 #  @param  target_names 目标变量名称列表 必填
@@ -111,17 +111,19 @@ def generate_training_dataset():
     return _post(service.generate_training_dataset, "训练数据集生成完成")
 
 
-#  @brief  按字段获取样本 数据集 优化或推理结果
-#  @return jsonify格式化信息 data仅包含请求字段到数据数组的映射
+#  @brief  根据服务端资源索引按字段获取样本 数据集 优化或推理结果
+#  @return jsonify格式化信息 包含DOE标识 资源索引 资源类型 行数和字段数据
 #  @param  id DOE唯一标识 必填
-#  @param  data_type 数据类型 sample dataset optimization inference之一
+#  @param  resource_id tos开头的服务端资源索引 必填
 #  @param  fields 需要返回的字段名称列表 必填 可重复传递
+#  @author Hu Mingrui
+#  @date   2026/08/31
 @doe_api.get("/api/v1/hust/doe/data/get")
 def get_data():
     fields = request.args.getlist("fields")
     return _ok(service.get_data({
         "id": request.args.get("id", ""),
-        "data_type": request.args.get("data_type", ""),
+        "resource_id": request.args.get("resource_id", ""),
         "fields": fields,
     }), "数据获取完成")
 
@@ -131,7 +133,7 @@ def get_data():
 #  @param  id DOE唯一标识 GET查询参数 必填
 #  @author Hu Mingrui
 #  @date   2026/08/25
-@doe_api.get("/api/hust/v1/doe/train/progress")
+@doe_api.get("/api/v1/hust/doe/train/progress")
 def training_progress():
     return _ok(service.get_training_progress(request.args.get("id", "")))
 
@@ -177,7 +179,7 @@ def start_training():
 
 
 #  @brief  加载DOE代理模型并执行批量推理
-#  @return jsonify格式化信息 data仅包含请求目标字段到预测数组的映射
+#  @return jsonify格式化信息 包含模型标识 预测结果 字段顺序和推理结果资源索引
 #  @param  id DOE唯一标识 必填
 #  @param  inputs 输入参数二维数值数组 必填 单个样本可使用一维数组
 #  @param  fields 需要返回的预测目标字段列表 可选 默认返回全部目标

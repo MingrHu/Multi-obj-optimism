@@ -51,7 +51,7 @@
 - 路由层 `api.handler` 只解析 HTTP 参数和组装统一响应；实际处理放在 `api.service`。
 - 只读查询使用 GET，创建、训练、推理、优化、停止和删除操作使用 POST。
 - 样本、训练数据集和优化结果文件均为无表头 TSV；字段顺序必须写入 DOE 状态。
-- 端上按字段取数统一使用 `GET /api/v1/hust/doe/data/get`，不要要求端上读取服务端路径。
+- 端上按 `resource_id` 和字段取数统一使用 `GET /api/v1/hust/doe/data/get`，不要要求端上读取服务端路径。
 - 新增或修改路由时必须同步 `docs/api/DOE_HTTP_API.md`、HTTP 单元测试和 `mobo.api.demo`。
 
 ## 新增「原子提取能力」的方式

@@ -2,10 +2,6 @@
   "api_routes": [
     {
       "method": "GET",
-      "path": "/api/hust/v1/doe/train/progress"
-    },
-    {
-      "method": "GET",
       "path": "/api/v1/doe/list"
     },
     {
@@ -15,6 +11,10 @@
     {
       "method": "GET",
       "path": "/api/v1/hust/doe/optimize/getById"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/hust/doe/train/progress"
     },
     {
       "method": "GET",

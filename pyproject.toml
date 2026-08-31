@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mobo"
-version = "1.1.0"
+version = "1.1.1"
 description = "多目标锻造工艺优化工具包：代理模型 + NSGA-II/RL 优化 + DEFORM 自动化 + 几何圆度提取"
 readme = "README.md"
 requires-python = ">=3.11,<3.13"

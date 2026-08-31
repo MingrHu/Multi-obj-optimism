@@ -32,8 +32,8 @@ Docker 环境可执行 `docker compose up --build -d`，容器会自动使用 Gu
 | `POST /api/v1/doe/delete` | `id` | 删除 DOE 及其样本、模型、训练和优化文件 |
 | **`POST /api/v1/hust/doe/sample/generate`** | **`id`, `method`, `param_ranges`, `n_samples?`, `level_nums?`** | **LHS/全因子采样** |
 | `POST /api/v1/hust/doe/dataset/generate` | `id`, `param_ranges`, `target_names`, `input_names?`, `n_samples?`, `seed?`, `noise_ratio?` | 在 DOE 训练目录生成完整流程演示数据集 |
-| `GET /api/v1/hust/doe/data/get` | `id`, `data_type`, `fields` | 按字段获取样本、数据集、优化或最近一次推理结果 |
-| **`GET /api/hust/v1/doe/train/progress`** | **`id`** | **查询代理模型训练状态、阶段、进度及已训练模型** |
+| `GET /api/v1/hust/doe/data/get` | `id`, `resource_id`, `fields` | 按资源索引和字段获取样本、数据集、优化或推理结果 |
+| **`GET /api/v1/hust/doe/train/progress`** | **`id`** | **查询代理模型训练状态、阶段、进度及已训练模型** |
 | **`POST /api/v1/hust/doe/train/delete`** | **`id`** | **删除训练记录和代理模型** |
 | **`POST /api/v1/hust/doe/train/stop`** | **`id`** | **发出训练中止请求** |
 | **`POST /api/v1/hust/doe/train/startTrain`** | **见下文** | **后台训练并交叉验证** |
@@ -111,7 +111,8 @@ LHS 成功返回 HTTP 200：
       "X2": [10.0, 15.0],
       "X3": [1000.0, 2000.0]
     },
-    "sample_file": "<DOE任务目录>/samples/doe_sample_001-lhs.txt",
+    "resource_id": "tos-a1b2c3d4e5f60718293a",
+    "resource_type": "sample",
     "columns": ["X1", "X2", "X3"],
     "sample_count": 12,
     "n_samples": 4
@@ -136,7 +137,8 @@ Full 成功返回 HTTP 200：
       "X2": [10.0, 15.0],
       "X3": [1000.0, 2000.0]
     },
-    "sample_file": "<DOE任务目录>/samples/doe_sample_001-fullfactorial.txt",
+    "resource_id": "tos-b2c3d4e5f60718293a4b",
+    "resource_type": "sample",
     "columns": ["X1", "X2", "X3"],
     "sample_count": 27,
     "level_nums": [3, 3, 3]
@@ -151,13 +153,15 @@ Full 成功返回 HTTP 200：
 | `data.id` | string | DOE 唯一标识 |
 | `data.method` | string | 实际采样方法 `lhs` 或 `full` |
 | `data.param_ranges` | object | 变量名称及上下界 |
-| `data.sample_file` | string | 服务端内部样本文件索引 |
+| `data.resource_id` | string | 样本数据的不透明资源索引，格式为 `tos-` 加20位十六进制字符 |
+| `data.resource_type` | string | 资源类型，样本数据固定为 `sample` |
 | `data.columns` | string array | 无表头 TSV 的字段顺序 |
 | `data.sample_count` | integer | 文件中实际生成的样本总数 |
 | `data.n_samples` | integer | LHS 请求的基础随机样本数，仅 LHS 返回 |
 | `data.level_nums` | integer array | 各变量水平数，仅 Full 返回 |
 
-端上读取样本内容应使用按字段获取数据接口，不要依赖 `sample_file` 指向的服务端路径。
+样本文件的实际服务器路径只在服务端 DOE 状态中维护，不会返回给端上。端上使用
+`data.resource_id` 调用下一节的数据获取接口读取样本内容。
 
 **失败响应字段说明**：
 
@@ -189,7 +193,101 @@ DOE 不存在返回 HTTP 404：
 
 
 
-## 2 代理模型训练提交/开始
+## 2 按资源索引获取DOE数据
+
+**GET /api/v1/hust/doe/data/get**
+
+**请求字段说明**：
+
+以下示例读取样本资源中的 `X1` 和 `X3` 两列。`fields` 是可重复的 query string
+参数，GET 请求不使用 JSON 请求体。
+
+```http
+GET /api/v1/hust/doe/data/get?id=doe_sample_001&resource_id=tos-a1b2c3d4e5f60718293a&fields=X1&fields=X3
+```
+
+| 请求字段 | 类型 | 必填 | 说明 |
+|---|---|---:|---|
+| `id` | string | 是 | 资源所属的 DOE 唯一标识 |
+| `resource_id` | string | 是 | 生成、训练、推理或优化接口返回的 `tos-xxxxx` 不透明资源索引 |
+| `fields` | string | 是 | 需要返回的字段名称，可重复传递，至少一个 |
+
+`resource_id` 不是服务器路径或下载 URL，只能与其所属 DOE 的 `id` 配合使用。服务端
+当前支持 `sample`、`dataset`、`inference` 和 `optimization` 四类资源。相同 DOE
+重新生成同类资源后，旧索引失效，端上应保存最新业务接口响应中的索引。
+
+**成功响应字段说明**：
+
+成功返回 HTTP 200：
+
+```json
+{
+  "code": 0,
+  "message": "数据获取完成",
+  "data": {
+    "id": "doe_sample_001",
+    "resource_id": "tos-a1b2c3d4e5f60718293a",
+    "resource_type": "sample",
+    "row_count": 12,
+    "values": {
+      "X1": [0.25, 0.42, 0.18, 0.35],
+      "X3": [1120.0, 1185.0, 1090.0, 1210.0]
+    }
+  }
+}
+```
+
+| 成功响应字段 | 类型 | 说明 |
+|---|---|---|
+| `code` | integer | 成功固定为0 |
+| `message` | string | 成功为 `数据获取完成` |
+| `data.id` | string | DOE 唯一标识 |
+| `data.resource_id` | string | 本次读取的资源索引 |
+| `data.resource_type` | string | `sample`、`dataset`、`inference` 或 `optimization` |
+| `data.row_count` | integer | 该资源的总数据行数，不受本次字段数量影响 |
+| `data.values` | object | 字段名称到数据数组的映射，键顺序与请求的 `fields` 顺序一致 |
+
+**失败响应字段说明**：
+
+字段不存在返回 HTTP 400：
+
+```json
+{
+  "code": 1,
+  "message": "请求字段不存在：X9，可用字段：X1, X2, X3",
+  "data": {}
+}
+```
+
+资源索引无效、已失效或不属于当前 DOE 时返回 HTTP 404：
+
+```json
+{
+  "code": 404,
+  "message": "数据资源不存在：tos-00000000000000000000",
+  "data": {}
+}
+```
+
+资源记录存在但服务端文件已缺失时返回 HTTP 409：
+
+```json
+{
+  "code": 409,
+  "message": "对应数据尚未生成或结果文件不存在",
+  "data": {}
+}
+```
+
+| 失败响应字段 | 类型 | 说明 |
+|---|---|---|
+| `code` | integer | 参数错误为1，资源不存在为404，资源文件状态冲突为409 |
+| `message` | string | 具体错误原因，不包含服务器文件路径 |
+| `data` | object | 失败时为空对象 |
+
+
+
+## 3 代理模型训练提交/开始
 
 **POST /api/v1/hust/doe/train/startTrain**
 
@@ -356,7 +454,7 @@ DOE 不存在返回 HTTP 404：
 
 
 
-## 3 代理模型训练中止
+## 4 代理模型训练中止
 
 **POST /api/v1/hust/doe/train/stop**
 
@@ -452,7 +550,7 @@ DOE 不存在返回 HTTP 404：
 
 
 
-## 4 删除训练代理模型
+## 5 删除训练代理模型
 
 **POST /api/v1/hust/doe/train/delete**
 
@@ -520,9 +618,9 @@ DOE 不存在返回 HTTP 404；缺少或使用非法 `id` 返回 HTTP 400，响�
 
 
 
-## 5 查询代理模型训练进度
+## 6 查询代理模型训练进度
 
-**GET /api/hust/v1/doe/train/progress**
+**GET /api/v1/hust/doe/train/progress**
 
 该接口是 GET 请求，`id` 通过 query string 传递，不接收 JSON 请求体，也不使用
 独立 `TrainId`。
@@ -530,7 +628,7 @@ DOE 不存在返回 HTTP 404；缺少或使用非法 `id` 返回 HTTP 400，响�
 **请求字段说明**：
 
 ```http
-GET /api/hust/v1/doe/train/progress?id=doe_20260622_001
+GET /api/v1/hust/doe/train/progress?id=doe_20260622_001
 ```
 
 | 请求字段 | 位置 | 类型 | 必填 | 说明 |
@@ -566,11 +664,11 @@ GET /api/hust/v1/doe/train/progress?id=doe_20260622_001
 | `data.stage` | string | 当前训练阶段 |
 | `data.progress` | integer | 当前训练进度，范围为0到100 |
 | `data.models` | object array | 已完成训练或正在累计的模型记录 |
-| `data.error` | string or null | 训练失败原因，无错误时为 `null` |
+| `data.error` | string or null | 训练失败提示，无错误时为 `null`，内部异常详情仅由服务端维护 |
 | `data.updated_at` | string | DOE 状态最后更新时间，带时区的 ISO 8601 格式 |
 
-训练线程启动后发生错误时，本接口返回 HTTP 200，并通过 `status=failed` 和 `error`
-报告后台任务结果。
+训练线程启动后发生错误时，本接口返回 HTTP 200，并通过 `status=failed` 和通用
+`error` 提示报告后台任务结果，不向端上暴露内部路径或异常细节。
 
 **失败响应字段说明**：
 
@@ -602,7 +700,7 @@ DOE 不存在返回 HTTP 404：
 
 
 
-## 6 代理模型推理
+## 7 代理模型推理
 
 **POST /api/v1/hust/doe/inference/startInference**
 
@@ -658,8 +756,15 @@ DOE 不存在返回 HTTP 404：
   "code": 0,
   "message": "推理完成",
   "data": {
-    "Y1": [1050.25],
-    "Y2": [0.42]
+    "id": "doe_20260622_001",
+    "model_id": "tr_doe_20260622_001_2_a1b2c3",
+    "resource_id": "tos-c3d4e5f60718293a4b5c",
+    "resource_type": "inference",
+    "columns": ["Y1", "Y2", "Y3", "Y4", "Y5", "Y6", "Y7", "Y8"],
+    "predictions": {
+      "Y1": [1050.25],
+      "Y2": [0.42]
+    }
   }
 }
 ```
@@ -668,12 +773,17 @@ DOE 不存在返回 HTTP 404：
 |---|---|---|
 | `code` | integer | 成功固定为0 |
 | `message` | string | 成功为 `推理完成` |
-| `data` | object | 输出目标名称到预测结果数组的映射 |
-| `data.<field>` | number array | 对应目标的批量预测结果，顺序与输入样本一致 |
+| `data.id` | string | DOE 唯一标识 |
+| `data.model_id` | string | 本次实际加载的代理模型标识 |
+| `data.resource_id` | string | 本次完整推理结果的资源索引 |
+| `data.resource_type` | string | 推理结果固定为 `inference` |
+| `data.columns` | string array | 该模型全部输出目标的字段顺序 |
+| `data.predictions` | object | 本次请求字段到预测结果数组的映射 |
+| `data.predictions.<field>` | number array | 对应目标的批量预测结果，顺序与输入样本一致 |
 
 服务会在 DOE 状态的 `inference` 区块保存本次使用的 `model_id` 和全部输出目标结果。
-本接口可以通过 `fields` 只返回部分目标，但之后仍可通过按字段获取数据接口读取本次
-推理的其他目标。新的推理结果会覆盖上一次记录。
+本接口可以通过 `fields` 只返回部分目标，但之后仍可将 `data.resource_id` 传给按资源
+索引获取数据接口，读取本次推理的其他目标。新的推理结果会使上一次索引失效。
 
 **失败响应字段说明**：
 
@@ -715,7 +825,7 @@ DOE 尚无可用模型或指定的 `model_id` 不属于当前 DOE 时返回 HTTP
 
 
 
-## 7 优化任务提交与开始
+## 8 优化任务提交与开始
 
 **POST /api/v1/hust/doe/optimize/start**
 
@@ -928,7 +1038,7 @@ DOE 没有可用代理模型或优化已在运行时返回 HTTP 409：
 | `data` | object | 失败时为空对象 |
 
 
-## 8 中止优化任务
+## 9 中止优化任务
 
 **POST /api/v1/hust/doe/optimize/stop**
 
@@ -1024,7 +1134,7 @@ DOE 不存在时返回 HTTP 404：
 | `data` | object | 失败时为空对象 |
 
 
-## 9 查询优化任务
+## 10 查询优化任务
 
 **GET /api/v1/hust/doe/optimize/getById**
 
@@ -1078,9 +1188,9 @@ GET /api/v1/hust/doe/optimize/getById?id=doe_20260622_001
     "pop_size": 100,
     "run_time_sec": 12.5
   },
-  "file_resource": {
-    "solution_txt_path": "/absolute/path/to/data/doe_tasks/doe_20260622_001/optimization/result.tsv"
-  },
+  "resource_id": "tos-d4e5f60718293a4b5c6d",
+  "resource_type": "optimization",
+  "columns": ["X1", "X2", "Y1", "Y2", "feasible"],
   "constraint_check": {
     "all_solution_feasible": true,
     "solution_count": 20
@@ -1101,15 +1211,16 @@ GET /api/v1/hust/doe/optimize/getById?id=doe_20260622_001
 | `data.result.optimization_id` | string | 后端生成的底层优化执行标识 |
 | `data.result.task_info` | object | 模型、算法、模式、字段顺序、规模和耗时信息 |
 | `data.result.task_info.result_columns` | string array | 无表头结果 TSV 的列顺序 |
-| `data.result.file_resource` | object | 优化结果文件索引，不应由远程客户端直接读取其中的服务端路径 |
+| `data.result.resource_id` | string | 优化结果的不透明资源索引 |
+| `data.result.resource_type` | string | 优化结果固定为 `optimization` |
+| `data.result.columns` | string array | 优化结果的字段顺序，与 `result_columns` 一致 |
 | `data.result.constraint_check` | object | 可行解数量与约束检查摘要 |
-| `data.error` | string或null | 优化失败时的错误原因，其他状态为 `null` |
+| `data.error` | string或null | 优化失败提示，其他状态为 `null`，内部异常详情仅由服务端维护 |
 | `data.updated_at` | string | DOE 状态最近更新时间，ISO 8601 格式 |
 
-客户端获取优化结果数据时，使用
-`GET /api/v1/hust/doe/data/get?id=<id>&data_type=optimization`，不要直接读取
-`solution_txt_path`。查询接口返回 HTTP 200 且 `status=failed` 表示后台优化执行失败，
-具体原因见 `error`。
+客户端获取优化结果数据时，将 `data.result.resource_id` 作为 `resource_id` 调用第2节
+的数据获取接口。优化结果文件路径仅由服务端维护，不出现在 HTTP 响应中。查询接口
+返回 HTTP 200 且 `status=failed` 表示后台优化执行失败，`error` 只返回通用失败提示。
 
 **失败响应字段说明**：
 

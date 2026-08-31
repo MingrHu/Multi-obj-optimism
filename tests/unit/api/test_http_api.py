@@ -19,11 +19,19 @@ def test_add_list_progress_and_delete(monkeypatch, tmp_path):
     created = client.post("/api/v1/doe/add", json={"id": "doe_1", "name": "test"})
     assert created.status_code == 201
     assert created.json["data"]["id"] == "doe_1"
+    assert set(created.json["data"]) == {
+        "id", "name", "description", "metadata", "status", "stage",
+        "progress", "created_at", "updated_at",
+    }
     assert (tmp_path / "doe_tasks" / "doe_1" / "doe.json").is_file()
 
     listed = client.get("/api/v1/doe/list")
     assert listed.json["data"]["total"] == 1
-    progress = client.get("/api/hust/v1/doe/train/progress?id=doe_1")
+    assert set(listed.json["data"]["items"][0]) == {
+        "id", "name", "description", "metadata", "status", "stage",
+        "progress", "created_at", "updated_at",
+    }
+    progress = client.get("/api/v1/hust/doe/train/progress?id=doe_1")
     assert progress.json["data"]["status"] == "not_started"
     assert progress.json["data"]["stage"] == "not_started"
     assert progress.json["data"]["progress"] == 0
@@ -56,16 +64,20 @@ def test_sample_generation_uses_doe_directory(monkeypatch, tmp_path):
     assert data["method"] == "full"
     assert data["sample_count"] == 4
     assert data["level_nums"] == [2, 2]
-    assert data["sample_file"].endswith("sample_1-fullfactorial.txt")
+    assert data["resource_id"].startswith("tos-")
+    assert "sample_file" not in data
     assert (tmp_path / "doe_tasks" / "sample_1" / "samples").is_dir()
 
     selected = client.get(
         "/api/v1/hust/doe/data/get",
-        query_string=[("id", "sample_1"), ("data_type", "sample"),
+        query_string=[("id", "sample_1"), ("resource_id", data["resource_id"]),
                       ("fields", "temperature")],
     )
     assert selected.status_code == 200
-    assert sorted(selected.json["data"]["temperature"]) == [900.0, 900.0, 1000.0, 1000.0]
+    assert selected.json["data"]["resource_type"] == "sample"
+    assert sorted(selected.json["data"]["values"]["temperature"]) == [
+        900.0, 900.0, 1000.0, 1000.0,
+    ]
 
 
 def test_lhs_response_reports_requested_and_actual_counts(monkeypatch, tmp_path):
@@ -82,7 +94,8 @@ def test_lhs_response_reports_requested_and_actual_counts(monkeypatch, tmp_path)
     assert data["id"] == "lhs_1"
     assert data["n_samples"] == 4
     assert data["sample_count"] >= data["n_samples"]
-    lines = Path(data["sample_file"]).read_text(encoding="utf-8").splitlines()
+    sample_file = store.load("lhs_1")["sample"]["sample_file"]
+    lines = Path(sample_file).read_text(encoding="utf-8").splitlines()
     assert len(lines) == data["sample_count"]
 
 
@@ -124,7 +137,9 @@ def test_training_dataset_generation_uses_doe_directory(monkeypatch, tmp_path):
 
     assert response.status_code == 200
     data = response.json["data"]
-    dataset = Path(data["data_file"])
+    assert data["resource_id"].startswith("tos-")
+    assert "data_file" not in data
+    dataset = Path(store.load("dataset_1")["training"]["dataset"]["data_file"])
     assert dataset.parent == tmp_path / "doe_tasks" / "dataset_1" / "training"
     assert data["all_var_list"] == ["temperature", "speed", "grain", "load"]
     assert len(dataset.read_text(encoding="utf-8").splitlines()) == 12
@@ -132,11 +147,11 @@ def test_training_dataset_generation_uses_doe_directory(monkeypatch, tmp_path):
 
     selected = client.get(
         "/api/v1/hust/doe/data/get",
-        query_string=[("id", "dataset_1"), ("data_type", "dataset"),
+        query_string=[("id", "dataset_1"), ("resource_id", data["resource_id"]),
                       ("fields", "speed"), ("fields", "grain")],
     )
-    assert list(selected.json["data"]) == ["speed", "grain"]
-    assert len(selected.json["data"]["speed"]) == 12
+    assert list(selected.json["data"]["values"]) == ["speed", "grain"]
+    assert len(selected.json["data"]["values"]["speed"]) == 12
 
 
 def test_training_request_is_async(monkeypatch, tmp_path):
@@ -269,7 +284,7 @@ def test_training_lifecycle_returns_documented_failures(monkeypatch, tmp_path):
     monkeypatch.setattr(service.registry, "running", lambda *args: True)
 
     conflict = client.post("/api/v1/hust/doe/train/delete", json={"id": "running_train"})
-    missing = client.get("/api/hust/v1/doe/train/progress?id=missing_train")
+    missing = client.get("/api/v1/hust/doe/train/progress?id=missing_train")
     invalid = client.post("/api/v1/hust/doe/train/stop", json={"TrainId": 10011})
 
     assert conflict.status_code == 409
@@ -280,6 +295,29 @@ def test_training_lifecycle_returns_documented_failures(monkeypatch, tmp_path):
     assert "id 只能包含" in invalid.json["message"]
 
 
+def test_progress_hides_internal_error_details(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    client.post("/api/v1/doe/add", json={"id": "hidden_errors"})
+    store.update_section(
+        "hidden_errors", "training", status="failed",
+        error=r"模型文件不存在 C:\\server\\private\\model.pkl",
+    )
+    store.update_section(
+        "hidden_errors", "optimization", status="failed",
+        error="结果文件不存在 /srv/private/result.tsv",
+    )
+
+    training = client.get(
+        "/api/v1/hust/doe/train/progress?id=hidden_errors",
+    ).json["data"]
+    optimization = client.get(
+        "/api/v1/hust/doe/optimize/getById?id=hidden_errors",
+    ).json["data"]
+
+    assert training["error"] == "代理模型训练失败，内部异常详情由服务端维护"
+    assert optimization["error"] == "优化执行失败，内部异常详情由服务端维护"
+
+
 def test_all_documented_routes_exist(monkeypatch, tmp_path):
     client = _client(monkeypatch, tmp_path)
     routes = {rule.rule for rule in client.application.url_map.iter_rules()}
@@ -287,14 +325,14 @@ def test_all_documented_routes_exist(monkeypatch, tmp_path):
         "/api/v1/doe/add", "/api/v1/doe/list", "/api/v1/doe/delete",
         "/api/v1/hust/doe/sample/generate", "/api/v1/hust/doe/dataset/generate",
         "/api/v1/hust/doe/data/get",
-        "/api/hust/v1/doe/train/progress",
+        "/api/v1/hust/doe/train/progress",
         "/api/v1/hust/doe/train/delete", "/api/v1/hust/doe/train/stop",
         "/api/v1/hust/doe/train/startTrain",
         "/api/v1/hust/doe/inference/startInference",
         "/api/v1/hust/doe/optimize/start", "/api/v1/hust/doe/optimize/stop",
         "/api/v1/hust/doe/optimize/getById",
     } <= routes
-    assert "/api/v1/hust/doe/train/progress" not in routes
+    assert "/api/hust/v1/doe/train/progress" not in routes
     assert client.post("/api/v1/hust/doe/data/get", json={}).status_code == 405
 
 
@@ -327,6 +365,8 @@ def test_training_worker_snapshots_model(monkeypatch, tmp_path):
     assert training["stage"] == "finished"
     assert training["progress"] == 100
     assert Path(training["models"][0]["model_dir"]).is_dir()
+    public_progress = service.get_training_progress("worker_1")
+    assert "model_dir" not in public_progress["models"][0]
 
 
 def test_inference_loads_best_scored_model(monkeypatch, tmp_path):
@@ -356,7 +396,8 @@ def test_inference_loads_best_scored_model(monkeypatch, tmp_path):
     result = service.start_inference({
         "id": "infer_1", "inputs": [1.5], "fields": ["target"],
     })
-    assert result["target"][0] == pytest.approx(25.0)
+    assert result["predictions"]["target"][0] == pytest.approx(25.0)
+    assert result["resource_id"].startswith("tos-")
     assert store.load("infer_1")["inference"]["model_id"] == "best"
 
 
@@ -395,11 +436,11 @@ def test_inference_supports_named_inputs_and_selected_outputs(monkeypatch, tmp_p
         "id": "infer_fields", "inputs": {"temperature": [0.5, 1.5]},
         "fields": ["load"],
     })
-    assert response == {"load": pytest.approx([10.0, 30.0])}
+    assert response["predictions"] == {"load": pytest.approx([10.0, 30.0])}
     fetched = service.get_data({
-        "id": "infer_fields", "data_type": "inference", "fields": ["load"],
+        "id": "infer_fields", "resource_id": response["resource_id"], "fields": ["load"],
     })
-    assert fetched == {"load": pytest.approx([10.0, 30.0])}
+    assert fetched["values"] == {"load": pytest.approx([10.0, 30.0])}
 
 
 def test_inference_returns_documented_failures(monkeypatch, tmp_path):
@@ -571,33 +612,62 @@ def test_get_optimization_data_uses_recorded_columns(monkeypatch, tmp_path):
     store.create({"id": "opt_data"})
     result_file = store.task_dir("opt_data") / "optimization" / "pareto.tsv"
     result_file.write_text("900\t10\t2.5\ttrue\n950\t20\t2.0\tfalse\n", encoding="utf-8")
+    resource = store.register_resource(
+        "opt_data", "optimization",
+        ["temperature", "speed", "grain", "feasible"], path=str(result_file),
+    )
     store.update_section("opt_data", "optimization", status="finished", result={
         "task_info": {
             "result_columns": ["temperature", "speed", "grain", "feasible"],
         },
         "file_resource": {"solution_txt_path": str(result_file)},
+        **resource,
     })
 
     response = client.get(
         "/api/v1/hust/doe/data/get",
-        query_string=[("id", "opt_data"), ("data_type", "optimization"),
+        query_string=[("id", "opt_data"), ("resource_id", resource["resource_id"]),
                       ("fields", "temperature"), ("fields", "feasible")],
     )
     assert response.status_code == 200
-    assert response.json["data"] == {
+    assert response.json["data"]["values"] == {
         "temperature": [900.0, 950.0], "feasible": [True, False],
     }
+    result = client.get(
+        "/api/v1/hust/doe/optimize/getById", query_string={"id": "opt_data"},
+    ).json["data"]["result"]
+    assert result["resource_id"] == resource["resource_id"]
+    assert "file_resource" not in result
+    assert str(result_file) not in str(result)
 
 
 def test_get_data_rejects_unknown_field(monkeypatch, tmp_path):
     client = _client(monkeypatch, tmp_path)
     client.post("/api/v1/doe/add", json={"id": "bad_field"})
-    client.post("/api/v1/hust/doe/sample/generate", json={
+    generated = client.post("/api/v1/hust/doe/sample/generate", json={
         "id": "bad_field", "method": "full",
         "param_ranges": {"temperature": [900, 1000]}, "level_nums": [2],
     })
     response = client.get("/api/v1/hust/doe/data/get", query_string={
-        "id": "bad_field", "data_type": "sample", "fields": "speed",
+        "id": "bad_field", "resource_id": generated.json["data"]["resource_id"],
+        "fields": "speed",
     })
     assert response.status_code == 400
     assert "可用字段" in response.json["message"]
+
+
+def test_get_data_rejects_unknown_resource(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    client.post("/api/v1/doe/add", json={"id": "missing_resource"})
+
+    response = client.get("/api/v1/hust/doe/data/get", query_string={
+        "id": "missing_resource", "resource_id": "tos-00000000000000000000",
+        "fields": "temperature",
+    })
+
+    assert response.status_code == 404
+    assert response.json == {
+        "code": 404,
+        "message": "数据资源不存在：tos-00000000000000000000",
+        "data": {},
+    }

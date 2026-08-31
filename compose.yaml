@@ -3,7 +3,7 @@ services:
     build:
       context: .
       dockerfile: deploy/docker/Dockerfile
-    image: mobo-api:${MOBO_IMAGE_TAG:-1.1.0}
+    image: mobo-api:${MOBO_IMAGE_TAG:-1.1.1}
     container_name: mobo-api
     init: true
     restart: unless-stopped
