@@ -25,6 +25,12 @@ def _export_key(db_file: str, key_file: str, step: str) -> str:
     db_to_key(db_file, key_file, step)
     if not os.path.isfile(key_file) or os.path.getsize(key_file) == 0:
         label = "终态" if step == "" else f"第 {step} 步"
+        db_size = os.path.getsize(db_file) if os.path.isfile(db_file) else -1
+        key_size = os.path.getsize(key_file) if os.path.isfile(key_file) else -1
+        logger.error(
+            f"DEFORM KEY 导出失败: db={db_file}, db_size={db_size}, step={step or 'latest'}, "
+            f"key={key_file}, key_size={key_size}; 前处理器原始输出见 deform_operation.log"
+        )
         raise FileNotFoundError(f"DEFORM 未导出{label} KEY: {key_file}")
     return key_file
 
@@ -40,9 +46,34 @@ def export_saved_step_keys(db_file: str, save_dir: str) -> List[str]:
     """查询并导出 DB 中实际存在的全部保存步，不猜测连续步号。"""
     os.makedirs(save_dir, exist_ok=True)
     key_files: List[str] = []
-    for step in query_db_steps(db_file):
+    steps = query_db_steps(db_file)
+    existing_count = sum(
+        1
+        for step in steps
+        if os.path.isfile(derive_output_path(db_file, save_dir, f"_step_{step}", "KEY"))
+        and os.path.getsize(
+            derive_output_path(db_file, save_dir, f"_step_{step}", "KEY")
+        ) > 0
+    )
+    logger.info(
+        f"DB 保存步 KEY 提取开始: db={db_file}, total_steps={len(steps)}, "
+        f"existing_keys={existing_count}, pending={len(steps) - existing_count}, "
+        f"first_step={steps[0]}, last_step={steps[-1]}, output_dir={save_dir}"
+    )
+    for position, step in enumerate(steps, 1):
         key_file = derive_output_path(db_file, save_dir, f"_step_{step}", "KEY")
-        key_files.append(_export_key(db_file, key_file, str(step)))
+        try:
+            key_files.append(_export_key(db_file, key_file, str(step)))
+        except Exception:
+            logger.error(
+                f"DB 保存步 KEY 提取中断: db={db_file}, step={step}, "
+                f"position={position}/{len(steps)}, exported={len(key_files)}, "
+                f"remaining={len(steps) - position}"
+            )
+            raise
+    logger.info(
+        f"DB 保存步 KEY 提取完成: db={db_file}, exported_or_reused={len(key_files)}"
+    )
     return key_files
 
 

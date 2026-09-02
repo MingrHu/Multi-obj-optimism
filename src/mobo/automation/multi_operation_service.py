@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import os
+import traceback
 from typing import Any, Dict, Optional, Sequence
 
 from mobo.common import task_store
+from mobo.common.logging import logger
 from mobo.common.paths import task_dir
 
 from .multi_operation import MultiOperationTask, Operation, generate_multi_operation_samples
@@ -141,12 +143,32 @@ def run_multi_operation_task(task_id: str, **provided: Any) -> Dict[str, Any]:
         # 2.2 注册样本实时更新回调
         def on_sample_completed(sample_index: int) -> None:
             if dataset.is_completed(sample_index):
+                logger.info(f"样本 {sample_index} 增量提取已完成，本次跳过")
                 return
             dataset.mark_started(sample_index)
+            logger.info(
+                f"样本 {sample_index} 增量提取开始: state={incremental_state_file}, "
+                f"output={incremental_output_file}"
+            )
             try:
-                dataset.commit(sample_index, definition.extract_sample_row(task, sample_index))
+                row = definition.extract_sample_row(task, sample_index)
+                dataset.commit(sample_index, row)
+                logger.info(
+                    f"样本 {sample_index} 增量提取完成: columns={len(row)}, "
+                    f"output={incremental_output_file}"
+                )
             except Exception as exc:
-                dataset.mark_failed(sample_index, str(exc))
+                traceback_text = traceback.format_exc()
+                dataset.mark_failed(
+                    sample_index,
+                    str(exc),
+                    error_type=type(exc).__name__,
+                    traceback_text=traceback_text,
+                )
+                logger.error(
+                    f"样本 {sample_index} 增量提取失败: "
+                    f"{type(exc).__name__}: {exc}\n{traceback_text}"
+                )
 
         task.on_sample_completed = on_sample_completed
 

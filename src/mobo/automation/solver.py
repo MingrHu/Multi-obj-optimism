@@ -37,6 +37,27 @@ _OPERATION_LOG = os.path.join(str(LOGS_DIR), "deform_operation.log")
 _PRE_LOCK = threading.Lock()
 
 
+def _pre_command_summary(commands: str) -> str:
+    """从菜单命令中提取便于关联日志的操作、输入文件和输出文件。"""
+    lines = commands.splitlines()
+    if len(lines) >= 4 and lines[:3] == ["E", "2", "2"]:
+        db_path = lines[3]
+        step = lines[4] if len(lines) > 4 and lines[4] else "latest"
+        if "8" in lines[5:]:
+            export_index = lines.index("8", 5)
+            key_path = lines[export_index + 1] if export_index + 1 < len(lines) else "?"
+            return f"db_to_key db={db_path} step={step} key={key_path}"
+        return f"query_db_steps db={db_path}"
+    if len(lines) >= 4 and lines[:3] == ["E", "2", "1"]:
+        key_path = lines[3]
+        if "7" in lines[4:]:
+            generate_index = lines.index("7", 4)
+            db_path = lines[generate_index + 2] if generate_index + 2 < len(lines) else "?"
+            return f"key_to_db key={key_path} db={db_path}"
+        return f"run_key_actions key={key_path}"
+    return "unknown_pre_operation"
+
+
 def _run_pre_with_commands(commands: str) -> str:
     """把命令串写入临时文件，用输入重定向驱动 DEF_PRE_64，并记录输出到日志。
 
@@ -51,6 +72,8 @@ def _run_pre_with_commands_unlocked(commands: str) -> str:
     os.makedirs(str(LOGS_DIR), exist_ok=True)
     fd, cmd_file = tempfile.mkstemp(prefix="deform_pre_", suffix=".txt", text=True)
     output_lines: List[str] = []
+    summary = _pre_command_summary(commands)
+    call_id = f"{time.time_ns()}-{threading.get_ident()}"
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(commands)
@@ -64,6 +87,7 @@ def _run_pre_with_commands_unlocked(commands: str) -> str:
             shell=True,
         )
         with open(_OPERATION_LOG, "a", encoding="utf-8") as log_file:
+            log_file.write(f"\n[MOBO PRE START] id={call_id} {summary}\n")
             while True:
                 output = process.stdout.readline()  # type: ignore
                 if not output and process.poll() is not None:
@@ -71,6 +95,20 @@ def _run_pre_with_commands_unlocked(commands: str) -> str:
                 if output:
                     log_file.write(output)
                     output_lines.append(output)
+            return_code = process.poll()
+            log_file.write(
+                f"[MOBO PRE END] id={call_id} return_code={return_code} "
+                f"output_chars={sum(len(line) for line in output_lines)}\n"
+            )
+        if return_code not in (0, None):
+            output_tail = "".join(output_lines)[-2000:].strip()
+            logger.error(
+                f"DEFORM 前处理器异常退出: id={call_id}, return_code={return_code}, "
+                f"{summary}, output_tail={output_tail!r}"
+            )
+    except Exception as exc:
+        logger.error(f"DEFORM 前处理器调用异常: id={call_id}, {summary}, error={exc}")
+        raise
     finally:
         if os.path.exists(cmd_file):
             os.remove(cmd_file)

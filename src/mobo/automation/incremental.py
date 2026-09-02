@@ -85,12 +85,21 @@ class IncrementalDataset:
                 **previous,
                 "status": "extracting",
                 "started_at": self._now(),
+                "attempts": int(previous.get("attempts", 0)) + 1,
                 "error": "",
             }
             state["updated_at"] = self._now()
             self._save(state)
 
-    def mark_failed(self, sample_index: int, error: str) -> None:
+    def mark_failed(
+        self,
+        sample_index: int,
+        error: str,
+        *,
+        error_type: str = "",
+        traceback_text: str = "",
+    ) -> None:
+        """记录提取失败原因和调用栈，保留已有行以便后续重试诊断。"""
         with self._lock:
             state = self._load()
             previous = state["samples"].get(str(sample_index), {})
@@ -98,6 +107,9 @@ class IncrementalDataset:
                 **previous,
                 "status": "failed",
                 "error": error,
+                "error_type": error_type,
+                "traceback": traceback_text,
+                "failed_at": self._now(),
             }
             state["updated_at"] = self._now()
             self._save(state)

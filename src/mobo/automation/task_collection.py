@@ -143,6 +143,10 @@ class MultiOperationTaskDefinition:
         """从已经导出的各工步 KEY 帧提取任务目标，不负责 DB→KEY。"""
         results: Dict[str, str] = {}
         for target in self.targets:
+            logger.info(
+                f"目标提取开始: output={target.output_name}, target={target.target_name}, "
+                f"operations={target.operation_indices}, in_progress={target.in_progress}"
+            )
             key_files = [
                 path
                 for operation_index in target.operation_indices
@@ -164,6 +168,10 @@ class MultiOperationTaskDefinition:
                 results[target.output_name] = spec.fn(
                     frames, object_id, target.in_progress, target.select_component
                 )
+            logger.info(
+                f"目标提取完成: output={target.output_name}, "
+                f"value={results[target.output_name]}, key_count={len(key_files)}"
+            )
         return results
 
     def extract_dataset(
@@ -232,8 +240,25 @@ class MultiOperationTaskDefinition:
                     f"工步 {operation_index} 的全过程目标缺少检查点 DB"
                 )
             output_dir = Path(terminal).parent / "extracted_steps"
-            result[operation_index] = export_saved_step_keys(
-                checkpoint, str(output_dir)
+            checkpoint_size = Path(checkpoint).stat().st_size
+            logger.info(
+                f"样本 {sample_index} 工步 {operation_index} 全过程提取开始: "
+                f"checkpoint={checkpoint}, checkpoint_size={checkpoint_size}, "
+                f"output_dir={output_dir}"
+            )
+            try:
+                result[operation_index] = export_saved_step_keys(
+                    checkpoint, str(output_dir)
+                )
+            except Exception as exc:
+                logger.error(
+                    f"样本 {sample_index} 工步 {operation_index} 全过程提取失败: "
+                    f"checkpoint={checkpoint}, error={type(exc).__name__}: {exc}"
+                )
+                raise
+            logger.info(
+                f"样本 {sample_index} 工步 {operation_index} 全过程提取完成: "
+                f"key_count={len(result[operation_index])}"
             )
         return result
 

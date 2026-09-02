@@ -30,8 +30,18 @@ def test_incremental_dataset_failed_sample_can_resume(tmp_path):
     output_file = str(tmp_path / "result.txt")
     dataset = IncrementalDataset(state_file, output_file)
     dataset.mark_started(4)
-    dataset.mark_failed(4, "power loss")
+    dataset.mark_failed(
+        4,
+        "power loss",
+        error_type="RuntimeError",
+        traceback_text="trace line",
+    )
     assert not dataset.is_completed(4)
+    failed = json.loads(open(state_file, encoding="utf-8").read())["samples"]["4"]
+    assert failed["attempts"] == 1
+    assert failed["error_type"] == "RuntimeError"
+    assert failed["traceback"] == "trace line"
+    assert failed["failed_at"]
 
     resumed = IncrementalDataset(state_file, output_file)
     resumed.commit(4, ["x", "y"])

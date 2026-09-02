@@ -159,7 +159,12 @@ def test_run_pre_with_commands_invokes_popen(monkeypatch, tmp_path):
     output = solver._run_pre_with_commands("E\nY\n")
     assert solver.DEF_PRE_64 in seen["command"]
     assert seen["kwargs"]["shell"] is True
-    assert (tmp_path / "op.log").read_text() == "log line 1\n"
+    operation_log = (tmp_path / "op.log").read_text()
+    assert "[MOBO PRE START]" in operation_log
+    assert "unknown_pre_operation" in operation_log
+    assert "log line 1\n" in operation_log
+    assert "[MOBO PRE END]" in operation_log
+    assert "return_code=0" in operation_log
     assert output == "log line 1\n"
 
 
