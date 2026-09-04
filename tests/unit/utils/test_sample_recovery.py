@@ -63,13 +63,13 @@ def test_extract_sample_uses_task_parameter_column_order(tmp_path):
             "gh4169-ring-single-task-1",
             "GH4169",
             _profile_key("1125", "300", "1.25"),
-            "1125\t300\t1.25\n",
+            "1125.00\t300.00\t1.25\n",
         ),
         (
             "7050-ring-single-task-1",
             "7050",
             _constant_key("400", "200", "0.75"),
-            "400\t200\t0.75\n",
+            "400.00\t200.00\t0.75\n",
         ),
     ],
 )
@@ -95,7 +95,10 @@ def test_recover_orders_by_numeric_key_suffix(tmp_path):
 
     recover_samples("gh4169-ring-single-task-1", key_dir, output)
 
-    assert output.read_text() == "1100\t250\t0.1\n1110\t260\t0.2\n"
+    assert output.read_text() == (
+        "1100.00\t250.00\t0.10\n"
+        "1110.00\t260.00\t0.20\n"
+    )
 
 
 def test_recover_rejects_missing_index(tmp_path):

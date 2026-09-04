@@ -70,10 +70,8 @@ def _decimal(token: str, *, label: str, key_path: Path) -> Decimal:
 
 
 def _decimal_text(value: Decimal) -> str:
-    text = format(value, "f")
-    if "." in text:
-        text = text.rstrip("0").rstrip(".")
-    return "0" if text in {"", "-0"} else text
+    """与正常采样文件一致，固定保留两位小数。"""
+    return f"{value:.2f}"
 
 
 def _one_value(values: Sequence[Decimal], context: RecoveryContext, label: str) -> Decimal:
