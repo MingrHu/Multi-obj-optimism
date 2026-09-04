@@ -75,6 +75,7 @@ DOE 聚合服务。路由层位于 `api.handler`，实际处理层位于 `api.se
 | `automation` | `pipeline.py` | `TaskStatus`（枚举）/ `ForgingTask` 三阶段状态机 / `generate_sample_file` |
 | `automation` | `service.py` | 任务级服务函数：state.json 落盘 + 仅凭 task_id 从磁盘重建续跑 |
 | `automation` | `multi_operation.py` / `task_collection.py` | 多工步换模、恢复、参数化 KEY 预生成与可导入任务集合 |
+| `utils` | `sample_recovery.py` | 按单工步任务参数定义，从参数化输入 KEY 反向恢复无表头 TSV 样本文件 |
 
 ## 数据流
 
@@ -206,6 +207,27 @@ TC4 碾环多工步任务由 `task_collection.TC4_RING_MULTI_TASK_1` 完整定�
   各机器独立写入，数据行仍以完整采样 TXT 的全局样本序号排序。
 - 检查点以样本序号为主键，重复恢复只覆盖同一行；数据集始终按样本序号排序，并通过
   临时文件加 `os.replace` 原子更新。求解已完成而提取未完成的样本会在续跑时补提取。
+
+## 单工步样本反向恢复
+
+已注册单工步任务的原始样本文件丢失时，可从参数化输入 KEY 恢复：
+
+```bash
+python -m mobo.utils.sample_recovery \
+  gh4169-ring-single-task-1 /absolute/path/input_keys /absolute/path/recovered_sample.txt
+```
+
+工具从任务定义读取参数列、对象绑定、模板文件名前缀和参数范围；按 KEY 文件名中的连续
+数字后缀排序，因此 `<模板名>0.KEY` 对应结果第一行。输出保持正常采样文件的无表头 TSV
+格式和任务参数列顺序。反向提取能力按参数名注册；遇到未知参数、序号缺口、共享参数值
+不一致或越界值时中止，不静默猜测。
+
+代码调用示例位于 `mobo.cli.sample_recovery_demo`。只传任务 ID 时，默认读取任务工作区的
+`input_keys`，并写入 `samples/<task_id>-recovered.txt`：
+
+```python
+recover_sample_test("gh4169-ring-single-task-1")
+```
 
 ## 日志设计取舍
 

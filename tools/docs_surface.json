@@ -105,6 +105,7 @@
     "cli/multi_operation_demo.py",
     "cli/ring_roundness.py",
     "cli/rl.py",
+    "cli/sample_recovery_demo.py",
     "cli/surrogate.py",
     "common/__init__.py",
     "common/logging.py",
@@ -139,7 +140,9 @@
     "surrogate/polynomial.py",
     "surrogate/random_forest.py",
     "surrogate/service.py",
-    "surrogate/svr.py"
+    "surrogate/svr.py",
+    "utils/__init__.py",
+    "utils/sample_recovery.py"
   ],
   "packages": [
     "api",
@@ -149,7 +152,8 @@
     "extraction",
     "optimization",
     "replacement",
-    "surrogate"
+    "surrogate",
+    "utils"
   ],
   "pytest_markers": [
     "deform",
