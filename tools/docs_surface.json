@@ -34,6 +34,10 @@
     },
     {
       "method": "POST",
+      "path": "/api/v1/hust/doe/dataset/save"
+    },
+    {
+      "method": "POST",
       "path": "/api/v1/hust/doe/inference/startInference"
     },
     {
@@ -159,5 +163,12 @@
     "deform",
     "integration",
     "slow"
+  ],
+  "ui_modules": [
+    "UI/__init__.py",
+    "UI/main.py",
+    "UI/mobo_ui/__init__.py",
+    "UI/mobo_ui/app.py",
+    "UI/mobo_ui/core.py"
   ]
 }

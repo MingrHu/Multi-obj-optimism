@@ -27,11 +27,12 @@ Docker 环境可执行 `docker compose up --build -d`，容器会自动使用 Gu
 | 方法与路径 | 关键请求参数 | 说明 |
 |---|---|---|
 | `GET /health` | - | 健康检查 |
-| `POST /api/v1/doe/add` | `id?`, `name?`, `description?`, `metadata?` | 创建 DOE；未传 ID 时自动生成 |
+| `POST /api/v1/doe/add` | `id?`, `name?`, `description?`, `metadata?` | 创建 DOE；未传 ID 时自动生成；名称和 ID 均唯一 |
 | `GET /api/v1/doe/list` | - | 查询 DOE 列表 |
 | `POST /api/v1/doe/delete` | `id` | 删除 DOE 及其样本、模型、训练和优化文件 |
-| **`POST /api/v1/hust/doe/sample/generate`** | **`id`, `method`, `param_ranges`, `n_samples?`, `level_nums?`** | **LHS/全因子采样** |
+| **`POST /api/v1/hust/doe/sample/generate`** | **`id`, `method`, `param_ranges`, `n_samples?`, `include_boundaries?`, `level_nums?`** | **LHS/全因子采样** |
 | `POST /api/v1/hust/doe/dataset/generate` | `id`, `param_ranges`, `target_names`, `input_names?`, `n_samples?`, `seed?`, `noise_ratio?` | 在 DOE 训练目录生成完整流程演示数据集 |
+| `POST /api/v1/hust/doe/dataset/save` | `id`, `data_source` | 保存训练数据及输入/输出字段定义，不启动训练 |
 | `GET /api/v1/hust/doe/data/get` | `id`, `resource_id`, `fields` | 按资源索引和字段获取样本、数据集、优化或推理结果 |
 | **`GET /api/v1/hust/doe/train/progress`** | **`id`** | **查询代理模型训练状态、阶段、进度及已训练模型** |
 | **`POST /api/v1/hust/doe/train/delete`** | **`id`** | **删除训练记录和代理模型** |
@@ -44,6 +45,9 @@ Docker 环境可执行 `docker compose up --build -d`，容器会自动使用 Gu
 
 除健康检查外，成功响应统一使用 `code/message/data`。GET 参数通过 query string 传递，
 POST 参数使用 JSON 对象；GET 接口不读取请求体
+
+DOE 的 `id` 与展示名称 `name` 均为一对一唯一标识。显式名称会去除首尾空白，并采用不区分
+大小写的方式检查重名；同名或同 ID 创建返回 HTTP 409。未传 `name` 时使用唯一 `id` 作为名称。
 
 
 
@@ -64,7 +68,8 @@ LHS 拉丁超立方：
     "X2": [10, 15],
     "X3": [1000, 2000]
   },
-  "n_samples": 4
+  "n_samples": 4,
+  "include_boundaries": false
 }
 ```
 
@@ -83,8 +88,9 @@ Full 全因子：
 }
 ```
 
-LHS 使用 `n_samples` 指定基础随机样本数，后端还会追加所有变量上下界的笛卡尔
-组合并去重。Full 使用 `level_nums` 指定各变量水平数，其顺序必须与
+LHS 使用 `n_samples` 指定基础随机样本数。`include_boundaries=false` 时严格生成
+`n_samples` 行；显式设为 `true` 时才追加所有变量上下界的笛卡尔组合并去重。
+Full 使用 `level_nums` 指定各变量水平数，其顺序必须与
 `param_ranges` 一致，不需要另外输入样本总数。
 
 | 请求字段 | 类型 | 必填 | 说明 |
@@ -93,6 +99,7 @@ LHS 使用 `n_samples` 指定基础随机样本数，后端还会追加所有变
 | `method` | string | 否 | `lhs` 或 `full`，默认 `lhs` |
 | `param_ranges` | object | 是 | 变量名称到 `[lower, upper]` 的映射，必须满足 `lower < upper` |
 | `n_samples` | integer | LHS 是 | LHS 基础随机样本数，必须为正整数 |
+| `include_boundaries` | boolean | 否 | LHS 是否追加所有上下界组合，默认 `false`；默认实际行数等于 `n_samples` |
 | `level_nums` | integer array | Full 是 | 各变量水平数，必须与变量数量相同且全部为正整数 |
 
 **成功响应字段说明**：
@@ -115,13 +122,15 @@ LHS 成功返回 HTTP 200：
     "resource_type": "sample",
     "columns": ["X1", "X2", "X3"],
     "sample_count": 12,
-    "n_samples": 4
+    "n_samples": 4,
+    "include_boundaries": true
   }
 }
 ```
 
-上述3变量请求会生成4个基础 LHS 样本并追加最多 `2³ = 8` 个边界组合，去重前
-合计12行。`sample_count` 始终以实际落盘行数为准。
+上述响应对应 `include_boundaries=true`：3变量会生成4个基础 LHS 样本并追加最多
+`2³ = 8` 个边界组合，去重前合计12行。设为 `false` 时只落盘4行。
+`sample_count` 始终以实际落盘行数为准。
 
 Full 成功返回 HTTP 200：
 
@@ -158,6 +167,7 @@ Full 成功返回 HTTP 200：
 | `data.columns` | string array | 无表头 TSV 的字段顺序 |
 | `data.sample_count` | integer | 文件中实际生成的样本总数 |
 | `data.n_samples` | integer | LHS 请求的基础随机样本数，仅 LHS 返回 |
+| `data.include_boundaries` | boolean | LHS 是否追加边界组合，仅 LHS 返回 |
 | `data.level_nums` | integer array | 各变量水平数，仅 Full 返回 |
 
 样本文件的实际服务器路径只在服务端 DOE 状态中维护，不会返回给端上。端上使用
@@ -287,7 +297,38 @@ GET /api/v1/hust/doe/data/get?id=doe_sample_001&resource_id=tos-a1b2c3d4e5f60718
 
 
 
-## 3 代理模型训练提交/开始
+## 3 保存 DOE 训练配置
+
+**POST /api/v1/hust/doe/dataset/save**
+
+该接口用于在不启动训练的情况下，显式保存当前 DOE 的训练数据、字段名称及输入/输出角色。
+`data_source` 的结构和校验规则与训练提交接口相同；可选的 `source_name` 仅保存客户端文件名，
+不保存或暴露客户端绝对路径。后端将数据按“输入字段在前、输出字段在后”写入 DOE 自身的
+`training` 目录，并保存字段顺序、输入列数、输入边界、样本数和数据资源索引。
+
+```json
+{
+  "id": "doe_20260622_001",
+  "data_source": {
+    "source_name": "training-data.txt",
+    "input_data": {
+      "labels": ["工件温度", "压下速度"],
+      "samples": [[900, 10], [1100, 50]]
+    },
+    "output_data": {
+      "labels": ["载荷", "晶粒尺寸"],
+      "samples": [[8.2, 42], [7.9, 37]]
+    }
+  }
+}
+```
+
+成功响应返回 `id`、`resource_id`、`columns`、`input_names`、`target_names`、
+`input_bounds` 和 `sample_count`。训练或优化正在运行时修改配置返回 HTTP 409。
+后续训练仍会校验并保存本次训练实际使用的数据；仅保存配置不会启动后台任务。
+
+
+## 4 代理模型训练提交/开始
 
 **POST /api/v1/hust/doe/train/startTrain**
 
@@ -297,6 +338,7 @@ GET /api/v1/hust/doe/data/get?id=doe_sample_001&resource_id=tos-a1b2c3d4e5f60718
 {
   "id": "doe_20260622_001",
   "data_source": {
+    "source_name": "training-data.txt",
     "input_data": {
       "labels": ["X1", "X2", "X3", "X4", "X5", "X6", "X7"],
       "samples": [
@@ -361,6 +403,7 @@ DOE 的 `training` 目录落盘为无表头 TSV。`all_var_list`、`input_var_co
 |---|---|---:|---|
 | `id` | string | 是 | 已创建的 DOE 唯一标识 |
 | `data_source` | object | 是 | 本次训练使用的内嵌数据 |
+| `data_source.source_name` | string | 否 | 原始文件名，仅用于界面恢复；不要传客户端绝对路径 |
 | `data_source.input_data` | object | 是 | 输入变量和输入样本 |
 | `input_data.labels` | string array | 是 | 输入变量名称，不能为空或重复 |
 | `input_data.samples` | `number[][]` | 是 | 输入样本二维数组 |
@@ -390,6 +433,7 @@ DOE 的 `training` 目录落盘为无表头 TSV。`all_var_list`、`input_var_co
     "status": "queued",
     "stage": "queued",
     "progress": 0,
+    "run_id": "run_1a2b3c4d5e6f",
     "sample_count": 4,
     "input_names": ["X1", "X2", "X3", "X4", "X5", "X6", "X7"],
     "target_names": ["Y1", "Y2", "Y3", "Y4", "Y5", "Y6", "Y7", "Y8"],
@@ -454,7 +498,7 @@ DOE 不存在返回 HTTP 404：
 
 
 
-## 4 代理模型训练中止
+## 5 代理模型训练中止
 
 **POST /api/v1/hust/doe/train/stop**
 
@@ -550,7 +594,7 @@ DOE 不存在返回 HTTP 404：
 
 
 
-## 5 删除训练代理模型
+## 6 删除训练代理模型
 
 **POST /api/v1/hust/doe/train/delete**
 
@@ -618,7 +662,7 @@ DOE 不存在返回 HTTP 404；缺少或使用非法 `id` 返回 HTTP 400，响�
 
 
 
-## 6 查询代理模型训练进度
+## 7 查询代理模型训练进度
 
 **GET /api/v1/hust/doe/train/progress**
 
@@ -648,6 +692,12 @@ GET /api/v1/hust/doe/train/progress?id=doe_20260622_001
     "status": "running",
     "stage": "training",
     "progress": 40,
+    "input_names": ["workpiece_temperature", "die_temperature"],
+    "target_names": ["load", "grain_size", "roundness"],
+    "input_bounds": [
+      {"name": "workpiece_temperature", "lower": 900.0, "upper": 1100.0},
+      {"name": "die_temperature", "lower": 150.0, "upper": 250.0}
+    ],
     "models": [],
     "error": null,
     "updated_at": "2026-08-28T16:30:00+08:00"
@@ -663,6 +713,9 @@ GET /api/v1/hust/doe/train/progress?id=doe_20260622_001
 | `data.status` | string | `not_started`、`queued`、`running`、`stopping`、`stopped`、`finished` 或 `failed` |
 | `data.stage` | string | 当前训练阶段 |
 | `data.progress` | integer | 当前训练进度，范围为0到100 |
+| `data.input_names` | string array | 本次训练定义的输入参数名称；未提交训练时为空数组 |
+| `data.target_names` | string array | 本次训练定义的输出目标名称；未提交训练时为空数组 |
+| `data.input_bounds` | object array | 各输入参数在训练数据中的最小值和最大值；优化界面可据此恢复默认设计边界 |
 | `data.models` | object array | 已完成训练或正在累计的模型记录 |
 | `data.error` | string or null | 训练失败提示，无错误时为 `null`，内部异常详情仅由服务端维护 |
 | `data.updated_at` | string | DOE 状态最后更新时间，带时区的 ISO 8601 格式 |
@@ -700,7 +753,7 @@ DOE 不存在返回 HTTP 404：
 
 
 
-## 7 代理模型推理
+## 8 代理模型推理
 
 **POST /api/v1/hust/doe/inference/startInference**
 
@@ -825,7 +878,7 @@ DOE 尚无可用模型或指定的 `model_id` 不属于当前 DOE 时返回 HTTP
 
 
 
-## 8 优化任务提交与开始
+## 9 优化任务提交与开始
 
 **POST /api/v1/hust/doe/optimize/start**
 
@@ -1038,7 +1091,7 @@ DOE 没有可用代理模型或优化已在运行时返回 HTTP 409：
 | `data` | object | 失败时为空对象 |
 
 
-## 9 中止优化任务
+## 10 中止优化任务
 
 **POST /api/v1/hust/doe/optimize/stop**
 
@@ -1134,7 +1187,7 @@ DOE 不存在时返回 HTTP 404：
 | `data` | object | 失败时为空对象 |
 
 
-## 10 查询优化任务
+## 11 查询优化任务
 
 **GET /api/v1/hust/doe/optimize/getById**
 
@@ -1166,6 +1219,8 @@ GET /api/v1/hust/doe/optimize/getById?id=doe_20260622_001
     "progress": 0,
     "request": null,
     "result": null,
+    "current_run_id": null,
+    "history": [],
     "error": null,
     "updated_at": "2026-08-28T10:30:00+00:00"
   }
@@ -1208,6 +1263,8 @@ GET /api/v1/hust/doe/optimize/getById?id=doe_20260622_001
 | `data.progress` | integer | 当前优化进度，范围0到100 |
 | `data.request` | object或null | 后端归一化后的本次优化请求，尚未提交时为 `null` |
 | `data.result` | object或null | 优化完成后的结果索引，未完成或失败时为 `null` |
+| `data.current_run_id` | string或null | 最近一次提交的优化运行版本标识 |
+| `data.history` | object array | 按提交顺序保存的全部优化运行；每项包含 `run_id/status/stage/progress/request/result/created_at/updated_at` |
 | `data.result.optimization_id` | string | 后端生成的底层优化执行标识 |
 | `data.result.task_info` | object | 模型、算法、模式、字段顺序、规模和耗时信息 |
 | `data.result.task_info.result_columns` | string array | 无表头结果 TSV 的列顺序 |
@@ -1219,7 +1276,8 @@ GET /api/v1/hust/doe/optimize/getById?id=doe_20260622_001
 | `data.updated_at` | string | DOE 状态最近更新时间，ISO 8601 格式 |
 
 客户端获取优化结果数据时，将 `data.result.resource_id` 作为 `resource_id` 调用第2节
-的数据获取接口。优化结果文件路径仅由服务端维护，不出现在 HTTP 响应中。查询接口
+的数据获取接口。历史版本使用 `data.history[].result.resource_id` 读取。每次优化运行使用独立
+结果目录和资源索引，新运行不会覆盖旧版本。优化结果文件路径仅由服务端维护，不出现在 HTTP 响应中。查询接口
 返回 HTTP 200 且 `status=failed` 表示后台优化执行失败，`error` 只返回通用失败提示。
 
 **失败响应字段说明**：

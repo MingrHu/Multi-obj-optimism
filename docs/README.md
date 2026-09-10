@@ -11,5 +11,6 @@
 | 后端启动 | [deployment/BACKEND_STARTUP.md](deployment/BACKEND_STARTUP.md) | 本机启动与完整 Demo |
 | Docker | [deployment/DOCKER_DEPLOYMENT.md](deployment/DOCKER_DEPLOYMENT.md) | 构建、发布、部署与回滚 |
 | DEFORM | [deform/DEFORM_KEY_KEYWORDS.md](deform/DEFORM_KEY_KEYWORDS.md) | KEY 关键字与能力映射 |
+| 桌面界面 | [ui/DESKTOP_UI.md](ui/DESKTOP_UI.md) | Windows 工作台的信息架构、运行边界与交互约定 |
 
 文档公共表面检查方式见 [tools/README.md](../tools/README.md)。

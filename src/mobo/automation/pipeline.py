@@ -34,6 +34,7 @@ def generate_sample_file(
     save_dir: str,
     n_samples: int = 0,
     level_nums: Sequence[int] = (),
+    include_boundaries: bool = False,
 ) -> str:
     """生成工艺参数样本文件（LHS 或全因子）
     
@@ -43,9 +44,13 @@ def generate_sample_file(
     :param save_dir: 保存目录
     :param n_samples: LHS 样本数
     :param level_nums: 全因子各参数水平数
+    :param include_boundaries: LHS 是否追加所有边界组合
     :return: 样本文件路径
     """
-    return generate_samples(task_id,method, param_ranges, save_dir, n_samples, level_nums)
+    return generate_samples(
+        task_id, method, param_ranges, save_dir, n_samples, level_nums,
+        include_boundaries,
+    )
 
 
 class ForgingTask:

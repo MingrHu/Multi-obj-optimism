@@ -32,7 +32,8 @@ python -m pip install -r requirements/dev.txt
 python tools/run_quality_checks.py
 ```
 
-总入口依次运行测试与覆盖率、Ruff、Xenon、文档一致性和工程质量评分，并输出
+总入口依次运行测试与覆盖率、Ruff、Xenon、文档一致性和工程质量评分；后端 `src/mobo`
+与桌面端 `UI/mobo_ui` 均纳入覆盖率、静态检查、复杂度和死代码统计。检查结果输出
 `quality-check-summary.json`、`quality-check-summary.md` 以及每项检查日志。增加
 `--with-security` 可联网执行 pip-audit，发现漏洞时脚本返回非零状态。
 

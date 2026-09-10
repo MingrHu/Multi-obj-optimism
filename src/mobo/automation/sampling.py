@@ -4,8 +4,8 @@
 （制表符分隔、保留两位小数的 txt 文件）。本模块为纯数据处理，无任何子进程依赖，
 可独立测试。
 
-采样算法与原实现保持一致：
-- LHS：在参数区间内生成 LHS 样本并追加所有边界组合，去重后保存；
+采样行为：
+- LHS：在参数区间内生成指定数量的 LHS 样本，可选追加所有边界组合；
 - 全因子：每个参数按各自水平数等间隔取值，做笛卡尔积。
 """
 
@@ -55,18 +55,26 @@ def boundary_samples(param_ranges: ParamRanges) -> pd.DataFrame:
     return pd.DataFrame(combinations, columns=list(param_ranges.keys()))
 
 
-def generate_lhs(n_samples: int, param_ranges: ParamRanges) -> pd.DataFrame:
-    """生成 LHS 样本并追加边界组合，去重后返回（两位小数字符串）。
+def generate_lhs(
+    n_samples: int,
+    param_ranges: ParamRanges,
+    include_boundaries: bool = False,
+) -> pd.DataFrame:
+    """生成 LHS 样本，可选追加边界组合（两位小数字符串）。
 
     :param n_samples: LHS 样本数
     :param param_ranges: 参数区间字典
-    :return: 合并去重后的样本 DataFrame（元素为两位小数字符串）
+    :param include_boundaries: 是否追加所有参数上下界的笛卡尔组合
+    :return: 样本 DataFrame（元素为两位小数字符串）
     """
     df = lhs_samples(n_samples, param_ranges)
-    boundary = boundary_samples(param_ranges)
-    combined = pd.concat([df, boundary], ignore_index=True).drop_duplicates(
-        subset=list(param_ranges.keys())
-    )
+    if include_boundaries:
+        boundary = boundary_samples(param_ranges)
+        combined = pd.concat([df, boundary], ignore_index=True).drop_duplicates(
+            subset=list(param_ranges.keys())
+        )
+    else:
+        combined = df
     # 替换 applymap
     combined = combined.apply(lambda col: col.map(lambda x: f"{x:.2f}"))
     return combined
@@ -118,6 +126,7 @@ def generate_samples(
     save_dir: str,
     n_samples: int = 0,
     level_nums: Sequence[int] = (),
+    include_boundaries: bool = False,
 ) -> str:
     """按方法生成并保存样本。
 
@@ -127,11 +136,12 @@ def generate_samples(
     :param save_dir: 保存目录
     :param n_samples: LHS 样本数（method="lhs" 时使用）
     :param level_nums: 各参数水平数（method="full" 时必填）
+    :param include_boundaries: LHS 是否追加所有边界组合
     :return: 输出文件完整路径
     :raises ValueError: 方法不支持或 full 采样缺少 level_nums
     """
     if method == "lhs":
-        df = generate_lhs(n_samples, param_ranges)
+        df = generate_lhs(n_samples, param_ranges, include_boundaries)
         return save_samples(task_id,df, "lhs", save_dir)
     if method == "full":
         if not level_nums:

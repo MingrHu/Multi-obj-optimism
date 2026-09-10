@@ -74,6 +74,7 @@ class MultiOperationTaskDefinition:
         method: str = "lhs",
         n_samples: int = 0,
         level_nums: Sequence[int] = (),
+        include_boundaries: bool = False,
         save_dir: str | os.PathLike[str] | None = None,
     ) -> str:
         self.validate()
@@ -81,6 +82,7 @@ class MultiOperationTaskDefinition:
         return generate_multi_operation_samples(
             self.task_id, self.operation_configs(), str(destination),
             method=method, n_samples=n_samples, level_nums=level_nums,
+            include_boundaries=include_boundaries,
         )
 
     def build(
@@ -288,6 +290,7 @@ class SingleOperationTaskDefinition:
     def generate_samples(
         self, *, method: str = "lhs", n_samples: int = 0,
         level_nums: Sequence[int] = (),
+        include_boundaries: bool = False,
         save_dir: str | os.PathLike[str] | None = None,
     ) -> str:
         self.validate()
@@ -299,7 +302,8 @@ class SingleOperationTaskDefinition:
         }
         destination = Path(save_dir) if save_dir is not None else self.workspace / "samples"
         return generate_sample_file(
-            self.task_id, method, ranges, str(destination), n_samples, level_nums
+            self.task_id, method, ranges, str(destination), n_samples, level_nums,
+            include_boundaries,
         )
 
     def build(

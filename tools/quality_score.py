@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import subprocess
 import sys
@@ -12,12 +13,12 @@ from statistics import mean
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE_DIR = ROOT / "src" / "mobo"
+SOURCE_DIRS = (ROOT / "src" / "mobo", ROOT / "UI" / "mobo_ui")
 DEFAULT_REPORT_DIR = ROOT / "quality-reports"
 
 
 def _python_files() -> list[Path]:
-    return sorted(SOURCE_DIR.rglob("*.py"))
+    return sorted(path for source_dir in SOURCE_DIRS for path in source_dir.rglob("*.py"))
 
 
 def _complexity_metrics() -> dict[str, Any]:
@@ -55,7 +56,7 @@ def _coverage_metrics(path: Path) -> dict[str, Any]:
 
 def _ruff_metrics() -> dict[str, Any]:
     command = [
-        sys.executable, "-m", "ruff", "check", "src", "tests", "scripts", "tools",
+        sys.executable, "-m", "ruff", "check", "src", "UI", "tests", "scripts", "tools",
         "--output-format", "json",
     ]
     completed = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, check=False)
@@ -65,12 +66,42 @@ def _ruff_metrics() -> dict[str, Any]:
     return {"violation_count": len(findings)}
 
 
+def _required_signature_parameters() -> set[tuple[str, int, str]]:
+    """Return parameters required by Python or typing protocols despite unused bodies."""
+    required: set[tuple[str, int, str]] = set()
+    for path in _python_files():
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == "__exit__":
+                for argument in node.args.args[1:]:
+                    required.add((str(path.resolve()), node.lineno, argument.arg))
+            if not isinstance(node, ast.ClassDef):
+                continue
+            is_protocol = any(
+                isinstance(base, ast.Name) and base.id == "Protocol"
+                or isinstance(base, ast.Attribute) and base.attr == "Protocol"
+                for base in node.bases
+            )
+            if not is_protocol:
+                continue
+            for member in node.body:
+                if isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    for argument in member.args.args[1:]:
+                        required.add((str(path.resolve()), member.lineno, argument.arg))
+    return required
+
+
 def _dead_code_metrics() -> dict[str, Any]:
     from vulture import Vulture
 
     analyzer = Vulture()
-    analyzer.scavenge([str(SOURCE_DIR)])
-    findings = analyzer.get_unused_code(min_confidence=100, sort_by_size=True)
+    analyzer.scavenge([str(source_dir) for source_dir in SOURCE_DIRS])
+    required = _required_signature_parameters()
+    findings = [
+        item
+        for item in analyzer.get_unused_code(min_confidence=100, sort_by_size=True)
+        if (str(Path(item.filename).resolve()), item.first_lineno, item.name) not in required
+    ]
     return {
         "certain_count": len(findings),
         "items": [f"{item.filename}:{item.first_lineno}:{item.name}" for item in findings],
@@ -145,6 +176,7 @@ def _run_tests(report_dir: Path) -> None:
     report_dir.mkdir(parents=True, exist_ok=True)
     command = [
         sys.executable, "-m", "pytest", "-m", "not slow",
+        "--cov=mobo", "--cov=UI.mobo_ui",
         f"--cov-report=json:{report_dir / 'coverage.json'}",
     ]
     subprocess.run(command, cwd=ROOT, check=True)

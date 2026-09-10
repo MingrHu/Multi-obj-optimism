@@ -46,3 +46,15 @@ def test_grade_boundaries():
     module = _load_module()
 
     assert [module._grade(score) for score in (90, 80, 70, 60, 59)] == ["A", "B", "C", "D", "E"]
+
+
+def test_required_protocol_and_context_manager_parameters_are_not_dead_code():
+    module = _load_module()
+
+    required = module._required_signature_parameters()
+
+    assert any(name == "all_lines" for _path, _line, name in required)
+    assert {"exc_type", "exc_val", "exc_tb"}.issubset(
+        {name for _path, _line, name in required}
+    )
+    assert module._dead_code_metrics()["certain_count"] == 0

@@ -105,9 +105,17 @@ fi
 echo "==> 自检导入"
 python -m pip check
 python -c "from importlib.metadata import version; import flask, requests, numpy, pandas, scipy, sklearn, matplotlib, keras, tensorflow, pymoo, gymnasium, stable_baselines3, pyDOE, torch, mobo; print('flask', version('flask')); print('torch', torch.__version__); print('mobo', mobo.__version__)"
+if [ "$WITH_GUI" -eq 1 ]; then
+    python -c "import PySide6; from PySide6.QtCharts import QChart; print('PySide6', PySide6.__version__); print('QtCharts', QChart.__name__)"
+fi
 
 echo ""
 echo "✅ 环境安装完成。激活方式：source $VENV_DIR/bin/activate"
 echo "   运行测试：pytest -m 'not slow'"
 echo "   API启动：mobo-api"
 echo "   完整演示：python -m mobo.api.demo"
+if [ "$WITH_GUI" -eq 1 ]; then
+    echo "   桌面界面：python $PROJECT_DIR/UI/main.py"
+else
+    echo "   桌面界面依赖未安装；需要时重新运行：bash scripts/setup_env.sh --with-gui"
+fi

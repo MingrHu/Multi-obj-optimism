@@ -104,9 +104,12 @@ def test_generate_sample_file_delegates(tmp_path, monkeypatch):
     called = {}
     monkeypatch.setattr(
         pipeline, "generate_samples",
-        lambda task_id, method, pr, sd, ns, ln: called.update(task_id=task_id, method=method, sd=sd) or "out.txt",
+        lambda task_id, method, pr, sd, ns, ln, include: called.update(
+            task_id=task_id, method=method, sd=sd, include=include
+        ) or "out.txt",
     )
     out = generate_sample_file("t1", "lhs", {"t": (0.0, 1.0)}, str(tmp_path), 5)
     assert out == "out.txt"
     assert called["method"] == "lhs"
     assert called["task_id"] == "t1"
+    assert called["include"] is False

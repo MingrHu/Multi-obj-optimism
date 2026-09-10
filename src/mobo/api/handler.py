@@ -87,6 +87,7 @@ def delete_doe():
 #  @param  method 采样方法 支持lhs和full 默认为lhs
 #  @param  param_ranges 参数范围JSON对象 每个参数对应lower和upper组成的数值数组
 #  @param  n_samples LHS基础样本数量 使用lhs时必填
+#  @param  include_boundaries LHS是否追加所有参数上下界组合 可选 默认false
 #  @param  level_nums 全因子各参数水平数量 使用full时必填
 #  @author Hu Mingrui
 #  @date   2026/08/25
@@ -109,6 +110,15 @@ def generate_sample():
 @doe_api.post("/api/v1/hust/doe/dataset/generate")
 def generate_training_dataset():
     return _post(service.generate_training_dataset, "训练数据集生成完成")
+
+
+#  @brief  保存DOE训练数据及输入输出字段定义但不启动训练
+#  @return jsonify格式化信息 包含数据资源索引 字段顺序 输入边界和样本数量
+#  @param  id DOE唯一标识 必填
+#  @param  data_source 输入输出字段名称及数值矩阵 必填
+@doe_api.post("/api/v1/hust/doe/dataset/save")
+def save_training_dataset():
+    return _post(service.save_training_dataset, "DOE 配置与训练数据已保存")
 
 
 #  @brief  根据服务端资源索引按字段获取样本 数据集 优化或推理结果

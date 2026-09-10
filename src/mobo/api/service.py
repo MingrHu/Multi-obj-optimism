@@ -6,6 +6,7 @@ import shutil
 import threading
 import uuid
 from dataclasses import asdict
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -40,7 +41,14 @@ def _doe_summary(state: dict[str, Any]) -> dict[str, Any]:
         "id", "name", "description", "metadata", "status", "stage", "progress",
         "created_at", "updated_at",
     )
-    return {field: state.get(field) for field in fields}
+    summary = {field: state.get(field) for field in fields}
+    optimization = state.get("optimization") or {}
+    history = list(optimization.get("history") or [])
+    summary["optimization_run_count"] = len(history)
+    summary["has_optimization_result"] = bool(
+        optimization.get("result") or any(run.get("result") for run in history)
+    )
+    return summary
 
 
 def delete_doe(payload: dict[str, Any]) -> str:
@@ -62,10 +70,14 @@ def generate_sample(payload: dict[str, Any]) -> dict[str, Any]:
     ranges = _normalize_ranges(payload.get("param_ranges"))
     n_samples = payload.get("n_samples", 0)
     levels = payload.get("level_nums", [])
+    include_boundaries = payload.get("include_boundaries", False)
     n_samples, levels = _normalize_sampling_config(method, ranges, n_samples, levels)
+    if method == "lhs" and not isinstance(include_boundaries, bool):
+        raise ApiError("include_boundaries 必须是布尔值")
     # 样本强制写入当前 DOE 的 samples 子目录 避免污染共享数据目录
     output = generate_samples(
-        doe_id, method, ranges, str(store.task_dir(doe_id) / "samples"), n_samples, levels
+        doe_id, method, ranges, str(store.task_dir(doe_id) / "samples"),
+        n_samples, levels, include_boundaries,
     )
     resource = store.register_resource(
         doe_id, "sample", list(ranges), path=output,
@@ -77,6 +89,7 @@ def generate_sample(payload: dict[str, Any]) -> dict[str, Any]:
     }
     if method == "lhs":
         sample["n_samples"] = n_samples
+        sample["include_boundaries"] = include_boundaries
     if method == "full":
         sample["level_nums"] = list(levels)
     store.update(doe_id, status="ready", stage="sample_generated", progress=10)
@@ -136,7 +149,8 @@ def generate_training_dataset(payload: dict[str, Any]) -> dict[str, Any]:
     data = {
         "data_file": str(output), "all_var_list": [*input_names, *target_names], # type: ignore
         "input_var_count": len(input_names), "sample_count": n_samples,
-        "input_names": input_names, "target_names": target_names, **resource,
+        "input_names": input_names, "target_names": target_names,
+        "source_name": output.name, **resource,
     }
     store.update_section(doe_id, "training", dataset=data)
     return {key: value for key, value in data.items() if key != "data_file"}
@@ -199,6 +213,10 @@ def _normalize_ranges(value: Any) -> dict[str, tuple[float, float]]:
 def get_training_progress(doe_id: str) -> dict[str, Any]:
     state = store.load(store.validate_id(doe_id))
     training = state.get("training") or {}
+    request = training.get("request") or {}
+    dataset = training.get("dataset") or {}
+    all_var_list = list(request.get("all_var_list") or dataset.get("all_var_list") or [])
+    input_var_count = int(request.get("input_var_count") or dataset.get("input_var_count") or 0)
     models = [
         {key: value for key, value in model.items() if key != "model_dir"}
         for model in training.get("models", [])
@@ -208,12 +226,41 @@ def get_training_progress(doe_id: str) -> dict[str, Any]:
         "status": training.get("status", "not_started"),
         "stage": training.get("stage", "not_started"),
         "progress": training.get("progress", 0),
+        "input_names": all_var_list[:input_var_count],
+        "target_names": all_var_list[input_var_count:],
+        "input_bounds": list(request.get("input_bounds") or dataset.get("input_bounds") or []),
+        "dataset": {
+            key: dataset.get(key)
+            for key in ("resource_id", "columns", "sample_count", "source_name")
+            if dataset.get(key) is not None
+        },
         "models": models,
         "error": (
             "代理模型训练失败，内部异常详情由服务端维护"
             if training.get("error") else None
         ),
         "updated_at": state["updated_at"],
+    }
+
+
+def save_training_dataset(payload: dict[str, Any]) -> dict[str, Any]:
+    doe_id = _require_id(payload)
+    store.load(doe_id)
+    if registry.running(doe_id, "training") or registry.running(doe_id, "optimization"):
+        raise ConflictError("任务正在运行，无法修改 DOE 配置")
+    dataset = _normalize_inline_dataset(doe_id, payload.get("data_source"))
+    if dataset is None:
+        raise ApiError("data_source 必须是 JSON 对象")
+    dataset["input_bounds"] = _training_input_bounds(dataset)
+    store.update_section(doe_id, "training", dataset=dataset)
+    return {
+        "id": doe_id,
+        "resource_id": dataset["resource_id"],
+        "columns": dataset["all_var_list"],
+        "input_names": dataset["input_names"],
+        "target_names": dataset["target_names"],
+        "input_bounds": dataset["input_bounds"],
+        "sample_count": dataset["sample_count"],
     }
 
 
@@ -278,10 +325,28 @@ def _normalize_training(doe_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         "data_file": dataset["data_file"],
         "all_var_list": dataset["all_var_list"],
         "input_var_count": dataset["input_var_count"],
+        "input_bounds": _training_input_bounds(dataset),
         "sample_count": dataset["sample_count"],
         "models": models,
         "evaluation": evaluation,
     }
+
+
+def _training_input_bounds(dataset: dict[str, Any]) -> list[dict[str, Any]]:
+    """Persist input ranges so optimization UIs can restore the training schema."""
+    import numpy as np
+
+    count = int(dataset["input_var_count"])
+    names = list(dataset["all_var_list"][:count])
+    values = np.loadtxt(dataset["data_file"], delimiter="\t", ndmin=2)[:, :count]
+    return [
+        {
+            "name": name,
+            "lower": float(np.min(values[:, index])),
+            "upper": float(np.max(values[:, index])),
+        }
+        for index, name in enumerate(names)
+    ]
 
 
 def _normalize_file_dataset(payload: dict[str, Any]) -> dict[str, Any]:
@@ -322,6 +387,9 @@ def _normalize_inline_dataset(doe_id: str, value: Any) -> dict[str, Any] | None:
         "input_var_count": len(input_names), "sample_count": len(inputs),
         "input_names": input_names, "target_names": target_names,
     }
+    source_name = str(value.get("source_name") or "").strip()
+    if source_name:
+        dataset["source_name"] = Path(source_name).name
     dataset.update(store.register_resource(
         doe_id, "dataset", dataset["all_var_list"], path=str(output),
     ))
@@ -662,19 +730,50 @@ def start_optimization(payload: dict[str, Any]) -> dict[str, Any]:
         raise ConflictError("optimization 已在运行")
     # 归一化算法别名并绑定指定模型或当前评分最高的模型
     request = _normalize_optimization(payload, state)
+    run_id = f"run_{uuid.uuid4().hex[:12]}"
     response = {
         "id": doe_id, "status": "queued", "stage": "queued", "progress": 0,
+        "run_id": run_id,
         "mode": request["requested_mode"],
         "algorithm": "ppo" if request["optimizer"] == "rl" else "nsga2",
         "model_id": request["model_id"], "objectives": request["objective_names"],
     }
     store.update(doe_id, status="running", stage="optimization", progress=5)
+    optimization = state.get("optimization") or {}
+    history = list(optimization.get("history") or [])
+    history.append({
+        "run_id": run_id, "status": "queued", "stage": "queued", "progress": 0,
+        "request": request, "result": None, "error": None,
+        "created_at": _history_timestamp(), "updated_at": _history_timestamp(),
+    })
     store.update_section(
         doe_id, "optimization", status="queued", stage="queued", progress=0,
-        request=request, result=None, error=None,
+        request=request, result=None, error=None, current_run_id=run_id, history=history,
     )
-    registry.start(doe_id, "optimization", lambda cancel: _run_optimization(doe_id, request, cancel))
+    registry.start(
+        doe_id,
+        "optimization",
+        lambda cancel: _run_optimization(doe_id, dict(request), cancel, run_id),
+    )
     return response
+
+
+def _history_timestamp() -> str:
+    return datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+def _update_optimization_run(doe_id: str, run_id: str, **fields: Any) -> None:
+    state = store.load(doe_id)
+    optimization = state.get("optimization") or {}
+    history = list(optimization.get("history") or [])
+    for index, run in enumerate(history):
+        if run.get("run_id") == run_id:
+            updated = dict(run)
+            updated.update(fields)
+            updated["updated_at"] = _history_timestamp()
+            history[index] = updated
+            break
+    store.update_section(doe_id, "optimization", history=history)
 
 
 def _normalize_optimization(payload, state) -> dict[str, Any]:
@@ -830,7 +929,9 @@ def _validate_optimizer_config(name, config):
         raise ApiError("algorithm.params.eliminate_duplicates 必须是布尔值")
 
 
-def _run_optimization(doe_id: str, request: dict[str, Any], cancel: threading.Event) -> None:
+def _run_optimization(
+    doe_id: str, request: dict[str, Any], cancel: threading.Event, run_id: str
+) -> None:
     # 复用现有优化服务并通过独立优化标识保留底层状态记录
     from mobo.optimization.service import run_optimization
 
@@ -838,34 +939,52 @@ def _run_optimization(doe_id: str, request: dict[str, Any], cancel: threading.Ev
         store.update_section(
             doe_id, "optimization", status="running", stage="optimizing", progress=10,
         )
+        _update_optimization_run(
+            doe_id, run_id, status="running", stage="optimizing", progress=10,
+        )
         optimizer = request.pop("optimizer")
         task_id = f"opt_{doe_id}_{uuid.uuid4().hex[:6]}"
         response = run_optimization(request, optimizer=optimizer, task_id=task_id)
         if cancel.is_set():
+            _update_optimization_run(
+                doe_id, run_id, status="stopped", stage="stopped",
+            )
             _mark_cancelled(doe_id, "optimization")
         elif response["code"] != 0:
             raise RuntimeError(response["msg"])
         else:
-            result = _collect_optimization_result(doe_id, response)
+            result = _collect_optimization_result(doe_id, response, run_id)
             store.update_section(
                 doe_id, "optimization", status="finished", stage="finished",
+                progress=100, result=result, error=None,
+            )
+            _update_optimization_run(
+                doe_id, run_id, status="finished", stage="finished",
                 progress=100, result=result, error=None,
             )
             store.update(doe_id, status="finished", stage="optimization_finished", progress=100)
     except Exception as exc:
         if cancel.is_set():
+            _update_optimization_run(
+                doe_id, run_id, status="stopped", stage="stopped",
+            )
             _mark_cancelled(doe_id, "optimization")
         else:
             store.update_section(
                 doe_id, "optimization", status="failed", stage="failed", error=str(exc),
             )
+            _update_optimization_run(
+                doe_id, run_id, status="failed", stage="failed",
+                error="优化执行失败，内部异常详情由服务端维护",
+            )
             store.update(doe_id, status="failed", stage="optimization_failed")
 
 
-def _collect_optimization_result(doe_id, response) -> dict[str, Any]:
+def _collect_optimization_result(doe_id, response, run_id) -> dict[str, Any]:
     data = response["data"]
     resources = dict(data.get("file_resource") or {})
-    output_dir = store.task_dir(doe_id) / "optimization"
+    output_dir = store.task_dir(doe_id) / "optimization" / run_id
+    output_dir.mkdir(parents=True, exist_ok=True)
     # 将算法输出文件复制到 DOE 专属目录 返回路径不再依赖共享输出位置
     for key, source in list(resources.items()):
         path = Path(source)
@@ -877,6 +996,7 @@ def _collect_optimization_result(doe_id, response) -> dict[str, Any]:
     resource = store.register_resource(
         doe_id, "optimization", columns,
         path=resources.get("solution_txt_path", ""),
+        replace_existing=False,
     )
     return {
         "optimization_id": response["task_id"], **data,
@@ -891,6 +1011,11 @@ def stop_optimization(payload: dict[str, Any]) -> dict[str, Any]:
     if accepted:
         store.update(doe_id, status="stopping", stage="optimization_stopping")
         store.update_section(doe_id, "optimization", status="stopping", stage="stopping")
+        optimization = store.load(doe_id).get("optimization") or {}
+        if optimization.get("current_run_id"):
+            _update_optimization_run(
+                doe_id, optimization["current_run_id"], status="stopping", stage="stopping",
+            )
     optimization = store.load(doe_id).get("optimization") or {}
     return {
         "id": doe_id, "accepted": accepted,
@@ -906,6 +1031,15 @@ def get_optimization(doe_id: str) -> dict[str, Any]:
     result = optimization.get("result")
     if isinstance(result, dict):
         result = {key: value for key, value in result.items() if key != "file_resource"}
+    history = []
+    for run in optimization.get("history") or []:
+        public_run = dict(run)
+        run_result = public_run.get("result")
+        if isinstance(run_result, dict):
+            public_run["result"] = {
+                key: value for key, value in run_result.items() if key != "file_resource"
+            }
+        history.append(public_run)
     return {
         "id": doe_id,
         "status": optimization.get("status", "not_started"),
@@ -913,6 +1047,8 @@ def get_optimization(doe_id: str) -> dict[str, Any]:
         "progress": optimization.get("progress", 0),
         "request": optimization.get("request"),
         "result": result,
+        "current_run_id": optimization.get("current_run_id"),
+        "history": history,
         "error": (
             "优化执行失败，内部异常详情由服务端维护"
             if optimization.get("error") else None
@@ -924,6 +1060,7 @@ def get_optimization(doe_id: str) -> dict[str, Any]:
 __all__ = [
     "add_doe", "delete_doe", "delete_training", "generate_sample",
     "generate_training_dataset", "get_data", "get_optimization", "get_training_progress", "list_doe",
+    "save_training_dataset",
     "start_inference", "start_optimization", "start_training",
     "stop_optimization", "stop_training",
 ]

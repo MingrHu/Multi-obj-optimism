@@ -33,13 +33,16 @@ def _workflow_state_file(
 def create_multi_operation_sampling_task(task_id: str, operations: Sequence[Operation],
                                          save_dir: str, method: str = "lhs",
                                          n_samples: int = 0,
-                                         level_nums: Sequence[int] = ()) -> Dict[str, Any]:
+                                         level_nums: Sequence[int] = (),
+                                         include_boundaries: bool = False) -> Dict[str, Any]:
     """生成多工步联合样本并记录任务输入。"""
     req = {"operations": list(operations), "save_dir": save_dir, "method": method,
-           "n_samples": n_samples, "level_nums": list(level_nums)}
+           "n_samples": n_samples, "level_nums": list(level_nums),
+           "include_boundaries": include_boundaries}
     task_store.init_state(task_id, _KIND, req)
     sample_file = generate_multi_operation_samples(
-        task_id, operations, save_dir, method, n_samples, level_nums
+        task_id, operations, save_dir, method, n_samples, level_nums,
+        include_boundaries,
     )
     return task_store.update(task_id, stage="sampled", status="running",
                              data={"sample_file": sample_file})

@@ -60,14 +60,31 @@ def _write(state: dict[str, Any]) -> None:
 def create(payload: dict[str, Any]) -> dict[str, Any]:
     # 调用方未指定标识时生成短 UUID 保证目录名稳定且足够唯一
     doe_id = validate_id(payload.get("id") or f"doe_{uuid.uuid4().hex[:16]}")
+    raw_name = payload.get("name", doe_id)
+    if not isinstance(raw_name, str) or not raw_name.strip():
+        raise ValueError("DOE 任务名称不能为空")
+    name = raw_name.strip()
+    if len(name) > 128:
+        raise ValueError("DOE 任务名称长度不能超过 128 个字符")
     with _LOCK:
         if _state_file(doe_id).exists():
             raise ConflictError(f"DOE 任务已存在：{doe_id}")
+        duplicate = next(
+            (
+                state for state in list_all()
+                if str(state.get("name", "")).strip().casefold() == name.casefold()
+            ),
+            None,
+        )
+        if duplicate is not None:
+            raise ConflictError(
+                f"DOE 任务名称已存在：{name}（ID：{duplicate['id']}）"
+            )
         now = _now()
         # 顶层状态用于快速查询 子流程详情分别保存在 sample training optimization
         state = {
             "id": doe_id,
-            "name": payload.get("name", doe_id),
+            "name": name,
             "description": payload.get("description", ""),
             "metadata": payload.get("metadata", {}),
             "status": "created", "stage": "created", "progress": 0,
@@ -80,6 +97,7 @@ def create(payload: dict[str, Any]) -> dict[str, Any]:
             "optimization": {
                 "status": "not_started", "stage": "not_started", "progress": 0,
                 "request": None, "result": None, "error": None,
+                "current_run_id": None, "history": [],
             },
         }
         _write(state)
@@ -130,15 +148,17 @@ def list_all() -> list[dict[str, Any]]:
 
 def register_resource(
     doe_id: str, kind: str, columns: list[str], *, path: str = "",
-    values: dict[str, list[Any]] | None = None,
+    values: dict[str, list[Any]] | None = None, replace_existing: bool = True,
 ) -> dict[str, Any]:
     """注册服务端结果并返回不包含真实路径的公开资源描述"""
     with _LOCK:
         state = load(doe_id)
-        resources = {
-            key: value for key, value in (state.get("resources") or {}).items()
-            if value.get("kind") != kind
-        }
+        resources = dict(state.get("resources") or {})
+        if replace_existing:
+            resources = {
+                key: value for key, value in resources.items()
+                if value.get("kind") != kind
+            }
         resource_id = f"tos-{uuid.uuid4().hex[:20]}"
         resources[resource_id] = {
             "kind": kind, "columns": list(columns), "path": path,
@@ -200,6 +220,8 @@ def _delete_legacy_artifacts(state: dict[str, Any]) -> None:
         _remove_legacy_task(model.get("model_id"))
     result = state.get("optimization", {}).get("result") or {}
     _remove_legacy_task(result.get("optimization_id"))
+    for run in state.get("optimization", {}).get("history", []):
+        _remove_legacy_task((run.get("result") or {}).get("optimization_id"))
 
 
 def _remove_legacy_task(task_id: Any) -> None:

@@ -1,5 +1,7 @@
 """采样模块 (:mod:`mobo.automation.sampling`) 纯逻辑测试。"""
 
+from pathlib import Path
+
 import pandas as pd
 import pytest
 
@@ -24,12 +26,23 @@ def test_boundary_samples_cartesian():
 
 def test_generate_lhs_includes_boundaries_as_strings():
     param_ranges = {"t1": (0.0, 10.0), "t2": (100.0, 200.0)}
-    df = sampling.generate_lhs(5, param_ranges)
+    df = sampling.generate_lhs(5, param_ranges, include_boundaries=True)
     # LHS(5) + 边界(4)，去重后 >= 5
     assert df.shape[0] >= 5
     assert df.shape[1] == 2
     # 元素被格式化成两位小数字符串
     assert all(isinstance(v, str) and "." in v for v in df.iloc[0].tolist())
+
+
+def test_generate_lhs_defaults_to_exact_requested_count():
+    param_ranges = {
+        "t1": (0.0, 10.0),
+        "t2": (100.0, 200.0),
+        "t3": (0.0, 1.0),
+    }
+    df = sampling.generate_lhs(7, param_ranges)
+    assert df.shape == (7, 3)
+    assert all(isinstance(value, str) for value in df.to_numpy().flat)
 
 
 def test_generate_full_factorial_counts():
@@ -54,6 +67,14 @@ def test_save_samples_writes_tab_separated(tmp_path):
 def test_generate_samples_lhs(tmp_path):
     out = sampling.generate_samples("t1", "lhs", {"t1": (0.0, 10.0)}, str(tmp_path), n_samples=4)
     assert out.endswith("t1-lhs.txt")
+
+
+def test_generate_samples_lhs_default_writes_exact_count(tmp_path):
+    out = sampling.generate_samples(
+        "t1", "lhs", {"t1": (0.0, 10.0), "t2": (0.0, 5.0)},
+        str(tmp_path), n_samples=11,
+    )
+    assert len(Path(out).read_text(encoding="utf-8").splitlines()) == 11
 
 
 def test_generate_samples_full(tmp_path):

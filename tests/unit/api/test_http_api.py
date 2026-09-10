@@ -21,7 +21,8 @@ def test_add_list_progress_and_delete(monkeypatch, tmp_path):
     assert created.json["data"]["id"] == "doe_1"
     assert set(created.json["data"]) == {
         "id", "name", "description", "metadata", "status", "stage",
-        "progress", "created_at", "updated_at",
+        "progress", "created_at", "updated_at", "optimization_run_count",
+        "has_optimization_result",
     }
     assert (tmp_path / "doe_tasks" / "doe_1" / "doe.json").is_file()
 
@@ -29,7 +30,8 @@ def test_add_list_progress_and_delete(monkeypatch, tmp_path):
     assert listed.json["data"]["total"] == 1
     assert set(listed.json["data"]["items"][0]) == {
         "id", "name", "description", "metadata", "status", "stage",
-        "progress", "created_at", "updated_at",
+        "progress", "created_at", "updated_at", "optimization_run_count",
+        "has_optimization_result",
     }
     progress = client.get("/api/v1/hust/doe/train/progress?id=doe_1")
     assert progress.json["data"]["status"] == "not_started"
@@ -44,8 +46,13 @@ def test_add_list_progress_and_delete(monkeypatch, tmp_path):
 
 def test_add_rejects_duplicate_and_path_traversal(monkeypatch, tmp_path):
     client = _client(monkeypatch, tmp_path)
-    client.post("/api/v1/doe/add", json={"id": "same"})
+    client.post("/api/v1/doe/add", json={"id": "same", "name": "Unique Task"})
     assert client.post("/api/v1/doe/add", json={"id": "same"}).status_code == 409
+    duplicate_name = client.post(
+        "/api/v1/doe/add", json={"id": "different", "name": "  unique task  "}
+    )
+    assert duplicate_name.status_code == 409
+    assert "DOE 任务名称已存在" in duplicate_name.json["message"]
     response = client.post("/api/v1/doe/add", json={"id": "../../outside"})
     assert response.status_code == 400
 
@@ -93,10 +100,27 @@ def test_lhs_response_reports_requested_and_actual_counts(monkeypatch, tmp_path)
     data = response.json["data"]
     assert data["id"] == "lhs_1"
     assert data["n_samples"] == 4
-    assert data["sample_count"] >= data["n_samples"]
+    assert data["include_boundaries"] is False
+    assert data["sample_count"] == data["n_samples"]
     sample_file = store.load("lhs_1")["sample"]["sample_file"]
     lines = Path(sample_file).read_text(encoding="utf-8").splitlines()
     assert len(lines) == data["sample_count"]
+
+
+def test_lhs_can_skip_boundary_combinations(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    client.post("/api/v1/doe/add", json={"id": "lhs_exact"})
+    response = client.post("/api/v1/hust/doe/sample/generate", json={
+        "id": "lhs_exact", "method": "lhs",
+        "param_ranges": {"temperature": [900, 1000], "speed": [10, 20]},
+        "n_samples": 7,
+        "include_boundaries": False,
+    })
+
+    assert response.status_code == 200
+    data = response.json["data"]
+    assert data["include_boundaries"] is False
+    assert data["sample_count"] == data["n_samples"] == 7
 
 
 def test_sample_generation_returns_documented_failures(monkeypatch, tmp_path):
@@ -154,6 +178,44 @@ def test_training_dataset_generation_uses_doe_directory(monkeypatch, tmp_path):
     assert len(selected.json["data"]["values"]["speed"]) == 12
 
 
+def test_training_dataset_can_be_saved_without_starting_training(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    client.post("/api/v1/doe/add", json={"id": "saved_definition"})
+
+    response = client.post("/api/v1/hust/doe/dataset/save", json={
+        "id": "saved_definition",
+        "data_source": {
+            "source_name": "7050-training.txt",
+            "input_data": {
+                "labels": ["工件温度", "压下速度"],
+                "samples": [[900, 10], [1000, 30], [1100, 50]],
+            },
+            "output_data": {
+                "labels": ["载荷", "晶粒尺寸"],
+                "samples": [[8.2, 42], [7.9, 39], [8.0, 37]],
+            },
+        },
+    })
+
+    assert response.status_code == 200
+    assert response.json["data"]["columns"] == ["工件温度", "压下速度", "载荷", "晶粒尺寸"]
+    assert response.json["data"]["input_names"] == ["工件温度", "压下速度"]
+    assert response.json["data"]["target_names"] == ["载荷", "晶粒尺寸"]
+    assert response.json["data"]["sample_count"] == 3
+    progress = client.get(
+        "/api/v1/hust/doe/train/progress?id=saved_definition"
+    ).json["data"]
+    assert progress["status"] == "not_started"
+    assert progress["input_names"] == ["工件温度", "压下速度"]
+    assert progress["target_names"] == ["载荷", "晶粒尺寸"]
+    assert progress["input_bounds"] == [
+        {"name": "工件温度", "lower": 900.0, "upper": 1100.0},
+        {"name": "压下速度", "lower": 10.0, "upper": 50.0},
+    ]
+    assert progress["dataset"]["resource_id"].startswith("tos-")
+    assert progress["dataset"]["source_name"] == "7050-training.txt"
+
+
 def test_training_request_is_async(monkeypatch, tmp_path):
     from mobo.api import service
 
@@ -176,6 +238,10 @@ def test_training_request_is_async(monkeypatch, tmp_path):
         "sample_count": 2, "input_names": ["x"], "target_names": ["y"],
         "models": ["RF"],
     }
+    progress = client.get("/api/v1/hust/doe/train/progress?id=train_1").json["data"]
+    assert progress["input_names"] == ["x"]
+    assert progress["target_names"] == ["y"]
+    assert progress["input_bounds"] == [{"name": "x", "lower": 1.0, "upper": 2.0}]
     assert captured == [("train_1", "training")]
 
 
@@ -324,6 +390,7 @@ def test_all_documented_routes_exist(monkeypatch, tmp_path):
     assert {
         "/api/v1/doe/add", "/api/v1/doe/list", "/api/v1/doe/delete",
         "/api/v1/hust/doe/sample/generate", "/api/v1/hust/doe/dataset/generate",
+        "/api/v1/hust/doe/dataset/save",
         "/api/v1/hust/doe/data/get",
         "/api/v1/hust/doe/train/progress",
         "/api/v1/hust/doe/train/delete", "/api/v1/hust/doe/train/stop",
@@ -515,6 +582,7 @@ def test_optimization_accepts_multi_and_weighted_single(monkeypatch, tmp_path):
     })
 
     assert multi.status_code == 202
+    assert multi.json["data"]["run_id"].startswith("run_")
     assert multi.json["data"]["mode"] == "multi"
     assert multi.json["data"]["algorithm"] == "nsga2"
     request = store.load("multi_opt")["optimization"]["request"]
@@ -526,6 +594,69 @@ def test_optimization_accepts_multi_and_weighted_single(monkeypatch, tmp_path):
     assert single.status_code == 202
     assert store.load("single_opt")["optimization"]["request"]["objective_config"][0]["weight"] == 0.7
     assert captured == [("multi_opt", "optimization"), ("single_opt", "optimization")]
+
+
+def test_reoptimization_appends_unique_run_history(monkeypatch, tmp_path):
+    from mobo.api import service
+
+    client = _client(monkeypatch, tmp_path)
+    monkeypatch.setattr(service.registry, "start", lambda *args: None)
+    _prepare_optimization_doe("history_opt")
+    payload = {
+        "id": "history_opt", "mode": "multi",
+        "objectives": [{"name": "y1", "direction": "min"}],
+        "decision_variables": [{"name": "x1", "lower": 0, "upper": 1}],
+        "algorithm": {"name": "nsga2", "params": {}},
+    }
+
+    first = client.post("/api/v1/hust/doe/optimize/start", json=payload)
+    second = client.post("/api/v1/hust/doe/optimize/start", json=payload)
+    history = client.get(
+        "/api/v1/hust/doe/optimize/getById", query_string={"id": "history_opt"},
+    ).json["data"]["history"]
+
+    assert first.status_code == second.status_code == 202
+    assert first.json["data"]["run_id"] != second.json["data"]["run_id"]
+    assert [run["run_id"] for run in history] == [
+        first.json["data"]["run_id"], second.json["data"]["run_id"],
+    ]
+
+
+def test_optimization_result_resources_are_preserved_per_run(monkeypatch, tmp_path):
+    from mobo.api import service
+
+    _client(monkeypatch, tmp_path)
+    store.create({"id": "result_history"})
+    source_one = tmp_path / "first" / "solution.txt"
+    source_two = tmp_path / "second" / "solution.txt"
+    source_one.parent.mkdir()
+    source_two.parent.mkdir()
+    source_one.write_text("1\t2\n", encoding="utf-8")
+    source_two.write_text("3\t4\n", encoding="utf-8")
+
+    def response(task_id, source):
+        return {
+            "task_id": task_id,
+            "data": {
+                "task_info": {"result_columns": ["x", "y"]},
+                "file_resource": {"solution_txt_path": str(source)},
+            },
+        }
+
+    first = service._collect_optimization_result(
+        "result_history", response("opt_first", source_one), "run_first"
+    )
+    second = service._collect_optimization_result(
+        "result_history", response("opt_second", source_two), "run_second"
+    )
+    first_resource = store.resolve_resource("result_history", first["resource_id"])
+    second_resource = store.resolve_resource("result_history", second["resource_id"])
+
+    assert first["resource_id"] != second["resource_id"]
+    assert Path(first_resource["path"]).read_text(encoding="utf-8") == "1\t2\n"
+    assert Path(second_resource["path"]).read_text(encoding="utf-8") == "3\t4\n"
+    assert Path(first_resource["path"]).parent.name == "run_first"
+    assert Path(second_resource["path"]).parent.name == "run_second"
 
 
 def test_optimization_accepts_rl_and_rejects_unsupported_algorithm(monkeypatch, tmp_path):
@@ -589,6 +720,7 @@ def test_get_optimization_returns_stable_fields(monkeypatch, tmp_path):
     assert response.json["data"] == {
         "id": "query_opt", "status": "not_started", "stage": "not_started",
         "progress": 0, "request": None, "result": None, "error": None,
+        "current_run_id": None, "history": [],
         "updated_at": store.load("query_opt")["updated_at"],
     }
 

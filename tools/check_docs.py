@@ -24,6 +24,8 @@ REQUIRED_DOCS = {
     "docs/deform/DEFORM_KEY_KEYWORDS.md",
     "docs/deployment/BACKEND_STARTUP.md",
     "docs/deployment/DOCKER_DEPLOYMENT.md",
+    "docs/ui/DESKTOP_UI.md",
+    "UI/README.md",
 }
 LINK_PATTERN = re.compile(r"(?<!!)\[[^]]+\]\(([^)]+)\)")
 ENV_PATTERN = re.compile(r"\bMOBO_[A-Z0-9_]+\b")
@@ -80,11 +82,21 @@ def extract_modules(root: Path) -> list[str]:
     )
 
 
+def extract_ui_modules(root: Path) -> list[str]:
+    ui_root = root / "UI"
+    return sorted(
+        path.relative_to(root).as_posix()
+        for path in ui_root.rglob("*.py")
+        if "__pycache__" not in path.parts
+    )
+
+
 def extract_environment_variables(root: Path) -> list[str]:
     variables: set[str] = set()
     candidates = [
         *(root / "scripts").glob("setup_env.*"),
         *(root / "src" / "mobo").rglob("*.py"),
+        *(root / "UI").rglob("*.py"),
     ]
     for path in candidates:
         variables.update(ENV_PATTERN.findall(path.read_text(encoding="utf-8")))
@@ -103,6 +115,7 @@ def build_surface(root: Path = ROOT) -> dict[str, Any]:
         "cli_scripts": extract_scripts(root),
         "environment_variables": extract_environment_variables(root),
         "modules": extract_modules(root),
+        "ui_modules": extract_ui_modules(root),
         "packages": extract_packages(root),
         "pytest_markers": extract_pytest_markers(root),
     }
@@ -112,6 +125,7 @@ def _document_paths(root: Path) -> list[Path]:
     return [
         *sorted(root.glob("*.md")),
         *sorted((root / "docs").rglob("*.md")),
+        *sorted((root / "UI").rglob("*.md")),
         root / "tools" / "README.md",
     ]
 

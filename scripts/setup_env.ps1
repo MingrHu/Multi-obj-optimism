@@ -7,6 +7,7 @@
 
 # 用法
 # .\scripts\setup_env.ps1
+# .\scripts\setup_env.ps1 -WithGui
 # .\scripts\setup_env.ps1 -Recreate
 # .\scripts\setup_env.ps1 -PythonPath "C:\Python312\python.exe"
 
@@ -72,6 +73,9 @@ if ($WithGui) {
 
 & $Python -m pip check
 & $Python -c "from importlib.metadata import version; import flask, requests, numpy, pandas, scipy, sklearn, matplotlib, keras, tensorflow, pymoo, gymnasium, stable_baselines3, pyDOE, torch, mobo; print('mobo', mobo.__version__); print('flask', version('flask')); print('torch', torch.__version__)"
+if ($WithGui) {
+    & $Python -c "import PySide6; from PySide6.QtCharts import QChart; print('PySide6', PySide6.__version__); print('QtCharts', QChart.__name__)"
+}
 
 $Pre = Get-Command DEF_PRE_64.exe -ErrorAction SilentlyContinue
 $Arm = Get-Command DEF_ARM_CTL.COM -ErrorAction SilentlyContinue
@@ -86,4 +90,9 @@ Write-Host "环境安装完成。激活脚本：$VenvDir\Scripts\Activate.ps1"
 Write-Host "测试命令：python -m pytest -m 'not slow'"
 Write-Host "API启动：mobo-api"
 Write-Host "完整演示：python -m mobo.api.demo"
+if ($WithGui) {
+    Write-Host "桌面界面：$Python $ProjectDir\UI\main.py"
+} else {
+    Write-Host "桌面界面依赖未安装；需要时重新运行：.\scripts\setup_env.ps1 -WithGui"
+}
 

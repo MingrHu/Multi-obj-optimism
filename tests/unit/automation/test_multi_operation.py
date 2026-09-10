@@ -58,6 +58,14 @@ def test_generate_multi_operation_samples_writes_only_sample_txt(tmp_path):
     assert not Path(path + ".json").exists()
 
 
+def test_multi_operation_lhs_default_keeps_requested_count(tmp_path):
+    path = generate_multi_operation_samples(
+        "multi", _operations(tmp_path), str(tmp_path), method="lhs",
+        n_samples=7,
+    )
+    assert len(Path(path).read_text(encoding="utf-8").splitlines()) == 7
+
+
 def test_shared_parameter_has_one_sample_column_and_multiple_objects(tmp_path):
     operations = _operations(tmp_path)
     operations[0]["parameters"] = []

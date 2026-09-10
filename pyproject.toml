@@ -63,7 +63,7 @@ markers = [
     "deform: 依赖 Windows DEFORM 环境的用例",
     "integration: 依赖仓库 data/ 真实产物的集成用例",
 ]
-addopts = "-m 'not slow' --cov=mobo --cov-report=term-missing --import-mode=importlib"
+addopts = "-m 'not slow' --cov=mobo --cov=UI.mobo_ui --cov-report=term-missing --import-mode=importlib"
 
 [tool.ruff]
 target-version = "py311"
@@ -74,13 +74,13 @@ extend-exclude = ["data", "logs", ".venv"]
 select = ["E4", "E7", "E9", "F", "B"]
 
 [tool.vulture]
-paths = ["src/mobo"]
+paths = ["src/mobo", "UI/mobo_ui"]
 exclude = [".venv", "data", "logs"]
 min_confidence = 100
 sort_by_size = true
 
 [tool.coverage.run]
-source = ["mobo"]
+source = ["mobo", "UI.mobo_ui"]
 omit = [
     "*/cli/*",
     "*/automation/deform_utils.py",

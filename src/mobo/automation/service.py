@@ -158,16 +158,21 @@ def create_sampling_task(
     param_ranges: Dict[str, tuple[float, float]],
     n_samples: int = 0,
     level_nums: Optional[List[int]] = None,
+    include_boundaries: bool = False,
 ) -> Dict[str, str]:
     """创建并执行抽样任务，结果落盘到 state.json。"""
     if n_samples == 0:
         return {}
     level_nums = level_nums or []
     try:
-        out_path = generate_sample_file(task_id, method, param_ranges, save_dir, n_samples, level_nums)
+        out_path = generate_sample_file(
+            task_id, method, param_ranges, save_dir, n_samples, level_nums,
+            include_boundaries,
+        )
         task_store.init_state(task_id, _KIND, {
             "sampling": {"method": method, "save_dir": save_dir,
-                         "n_samples": n_samples, "level_nums": level_nums},
+                         "n_samples": n_samples, "level_nums": level_nums,
+                         "include_boundaries": include_boundaries},
         })
         task_store.update(task_id, stage="sampling", status="finished",
                           data={"sample_file": out_path})

@@ -62,7 +62,8 @@ def _expanded_parameter_values(
 def generate_multi_operation_samples(task_id: str, operations: Sequence[Operation],
                                      save_dir: str, method: str = "lhs",
                                      n_samples: int = 0,
-                                     level_nums: Sequence[int] = ()) -> str:
+                                     level_nums: Sequence[int] = (),
+                                     include_boundaries: bool = False) -> str:
     """把各工步参数展平后联合采样，列顺序为工步顺序和参数声明顺序。"""
     ranges: Dict[str, tuple[float, float]] = {}
     for op_index, operation in enumerate(operations, 1):
@@ -76,7 +77,7 @@ def generate_multi_operation_samples(task_id: str, operations: Sequence[Operatio
     if not ranges:
         raise ValueError("至少需要声明一个多工步采样参数")
     if method == "lhs":
-        frame = generate_lhs(n_samples, ranges)
+        frame = generate_lhs(n_samples, ranges, include_boundaries)
         tag = "lhs"
     elif method == "full":
         if not level_nums:

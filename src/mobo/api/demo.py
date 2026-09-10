@@ -46,7 +46,7 @@ def main() -> None:
     # 1 创建 DOE 任务
     call("POST", "/api/v1/doe/add", json={
         "id": doe_id,
-        "name": "HTTP DOE 演示",
+        "name": f"HTTP DOE 演示 {doe_id}",
         "metadata": {
             "workpiece": "ring"
         },
@@ -89,19 +89,26 @@ def main() -> None:
         ("fields", "load"),
     ])["data"]["values"]
 
-    # 6 训练代理模型并评价
+    # 6 独立保存字段定义和训练数据 不启动训练
+    data_source = {
+        "input_data": {
+            "labels": input_names,
+            "samples": rows_by_fields(dataset, input_names),
+        },
+        "output_data": {
+            "labels": target_names,
+            "samples": rows_by_fields(dataset, target_names),
+        },
+    }
+    call("POST", "/api/v1/hust/doe/dataset/save", json={
+        "id": doe_id,
+        "data_source": data_source,
+    })
+
+    # 7 训练代理模型并评价
     call("POST", "/api/v1/hust/doe/train/startTrain", json={
         "id": doe_id,
-        "data_source": {
-            "input_data": {
-                "labels": input_names,
-                "samples": rows_by_fields(dataset, input_names),
-            },
-            "output_data": {
-                "labels": target_names,
-                "samples": rows_by_fields(dataset, target_names),
-            },
-        },
+        "data_source": data_source,
         "models": [{"name": "RF", "params": {"n_estimators": 300, "n_jobs": -1}}],
         "evaluation": {
             "enabled": True,
@@ -111,12 +118,16 @@ def main() -> None:
         },
     })
 
-    # 7 等待训练完成
+    # 8 等待训练完成
     training = wait_for_terminal("/api/v1/hust/doe/train/progress", doe_id)
     if training["data"]["status"] != "finished":
         raise RuntimeError(f"代理模型训练未完成 {training['data']}")
+    if training["data"].get("input_names") != input_names:
+        raise RuntimeError(f"训练输入字段异常 {training['data']}")
+    if training["data"].get("target_names") != target_names:
+        raise RuntimeError(f"训练目标字段异常 {training['data']}")
 
-    # 8 推理测试 只返回 grain
+    # 9 推理测试 只返回 grain
     inference = call("POST", "/api/v1/hust/doe/inference/startInference", json={
         "id": doe_id,
         "inputs": {
@@ -126,14 +137,14 @@ def main() -> None:
         "fields": ["grain"],
     })
 
-    # 9 通过统一 GET 接口获取最近一次推理的 load
+    # 10 通过统一 GET 接口获取最近一次推理的 load
     call("GET", "/api/v1/hust/doe/data/get", params=[
         ("id", doe_id),
         ("resource_id", inference["data"]["resource_id"]),
         ("fields", "load"),
     ])
 
-    # 10 优化任务
+    # 11 优化任务
     call("POST", "/api/v1/hust/doe/optimize/start", json={
         "id": doe_id,
         "mode": "multi",
@@ -158,16 +169,18 @@ def main() -> None:
         },
     })
 
-    # 11 等待优化完成
+    # 12 等待优化完成
     optimization = wait_for_terminal(
         "/api/v1/hust/doe/optimize/getById", doe_id
     )
 
-    # 12 检查优化结果
+    # 13 检查优化结果
     if optimization["data"]["status"] != "finished":
         raise RuntimeError(f"优化任务未完成 {optimization['data']}")
+    if not optimization["data"].get("history"):
+        raise RuntimeError("优化接口未返回运行历史")
 
-    # 13 按字段获取优化结果 文件本身无表头
+    # 14 按字段获取优化结果 文件本身无表头
     call("GET", "/api/v1/hust/doe/data/get", params=[
         ("id", doe_id),
         ("resource_id", optimization["data"]["result"]["resource_id"]),
