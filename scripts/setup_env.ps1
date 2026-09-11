@@ -91,7 +91,7 @@ Write-Host "测试命令：python -m pytest -m 'not slow'"
 Write-Host "API启动：mobo-api"
 Write-Host "完整演示：python -m mobo.api.demo"
 if ($WithGui) {
-    Write-Host "桌面界面：$Python $ProjectDir\UI\main.py"
+    Write-Host "桌面界面：$Python $ProjectDir\work_platform\main.py"
 } else {
     Write-Host "桌面界面依赖未安装；需要时重新运行：.\scripts\setup_env.ps1 -WithGui"
 }

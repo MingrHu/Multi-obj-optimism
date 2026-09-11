@@ -681,7 +681,7 @@ GET /api/v1/hust/doe/train/progress?id=doe_20260622_001
 
 **成功响应字段说明**：
 
-查询成功返回 HTTP 200：
+训练进行中查询成功返回 HTTP 200：
 
 ```json
 {
@@ -698,9 +698,80 @@ GET /api/v1/hust/doe/train/progress?id=doe_20260622_001
       {"name": "workpiece_temperature", "lower": 900.0, "upper": 1100.0},
       {"name": "die_temperature", "lower": 150.0, "upper": 250.0}
     ],
+    "dataset": {
+      "resource_id": "tos-a1b2c3d4e5f6",
+      "columns": ["workpiece_temperature", "die_temperature", "load", "grain_size", "roundness"],
+      "sample_count": 100,
+      "source_name": "training-data.txt"
+    },
     "models": [],
     "error": null,
     "updated_at": "2026-08-28T16:30:00+08:00"
+  }
+}
+```
+
+训练和交叉验证完成后，`models` 返回代理模型及各输出目标的评价结果：
+
+```json
+{
+  "code": 0,
+  "message": "ok",
+  "data": {
+    "id": "doe_20260622_001",
+    "status": "finished",
+    "stage": "finished",
+    "progress": 100,
+    "input_names": ["workpiece_temperature", "die_temperature"],
+    "target_names": ["load", "grain_size", "roundness"],
+    "input_bounds": [
+      {"name": "workpiece_temperature", "lower": 900.0, "upper": 1100.0},
+      {"name": "die_temperature", "lower": 150.0, "upper": 250.0}
+    ],
+    "dataset": {
+      "resource_id": "tos-a1b2c3d4e5f6",
+      "columns": ["workpiece_temperature", "die_temperature", "load", "grain_size", "roundness"],
+      "sample_count": 100,
+      "source_name": "training-data.txt"
+    },
+    "models": [
+      {
+        "model_id": "tr_doe_20260622_001_2_a1b2c3",
+        "model_index": 2,
+        "model_family": "RF",
+        "target_names": ["load", "grain_size", "roundness"],
+        "train_cost_sec": 0.52,
+        "score": 0.91,
+        "evaluation": [
+          {
+            "model_name": "RF",
+            "target_index": 0,
+            "target_name": "load",
+            "n_splits": 5,
+            "n_samples": 100,
+            "r2_mean": 0.956,
+            "r2_std": 0.018,
+            "nmae_mean": 0.042,
+            "nmae_std": 0.006,
+            "mae_mean": 1.25,
+            "mae_std": 0.13,
+            "rmse_mean": 1.62,
+            "rmse_std": 0.17,
+            "max_error_mean": 3.84,
+            "max_error_std": 0.41,
+            "train_time_mean_s": 0.11,
+            "train_time_min_s": 0.09,
+            "train_time_max_s": 0.14,
+            "predict_time_mean_s": 0.002,
+            "predict_time_min_s": 0.001,
+            "predict_time_max_s": 0.003,
+            "score": 0.93
+          }
+        ]
+      }
+    ],
+    "error": null,
+    "updated_at": "2026-08-28T16:35:00+08:00"
   }
 }
 ```
@@ -716,9 +787,47 @@ GET /api/v1/hust/doe/train/progress?id=doe_20260622_001
 | `data.input_names` | string array | 本次训练定义的输入参数名称；未提交训练时为空数组 |
 | `data.target_names` | string array | 本次训练定义的输出目标名称；未提交训练时为空数组 |
 | `data.input_bounds` | object array | 各输入参数在训练数据中的最小值和最大值；优化界面可据此恢复默认设计边界 |
+| `data.dataset` | object | 服务端保存的训练数据集摘要；未保存数据集时为空对象 |
+| `data.dataset.resource_id` | string | 训练数据集的不透明资源索引，可通过数据获取接口读取，端上不使用服务端路径 |
+| `data.dataset.columns` | string array | 训练数据集的无表头 TSV 列顺序 |
+| `data.dataset.sample_count` | integer | 训练数据集样本行数 |
+| `data.dataset.source_name` | string | 客户端提交的数据源名称或服务端生成的数据集名称 |
 | `data.models` | object array | 已完成训练或正在累计的模型记录 |
+| `data.models[].model_id` | string | 当前 DOE 下唯一的代理模型标识，可用于推理和优化接口 |
+| `data.models[].model_index` | integer | 后端代理模型类型编号 |
+| `data.models[].model_family` | string | 代理模型类型，例如 `PRG`、`SVR`、`RF`、`KM` 或 `DNN` |
+| `data.models[].target_names` | string array | 当前模型包含的输出目标及其顺序 |
+| `data.models[].train_cost_sec` | number | 生成可推理模型快照的训练耗时，单位为秒 |
+| `data.models[].score` | number or null | 当前模型所有输出目标评价分的平均值，评价完成前为 `null` |
+| `data.models[].evaluation` | object array | 各输出目标的 K 折交叉验证结果，评价完成前为空数组 |
+| `data.models[].evaluation[].model_name` | string | 本项评价对应的代理模型类型 |
+| `data.models[].evaluation[].target_index` | integer | 输出目标从0开始的索引 |
+| `data.models[].evaluation[].target_name` | string | 输出目标名称 |
+| `data.models[].evaluation[].n_splits` | integer | K 折交叉验证折数 |
+| `data.models[].evaluation[].n_samples` | integer | 参与交叉验证的数据集样本数 |
+| `data.models[].evaluation[].r2_mean` | number | 各折 R² 决定系数的平均值，通常越大越好 |
+| `data.models[].evaluation[].r2_std` | number | 各折 R² 决定系数的标准差 |
+| `data.models[].evaluation[].nmae_mean` | number | 各折归一化最大绝对误差的平均值，不是 MSE |
+| `data.models[].evaluation[].nmae_std` | number | 各折归一化最大绝对误差的标准差 |
+| `data.models[].evaluation[].mae_mean` | number | 各折平均绝对误差 MAE 的平均值，通常越小越好 |
+| `data.models[].evaluation[].mae_std` | number | 各折 MAE 的标准差 |
+| `data.models[].evaluation[].rmse_mean` | number | 各折均方根误差 RMSE 的平均值，通常越小越好 |
+| `data.models[].evaluation[].rmse_std` | number | 各折 RMSE 的标准差 |
+| `data.models[].evaluation[].max_error_mean` | number | 各折最大绝对误差的平均值 |
+| `data.models[].evaluation[].max_error_std` | number | 各折最大绝对误差的标准差 |
+| `data.models[].evaluation[].train_time_mean_s` | number | 各折训练耗时平均值，单位为秒 |
+| `data.models[].evaluation[].train_time_min_s` | number | 各折训练耗时最小值，单位为秒 |
+| `data.models[].evaluation[].train_time_max_s` | number | 各折训练耗时最大值，单位为秒 |
+| `data.models[].evaluation[].predict_time_mean_s` | number | 各折预测耗时平均值，单位为秒 |
+| `data.models[].evaluation[].predict_time_min_s` | number | 各折预测耗时最小值，单位为秒 |
+| `data.models[].evaluation[].predict_time_max_s` | number | 各折预测耗时最大值，单位为秒 |
+| `data.models[].evaluation[].score` | number or null | 单个输出目标的综合评价分，用于计算模型平均分 |
 | `data.error` | string or null | 训练失败提示，无错误时为 `null`，内部异常详情仅由服务端维护 |
 | `data.updated_at` | string | DOE 状态最后更新时间，带时区的 ISO 8601 格式 |
+
+当前后端使用 MSE 计算 RMSE，但没有独立返回 `mse_mean` 或 `mse_std`。端上如确实需要
+MSE，可根据 `rmse_mean` 平方得到近似展示值，但该结果不等于各折 MSE 的严格平均值；
+若协议需要准确的 MSE，应另行确认后再扩展后端返回字段。
 
 训练线程启动后发生错误时，本接口返回 HTTP 200，并通过 `status=failed` 和通用
 `error` 提示报告后台任务结果，不向端上暴露内部路径或异常细节。

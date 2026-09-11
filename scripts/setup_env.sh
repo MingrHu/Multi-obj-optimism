@@ -115,7 +115,7 @@ echo "   运行测试：pytest -m 'not slow'"
 echo "   API启动：mobo-api"
 echo "   完整演示：python -m mobo.api.demo"
 if [ "$WITH_GUI" -eq 1 ]; then
-    echo "   桌面界面：python $PROJECT_DIR/UI/main.py"
+    echo "   桌面界面：python $PROJECT_DIR/work_platform/main.py"
 else
     echo "   桌面界面依赖未安装；需要时重新运行：bash scripts/setup_env.sh --with-gui"
 fi

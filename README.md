@@ -13,7 +13,7 @@ Python 工具包，覆盖从数据生成到多目标寻优的完整链路：
   流水线（依赖 Windows 平台的 DEFORM）。
 - **DOE HTTP 服务**（`mobo.api`）：通过 Flask 暴露任务、采样、训练、推理和优化接口，
   并按 DOE ID 隔离运行状态与产物。
-- **Windows 桌面工作台**（根目录 `UI/`）：单/多工步批处理、代理模型评分对比、优化状态和
+- **Windows 桌面工作台**（根目录 `work_platform/`）：单/多工步批处理、代理模型评分对比、优化状态和
   Origin 风格表格/图表分析。
 - **命令行入口**（`mobo.cli`）：圆度提取、GA/RL 优化、代理模型评估。
 
@@ -29,6 +29,9 @@ Python 工具包，覆盖从数据生成到多目标寻优的完整链路：
 - DEFORM 自动化求解仅支持已安装 DEFORM 的 Windows
 
 ## 快速安装
+
+四个锁定依赖清单的职责和组合方式见
+[`requirements/README.md`](requirements/README.md)。
 
 Windows PowerShell（DEFORM 自动化推荐）：
 
@@ -253,7 +256,7 @@ value = spec.fn("data/keyfile/RINGROLL.KEY", samples=3000)
 ```
 Multi-obj-optimism/
 ├── src/mobo/          # src-layout 单包源码
-├── UI/                # PySide6 Windows 桌面工作台（表现层）
+├── work_platform/     # PySide6 Windows 桌面工作台（表现层）
 ├── tests/             # 单元测试与集成测试
 ├── docs/              # 架构、API、部署和 DEFORM 文档知识库
 ├── requirements/      # runtime/dev/gui/server 锁定依赖
@@ -375,6 +378,7 @@ Dependabot 每周检查 Python、GitHub Actions 和 Docker 依赖。SonarQube Cl
 - [interface_protocol.md](docs/api/interface_protocol.md)：Python 内部任务服务协议。
 - [ARCHITECTURE.md](docs/ARCHITECTURE.md)：分层、数据流、持久化和平台边界。
 - [DOCKER_DEPLOYMENT.md](docs/deployment/DOCKER_DEPLOYMENT.md)：容器构建、数据卷、发布与服务器部署。
+- [OPEN_SOURCE_DEPENDENCIES.md](docs/compliance/OPEN_SOURCE_DEPENDENCIES.md)：优化与代理模型模块开源依赖合规清单。
 - [DEFORM_KEY_KEYWORDS.md](docs/deform/DEFORM_KEY_KEYWORDS.md)：KEY 关键字与能力映射。
 - [DESKTOP_UI.md](docs/ui/DESKTOP_UI.md)：桌面界面信息架构、执行位置与交互约定。
 - [接口参数文档.md](docs/api/接口参数文档.md)：兼容历史文件名的文档索引。
@@ -392,9 +396,9 @@ Windows 环境完成安装后，可在仓库根目录启动桌面工作台：
 
 ```powershell
 .\scripts\setup_env.ps1 -WithGui
-.\.venv\Scripts\python.exe .\UI\main.py
+.\.venv\Scripts\python.exe .\work_platform\main.py
 ```
 
 现有虚拟环境失效时改用 `.\scripts\setup_env.ps1 -Recreate -WithGui`。
 
-完整的页面能力、后端连接方式和测试入口见 [`UI/README.md`](UI/README.md)。
+完整的页面能力、后端连接方式和测试入口见 [`work_platform/README.md`](work_platform/README.md)。

@@ -165,10 +165,10 @@
     "slow"
   ],
   "ui_modules": [
-    "UI/__init__.py",
-    "UI/main.py",
-    "UI/mobo_ui/__init__.py",
-    "UI/mobo_ui/app.py",
-    "UI/mobo_ui/core.py"
+    "work_platform/__init__.py",
+    "work_platform/main.py",
+    "work_platform/mobo_ui/__init__.py",
+    "work_platform/mobo_ui/app.py",
+    "work_platform/mobo_ui/core.py"
   ]
 }

@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from UI.mobo_ui import core
+from work_platform.mobo_ui import core
 
 
 class _Response:

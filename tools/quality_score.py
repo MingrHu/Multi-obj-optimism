@@ -13,7 +13,7 @@ from statistics import mean
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE_DIRS = (ROOT / "src" / "mobo", ROOT / "UI" / "mobo_ui")
+SOURCE_DIRS = (ROOT / "src" / "mobo", ROOT / "work_platform" / "mobo_ui")
 DEFAULT_REPORT_DIR = ROOT / "quality-reports"
 
 
@@ -56,7 +56,7 @@ def _coverage_metrics(path: Path) -> dict[str, Any]:
 
 def _ruff_metrics() -> dict[str, Any]:
     command = [
-        sys.executable, "-m", "ruff", "check", "src", "UI", "tests", "scripts", "tools",
+        sys.executable, "-m", "ruff", "check", "src", "work_platform", "tests", "scripts", "tools",
         "--output-format", "json",
     ]
     completed = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, check=False)
@@ -176,7 +176,7 @@ def _run_tests(report_dir: Path) -> None:
     report_dir.mkdir(parents=True, exist_ok=True)
     command = [
         sys.executable, "-m", "pytest", "-m", "not slow",
-        "--cov=mobo", "--cov=UI.mobo_ui",
+        "--cov=mobo", "--cov=work_platform.mobo_ui",
         f"--cov-report=json:{report_dir / 'coverage.json'}",
     ]
     subprocess.run(command, cwd=ROOT, check=True)

@@ -21,7 +21,7 @@ except ModuleNotFoundError as exc:
             "请在仓库根目录运行：\n"
             "  .\\scripts\\setup_env.ps1 -Recreate -WithGui\n"
             "然后重新执行：\n"
-            "  .\\.venv\\Scripts\\python.exe .\\UI\\main.py"
+            "  .\\.venv\\Scripts\\python.exe .\\work_platform\\main.py"
         ) from None
     raise
 

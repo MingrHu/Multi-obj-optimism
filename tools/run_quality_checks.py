@@ -48,20 +48,22 @@ def _tool_command(name: str) -> str:
 
 def _commands(report_dir: Path, min_score: float, with_security: bool) -> list[tuple[str, list[str]]]:
     coverage_file = report_dir / "coverage.json"
+    pytest_temp_dir = report_dir / "pytest-temp"
     commands = [
         (
             "tests",
             [
                 sys.executable, "-m", "pytest", "-m", "not slow",
-                "--cov=mobo", "--cov=UI.mobo_ui",
+                f"--basetemp={pytest_temp_dir}",
+                "--cov=mobo", "--cov=work_platform.mobo_ui",
                 f"--cov-report=json:{coverage_file}",
             ],
         ),
-        ("ruff", [_tool_command("ruff"), "check", "src", "UI", "tests", "scripts", "tools"]),
+        ("ruff", [_tool_command("ruff"), "check", "src", "work_platform", "tests", "scripts", "tools"]),
         (
             "complexity",
             [_tool_command("xenon"), "--max-absolute", "D", "--max-modules", "C",
-             "--max-average", "B", "src/mobo", "UI/mobo_ui"],
+             "--max-average", "B", "src/mobo", "work_platform/mobo_ui"],
         ),
         ("documentation", [sys.executable, "tools/check_docs.py"]),
         (

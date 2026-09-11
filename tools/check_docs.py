@@ -25,7 +25,7 @@ REQUIRED_DOCS = {
     "docs/deployment/BACKEND_STARTUP.md",
     "docs/deployment/DOCKER_DEPLOYMENT.md",
     "docs/ui/DESKTOP_UI.md",
-    "UI/README.md",
+    "work_platform/README.md",
 }
 LINK_PATTERN = re.compile(r"(?<!!)\[[^]]+\]\(([^)]+)\)")
 ENV_PATTERN = re.compile(r"\bMOBO_[A-Z0-9_]+\b")
@@ -83,7 +83,7 @@ def extract_modules(root: Path) -> list[str]:
 
 
 def extract_ui_modules(root: Path) -> list[str]:
-    ui_root = root / "UI"
+    ui_root = root / "work_platform"
     return sorted(
         path.relative_to(root).as_posix()
         for path in ui_root.rglob("*.py")
@@ -96,7 +96,7 @@ def extract_environment_variables(root: Path) -> list[str]:
     candidates = [
         *(root / "scripts").glob("setup_env.*"),
         *(root / "src" / "mobo").rglob("*.py"),
-        *(root / "UI").rglob("*.py"),
+        *(root / "work_platform").rglob("*.py"),
     ]
     for path in candidates:
         variables.update(ENV_PATTERN.findall(path.read_text(encoding="utf-8")))
@@ -125,7 +125,7 @@ def _document_paths(root: Path) -> list[Path]:
     return [
         *sorted(root.glob("*.md")),
         *sorted((root / "docs").rglob("*.md")),
-        *sorted((root / "UI").rglob("*.md")),
+        *sorted((root / "work_platform").rglob("*.md")),
         root / "tools" / "README.md",
     ]
 

@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from PySide6.QtCharts import (
+    QAbstractBarSeries,
     QBarCategoryAxis,
     QBarSeries,
     QBarSet,
@@ -22,6 +23,7 @@ from PySide6.QtCharts import (
 )
 from PySide6.QtCore import (
     QAbstractTableModel,
+    QEvent,
     QModelIndex,
     QObject,
     QRunnable,
@@ -32,7 +34,7 @@ from PySide6.QtCore import (
     Signal,
 )
 from PySide6.QtDataVisualization import Q3DScatter, QScatter3DSeries, QScatterDataItem, QValue3DAxis
-from PySide6.QtGui import QColor, QFont, QFontDatabase, QPainter, QPalette, QVector3D
+from PySide6.QtGui import QColor, QCursor, QFont, QFontDatabase, QPainter, QPalette, QVector3D
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -64,6 +66,7 @@ from PySide6.QtWidgets import (
     QTableView,
     QTabWidget,
     QToolButton,
+    QToolTip,
     QVBoxLayout,
     QWidget,
 )
@@ -106,6 +109,9 @@ QPushButton#Nav { border: 0; background: transparent; text-align: left; padding:
   color: #a9bad0; border-radius: 8px; }
 QPushButton#Nav:hover { background: #14243b; color: #f6fbff; }
 QPushButton#Nav:checked { background: #17364d; color: #71dbe2; border-left: 3px solid #5bd0d8; }
+QToolButton#NavGroup { border: 0; background: transparent; color: #edf5ff; padding: 9px 8px;
+  font-weight: 700; text-align: left; }
+QToolButton#NavGroup:hover { background: #14243b; color: #71dbe2; }
 QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QTextEdit, QTableWidget, QTableView { background: #0d1829; color: #deebf8;
   border: 1px solid #2c4059; border-radius: 6px; padding: 6px; selection-background-color: #256d82; }
 QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus, QTextEdit:focus { border-color: #43bdc8; }
@@ -407,12 +413,18 @@ def evenly_sample(values: list[Any], limit: int) -> list[Any]:
 class ZoomableChartView(QChartView):
     """A 2D chart view with wheel zoom and rectangle rubber-band zoom."""
 
+    double_clicked = Signal()
+
     def __init__(self):
         super().__init__()
         self.setRubberBand(QChartView.RubberBand.RectangleRubberBand)
 
     def wheelEvent(self, event) -> None:
         self.chart().zoom(1.2 if event.angleDelta().y() > 0 else 0.8)
+        event.accept()
+
+    def mouseDoubleClickEvent(self, event) -> None:
+        self.double_clicked.emit()
         event.accept()
 
 
@@ -1025,6 +1037,10 @@ class ModelPage(QWidget, AsyncMixin):
         self.dataset_request_key = ""
         self.loaded_dataset_key = ""
         self.dataset_source_name = ""
+        self.score_entries: list[tuple[str, float]] = []
+        self.selected_score_index: int | None = None
+        self.hovered_score_index: int | None = None
+        self.score_series: QBarSeries | None = None
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -1165,7 +1181,14 @@ class ModelPage(QWidget, AsyncMixin):
         self.score_chart = QChartView()
         self.score_chart.setRenderHint(QPainter.RenderHint.Antialiasing)
         self.score_chart.setMinimumHeight(280)
+        self.score_chart.setMouseTracking(True)
+        self.score_chart.viewport().setMouseTracking(True)
+        self.score_chart.viewport().installEventFilter(self)
         score_layout.addWidget(self.score_chart)
+        self.score_detail = QLabel("悬停或点击柱子可查看模型名称与完整分数")
+        self.score_detail.setObjectName("Caption")
+        self.score_detail.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        score_layout.addWidget(self.score_detail)
         tabs.addTab(score_widget, "模型评分对比")
         layout.addWidget(tabs, 1)
         scroll.setWidget(body)
@@ -1836,12 +1859,27 @@ class ModelPage(QWidget, AsyncMixin):
         series = QBarSeries()
         values = QBarSet("综合评分")
         values.setColor(QColor("#4dc9d3"))
+        values.setLabelColor(QColor("#f4f8ff"))
         categories = []
+        self.score_entries = []
+        self.selected_score_index = None
+        self.hovered_score_index = None
+        self.score_detail.setText("悬停或点击柱子可查看模型名称与完整分数")
         for model in models:
             if model.get("score") is not None:
-                categories.append(str(model.get("model_family", model.get("model_id", "model"))))
-                values.append(float(model["score"]))
+                name = str(model.get("model_family", model.get("model_id", "model")))
+                score = float(model["score"])
+                categories.append(name)
+                self.score_entries.append((name, score))
+                values.append(score)
         series.append(values)
+        self.score_series = series
+        series.setLabelsVisible(True)
+        series.setLabelsFormat("@value")
+        series.setLabelsPrecision(3)
+        series.setLabelsPosition(QAbstractBarSeries.LabelsPosition.LabelsInsideEnd)
+        values.clicked.connect(self._score_bar_clicked)
+        values.hovered.connect(self._score_bar_hovered)
         chart.addSeries(series)
         axis_x = QBarCategoryAxis()
         axis_x.append(categories or ["暂无评分"])
@@ -1855,6 +1893,62 @@ class ModelPage(QWidget, AsyncMixin):
         series.attachAxis(axis_y)
         chart.legend().setLabelColor(QColor("#a9bad0"))
         self.score_chart.setChart(chart)
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        if watched is self.score_chart.viewport():
+            if event.type() == QEvent.Type.MouseMove:
+                self._score_chart_mouse_moved(event.position())
+            elif event.type() == QEvent.Type.Leave:
+                self._score_bar_hovered(False, -1)
+        return super().eventFilter(watched, event)
+
+    def _score_chart_mouse_moved(self, position: Any) -> None:
+        chart = self.score_chart.chart()
+        series = self.score_series
+        if not self.score_entries or series is None or not chart.plotArea().contains(position):
+            if self.hovered_score_index is not None:
+                self._score_bar_hovered(False, -1)
+            return
+        value = chart.mapToValue(position, series)
+        index = int(value.x())
+        score = self.score_entries[index][1] if 0 <= index < len(self.score_entries) else 0.0
+        half_width = max(0.05, float(series.barWidth()) / 2.0)
+        inside_x = (
+            0 <= index < len(self.score_entries)
+            and abs(value.x() - (index + 0.5)) <= half_width
+        )
+        inside_y = min(0.0, score) <= value.y() <= max(0.0, score)
+        hovered_index = index if inside_x and inside_y else None
+        if hovered_index == self.hovered_score_index:
+            return
+        if hovered_index is None:
+            self._score_bar_hovered(False, -1)
+        else:
+            self._score_bar_hovered(True, hovered_index)
+
+    def _score_bar_hovered(self, hovered: bool, index: int) -> None:
+        if hovered and 0 <= index < len(self.score_entries):
+            self.hovered_score_index = index
+            name, score = self.score_entries[index]
+            message = f"{name}：{score:.6f}"
+            self.score_detail.setText(f"当前模型  {message}")
+            QToolTip.showText(QCursor.pos(), message, self.score_chart)
+        else:
+            self.hovered_score_index = None
+            QToolTip.hideText()
+            if self.selected_score_index is None:
+                self.score_detail.setText("悬停或点击柱子可查看模型名称与完整分数")
+            else:
+                name, score = self.score_entries[self.selected_score_index]
+                self.score_detail.setText(f"已选择  {name}：{score:.6f}")
+
+    def _score_bar_clicked(self, index: int) -> None:
+        if 0 <= index < len(self.score_entries):
+            name, score = self.score_entries[index]
+            self.selected_score_index = index
+            message = f"{name}：{score:.6f}"
+            self.score_detail.setText(f"已选择  {message}")
+            QToolTip.showText(QCursor.pos(), message, self.score_chart)
 
 
 class OptimizationPage(QWidget, AsyncMixin):
@@ -2283,6 +2377,16 @@ class OptimizationPage(QWidget, AsyncMixin):
             and self.schema_ready_for_optimization
             and self.configuration_valid
         )
+        if self.optimization_state in {"queued", "running"}:
+            self.start_button.setText("正在优化…")
+        elif self.optimization_state == "stopping":
+            self.start_button.setText("正在停止…")
+        elif self.optimization_state == "loading":
+            self.start_button.setText("正在加载…")
+        elif self.has_completed_optimization:
+            self.start_button.setText("重新优化")
+        else:
+            self.start_button.setText("启动优化")
         self.start_button.setEnabled(ready and not active)
         self.stop_button.setEnabled(self.optimization_state in {"queued", "running"})
 
@@ -2370,7 +2474,6 @@ class OptimizationPage(QWidget, AsyncMixin):
             "algorithm": {"name": self.algorithm.currentData(), "params": params},
         }
         self.start_button.setEnabled(False)
-        self.start_button.setText("优化中…")
         self.has_completed_optimization = False
         self.optimization_state = "queued"
         set_status(self.status_label, "queued")
@@ -2392,7 +2495,6 @@ class OptimizationPage(QWidget, AsyncMixin):
         if doe_id != self.current_doe_id() or revision != self.selection_revision:
             return
         self.optimization_state = "failed"
-        self.start_button.setText("启动优化")
         set_status(self.status_label, "failed")
         self._refresh_optimization_actions()
         self.show_error(message)
@@ -2429,7 +2531,6 @@ class OptimizationPage(QWidget, AsyncMixin):
         state = str(data.get("status", "not_started"))
         self.optimization_state = state
         self.has_completed_optimization = state == "finished" and bool(data.get("result"))
-        self.start_button.setText("重新优化" if self.has_completed_optimization else "启动优化")
         set_status(self.status_label, state)
         raw_updated_at = data.get("updated_at")
         self.stage_label.setText(f"阶段：{stage_text(data.get('stage'))}")
@@ -2453,6 +2554,14 @@ class ResultsPage(QWidget, AsyncMixin):
         self.headers: list[str] = []
         self.rows: list[list[Any]] = []
         self.tasks_refresh_in_flight = False
+        self.chart_windows: list[QDialog] = []
+        self.history_windows: list[QDialog] = []
+        self.history_headers = [
+            "运行版本", "状态", "模式", "算法", "解数量", "耗时(s)", "更新时间"
+        ]
+        self.history_rows: list[list[Any]] = []
+        self.history_run_ids: list[str] = []
+        self.selected_run_id = ""
         layout = QVBoxLayout(self)
         layout.setContentsMargins(28, 24, 28, 24)
         layout.setSpacing(16)
@@ -2471,53 +2580,35 @@ class ResultsPage(QWidget, AsyncMixin):
         self.result_task = QComboBox()
         self.result_task.setMinimumWidth(280)
         self.result_task.setPlaceholderText("刷新后选择已完成的优化任务")
-        self.result_task.currentIndexChanged.connect(
-            lambda index: self.load_task_button.setEnabled(index >= 0)
-        )
+        self.result_task.currentIndexChanged.connect(self._result_task_changed)
         self.refresh_tasks_button = QPushButton("刷新任务")
         self.refresh_tasks_button.clicked.connect(self.refresh_tasks)
         self.load_task_button = QPushButton("加载任务结果")
         self.load_task_button.setObjectName("Primary")
         self.load_task_button.clicked.connect(self.load_selected_task)
         self.load_task_button.setEnabled(False)
+        self.open_history_button = QPushButton("查看运行历史")
+        self.open_history_button.clicked.connect(self.open_history_window)
+        self.open_history_button.setEnabled(False)
         task_row.addWidget(QLabel("优化任务"))
         task_row.addWidget(self.result_task, 1)
         task_row.addWidget(self.refresh_tasks_button)
+        task_row.addWidget(self.open_history_button)
         task_row.addWidget(self.load_task_button)
         task_layout.addLayout(task_row)
         self.task_hint = QLabel("直接从后端优化目录读取资源，无需手动查找本地结果文件。")
         self.task_hint.setObjectName("Caption")
         self.task_hint.setWordWrap(True)
         task_layout.addWidget(self.task_hint)
-        history_row = QHBoxLayout()
-        self.result_run = QComboBox()
-        self.result_run.setPlaceholderText("加载任务后选择历史运行版本")
-        self.result_run.currentIndexChanged.connect(
-            lambda index: self.load_run_button.setEnabled(index >= 0)
-        )
-        self.load_run_button = QPushButton("加载选中版本")
-        self.load_run_button.clicked.connect(self.load_selected_run)
-        self.load_run_button.setEnabled(False)
-        history_row.addWidget(QLabel("运行版本"))
-        history_row.addWidget(self.result_run, 1)
-        history_row.addWidget(self.load_run_button)
-        task_layout.addLayout(history_row)
-        self.history_table = DataTable()
-        self.history_table.enable_wide_columns()
-        self.history_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.history_table.setMaximumHeight(155)
-        self.history_table.set_data(
-            ["运行版本", "状态", "模式", "算法", "解数量", "耗时(s)", "更新时间"], []
-        )
-        task_layout.addWidget(self.history_table)
+
         layout.addWidget(task_card)
 
         controls, controls_layout = card()
         type_row = QHBoxLayout()
         self.style = QComboBox()
+        self.style.addItem("二维散点图", "scatter")
         self.style.addItem("二维折线图", "line")
         self.style.addItem("二维柱状图", "bar")
-        self.style.addItem("二维散点图", "scatter")
         self.style.addItem("三维散点图", "scatter3d")
         self.style.currentIndexChanged.connect(self._chart_type_changed)
         self.chart_hint = QLabel("所有数值列均可作为坐标轴，不区分输入工艺参数与输出目标。")
@@ -2558,23 +2649,28 @@ class ResultsPage(QWidget, AsyncMixin):
         split.addWidget(table_card, 3)
         chart_card, chart_layout = card("可视化")
         zoom_row = QHBoxLayout()
-        zoom_hint = QLabel("滚轮或框选可缩放二维图；三维图支持滚轮缩放和拖动旋转。")
+        zoom_hint = QLabel("双击可单独查看；滚轮或框选可缩放二维图，三维图可拖动旋转。")
         zoom_hint.setObjectName("Caption")
         zoom_in = QPushButton("放大")
         zoom_out = QPushButton("缩小")
         zoom_reset = QPushButton("重置视图")
+        self.open_chart_button = QPushButton("单独查看图表")
+        self.open_chart_button.setObjectName("Primary")
         zoom_in.clicked.connect(lambda: self.zoom_chart(1.25))
         zoom_out.clicked.connect(lambda: self.zoom_chart(0.8))
         zoom_reset.clicked.connect(self.reset_chart_zoom)
+        self.open_chart_button.clicked.connect(self.open_chart_window)
         zoom_row.addWidget(zoom_hint, 1)
         zoom_row.addWidget(zoom_in)
         zoom_row.addWidget(zoom_out)
         zoom_row.addWidget(zoom_reset)
+        zoom_row.addWidget(self.open_chart_button)
         chart_layout.addLayout(zoom_row)
         self.chart_stack = QStackedWidget()
         self.chart = ZoomableChartView()
         self.chart.setRenderHint(QPainter.RenderHint.Antialiasing)
         self.chart.setMinimumWidth(450)
+        self.chart.double_clicked.connect(self.open_chart_window)
         self.chart_stack.addWidget(self.chart)
         self.scatter3d: Q3DScatter | None = None
         self.scatter3d_container: QWidget | None = None
@@ -2613,6 +2709,7 @@ class ResultsPage(QWidget, AsyncMixin):
             item for item in data.get("items", [])
             if item.get("has_optimization_result") or item.get("stage") == "optimization_finished"
         ]
+        self.result_task.blockSignals(True)
         self.result_task.clear()
         for item in completed:
             name = item.get("name") or item["id"]
@@ -2623,11 +2720,96 @@ class ResultsPage(QWidget, AsyncMixin):
                 self.result_task.setCurrentIndex(index)
         if not current:
             self.result_task.setCurrentIndex(-1)
-        self.load_task_button.setEnabled(self.result_task.currentIndex() >= 0)
+        self.result_task.blockSignals(False)
+        self._result_task_changed(self.result_task.currentIndex())
         self.task_hint.setText(
             f"已找到 {len(completed)} 个完成的优化任务，选择后可直接加载表格和图表。"
             if completed else "当前后端没有已完成且带结果资源的优化任务。"
         )
+
+    def _result_task_changed(self, index: int) -> None:
+        self.load_task_button.setEnabled(index >= 0)
+        if index >= 0:
+            self.load_selected_task()
+            return
+        self.history_rows = []
+        self.history_run_ids = []
+        self.selected_run_id = ""
+        self.open_history_button.setEnabled(False)
+
+    def open_history_window(self) -> None:
+        if not self.history_rows:
+            QMessageBox.information(self, "没有运行历史", "请先选择并加载一个优化任务。")
+            return
+        dialog = QDialog(self, Qt.WindowType.Window)
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        dialog.setWindowTitle("优化运行历史")
+        dialog.resize(1050, 600)
+        dialog_layout = QVBoxLayout(dialog)
+        dialog_layout.setContentsMargins(18, 18, 18, 18)
+        dialog_layout.setSpacing(12)
+        title = QLabel(f"{self.result_task.currentText()} · 运行历史")
+        title.setObjectName("Section")
+        hint = QLabel("双击表头分隔线可适配内容；拖动分隔线可调整列宽。")
+        hint.setObjectName("Caption")
+        dialog_layout.addWidget(title)
+        dialog_layout.addWidget(hint)
+        table = DataTable()
+        table.enable_wide_columns()
+        table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        table.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
+        table.set_data(self.history_headers, self.history_rows)
+        dialog_layout.addWidget(table, 1)
+        buttons = QDialogButtonBox()
+        load_button = buttons.addButton(
+            "加载选中版本", QDialogButtonBox.ButtonRole.ActionRole
+        )
+        close_button = buttons.addButton(QDialogButtonBox.StandardButton.Close)
+        load_button.setObjectName("Primary")
+        load_button.setEnabled(False)
+        table.itemSelectionChanged.connect(
+            lambda: self._history_selection_changed(table, load_button)
+        )
+        load_button.clicked.connect(
+            lambda: self._load_history_from_dialog(table.currentRow(), dialog)
+        )
+        table.cellDoubleClicked.connect(
+            lambda row, _column: self._load_history_from_dialog(row, dialog)
+        )
+        close_button.clicked.connect(dialog.close)
+        buttons.rejected.connect(dialog.close)
+        dialog_layout.addWidget(buttons)
+        if self.selected_run_id in self.history_run_ids:
+            table.selectRow(self.history_run_ids.index(self.selected_run_id))
+        self.history_windows.append(dialog)
+        dialog.destroyed.connect(
+            lambda _object=None, window=dialog: self._forget_history_window(window)
+        )
+        dialog.show()
+
+    def _history_selection_changed(
+        self, table: DataTable, load_button: QPushButton
+    ) -> None:
+        row = table.currentRow()
+        run_id = self.history_run_ids[row] if 0 <= row < len(self.history_run_ids) else ""
+        result = (self.run_records.get(run_id) or {}).get("result") or {}
+        load_button.setEnabled(self._result_is_readable(result))
+
+    def _load_history_from_dialog(self, row: int, dialog: QDialog) -> None:
+        if not 0 <= row < len(self.history_run_ids):
+            return
+        run_id = self.history_run_ids[row]
+        result = (self.run_records.get(run_id) or {}).get("result") or {}
+        if not self._result_is_readable(result):
+            QMessageBox.information(self, "版本不可用", "该运行版本没有可读取的完成结果。")
+            return
+        dialog.close()
+        self.load_selected_run(run_id)
+
+    def _forget_history_window(self, window: QDialog) -> None:
+        if window in self.history_windows:
+            self.history_windows.remove(window)
 
     def _task_failed(self, message: str) -> None:
         self.tasks_refresh_in_flight = False
@@ -2643,37 +2825,86 @@ class ResultsPage(QWidget, AsyncMixin):
             return
         self.load_task_button.setEnabled(False)
         self.load_task_button.setText("加载中…")
+        self.history_rows = []
+        self.history_run_ids = []
+        self.selected_run_id = ""
+        self.open_history_button.setEnabled(False)
         self.task_hint.setText(f"正在加载任务 {doe_id} 的优化结果…")
 
-        def action() -> tuple[str, dict[str, Any], list[str], list[list[Any]]]:
-            progress = self.client_provider().optimization_progress(doe_id)
-            result = progress.get("result") or {}
-            fields = list(result.get("columns") or [])
-            resource_id = result.get("resource_id")
-            if progress.get("status") != "finished" or not fields or not resource_id:
-                raise ValueError("该任务尚无可读取的完成结果")
-            loaded = self.client_provider().get_data(doe_id, str(resource_id), fields)
-            return doe_id, progress, fields, rows_by_fields(loaded.get("values", {}), fields)
-
         self.run_async(
-            action,
-            self._task_result_loaded,
+            lambda: (doe_id, self.client_provider().optimization_progress(doe_id)),
+            self._task_progress_loaded,
             lambda message: self._task_result_failed(message)
             if doe_id == str(self.result_task.currentData() or "").strip()
             else None,
         )
 
-    def _task_result_loaded(
-        self, result: tuple[str, dict[str, Any], list[str], list[list[Any]]]
-    ) -> None:
-        doe_id, progress, headers, rows = result
+    def _task_progress_loaded(self, loaded: tuple[str, dict[str, Any]]) -> None:
+        doe_id, progress = loaded
         if doe_id != str(self.result_task.currentData() or "").strip():
             return
-        self.set_data(headers, rows)
         self._populate_run_history(progress)
+        result = progress.get("result") or {}
+        run_id = str(progress.get("current_run_id") or "")
+        if self._result_is_readable(result) and not run_id:
+            resource_id = result.get("resource_id")
+            for run in reversed(progress.get("history") or []):
+                if (run.get("result") or {}).get("resource_id") == resource_id:
+                    run_id = str(run.get("run_id") or "")
+                    break
+            run_id = run_id or "legacy-current"
+        if progress.get("status") != "finished" or not self._result_is_readable(result):
+            result = {}
+            run_id = ""
+            for run in reversed(progress.get("history") or []):
+                candidate = run.get("result") or {}
+                if run.get("status") == "finished" and self._result_is_readable(candidate):
+                    result = candidate
+                    run_id = str(run.get("run_id") or "")
+                    break
+        if not result:
+            self.load_task_button.setEnabled(True)
+            self.load_task_button.setText("重新加载任务结果")
+            self.task_hint.setText("已加载运行历史，但当前没有可读取的已完成结果。")
+            return
+        self.selected_run_id = run_id
+        fields = list(result.get("columns") or [])
+        resource_id = str(result["resource_id"])
+        self.task_hint.setText(f"已加载运行历史，正在读取版本 {run_id} 的结果数据…")
+        self.run_async(
+            lambda: self.client_provider().get_data(doe_id, resource_id, fields),
+            lambda data: self._task_result_loaded(
+                doe_id,
+                run_id,
+                fields,
+                rows_by_fields(data.get("values", {}), fields),
+            ),
+            lambda message: self._task_result_failed(message)
+            if (
+                doe_id == str(self.result_task.currentData() or "").strip()
+                and run_id == self.selected_run_id
+            )
+            else None,
+        )
+
+    @staticmethod
+    def _result_is_readable(result: dict[str, Any]) -> bool:
+        return bool(result.get("columns") and result.get("resource_id"))
+
+    def _task_result_loaded(
+        self, doe_id: str, run_id: str, headers: list[str], rows: list[list[Any]]
+    ) -> None:
+        if (
+            doe_id != str(self.result_task.currentData() or "").strip()
+            or run_id != self.selected_run_id
+        ):
+            return
+        self.set_data(headers, rows)
         self.load_task_button.setEnabled(True)
         self.load_task_button.setText("重新加载任务结果")
-        self.task_hint.setText(f"已加载任务 {doe_id}：{len(rows)} 行 × {len(headers)} 列。")
+        self.task_hint.setText(
+            f"已加载任务 {doe_id} 的版本 {run_id}：{len(rows)} 行 × {len(headers)} 列。"
+        )
 
     def _populate_run_history(self, progress: dict[str, Any]) -> None:
         history = list(progress.get("history") or [])
@@ -2689,10 +2920,11 @@ class ResultsPage(QWidget, AsyncMixin):
         self.run_records = {
             str(run.get("run_id")): run for run in history if run.get("run_id")
         }
-        self.result_run.clear()
         summary_rows = []
+        run_ids = []
         for run in reversed(history):
             run_id = str(run.get("run_id", "—"))
+            run_ids.append(run_id)
             request = run.get("request") or {}
             result = run.get("result") or {}
             info = result.get("task_info") or {}
@@ -2706,19 +2938,11 @@ class ResultsPage(QWidget, AsyncMixin):
                 info.get("run_time_sec", "—"),
                 format_timestamp(run.get("updated_at")),
             ])
-            if run.get("status") == "finished" and result.get("resource_id"):
-                self.result_run.addItem(
-                    f"{run_id}  ·  {format_timestamp(run.get('updated_at'))}", run_id
-                )
-        self.history_table.set_data(
-            ["运行版本", "状态", "模式", "算法", "解数量", "耗时(s)", "更新时间"],
-            summary_rows,
-        )
-        self.result_run.setCurrentIndex(-1)
-        self.load_run_button.setEnabled(False)
+        self.history_rows = summary_rows
+        self.history_run_ids = run_ids
+        self.open_history_button.setEnabled(bool(summary_rows))
 
-    def load_selected_run(self) -> None:
-        run_id = str(self.result_run.currentData() or "")
+    def load_selected_run(self, run_id: str) -> None:
         run = self.run_records.get(run_id) or {}
         result = run.get("result") or {}
         doe_id = str(self.result_task.currentData() or "")
@@ -2727,7 +2951,7 @@ class ResultsPage(QWidget, AsyncMixin):
         if not doe_id or not fields or not resource_id or self.client_provider is None:
             QMessageBox.information(self, "版本不可用", "所选运行版本没有可读取的结果资源。")
             return
-        self.load_run_button.setEnabled(False)
+        self.selected_run_id = run_id
         self.run_async(
             lambda: self.client_provider().get_data(doe_id, str(resource_id), fields),
             lambda loaded: self._history_result_loaded(
@@ -2736,7 +2960,7 @@ class ResultsPage(QWidget, AsyncMixin):
             lambda message: self._task_result_failed(message)
             if (
                 doe_id == str(self.result_task.currentData() or "").strip()
-                and run_id == str(self.result_run.currentData() or "")
+                and run_id == self.selected_run_id
             )
             else None,
         )
@@ -2746,11 +2970,10 @@ class ResultsPage(QWidget, AsyncMixin):
     ) -> None:
         if (
             doe_id != str(self.result_task.currentData() or "").strip()
-            or run_id != str(self.result_run.currentData() or "")
+            or run_id != self.selected_run_id
         ):
             return
         self.set_data(fields, rows)
-        self.load_run_button.setEnabled(True)
         self.task_hint.setText(f"已加载历史运行 {run_id}：{len(rows)} 行 × {len(fields)} 列。")
 
     def _task_result_failed(self, message: str) -> None:
@@ -2870,10 +3093,19 @@ class ResultsPage(QWidget, AsyncMixin):
         if self.style.currentData() == "scatter3d":
             self._update_3d_chart()
             return
-        xs, ys, total = self._numeric_points()
-        if not ys:
+        built = self._build_2d_chart()
+        if built is None:
             self._empty_chart("所选字段没有可绘制的数值")
             return
+        chart, total, shown, warning = built
+        self._set_plot_status(total, shown, warning)
+        self.chart.setChart(chart)
+        self.chart_stack.setCurrentIndex(0)
+
+    def _build_2d_chart(self) -> tuple[QChart, int, int, str] | None:
+        xs, ys, total = self._numeric_points()
+        if not ys:
+            return None
         chart = self._base_chart(f"{self.y_field.currentText()} / {self.x_field.currentText()}")
         style = self.style.currentData()
         if style == "bar":
@@ -2885,10 +3117,18 @@ class ResultsPage(QWidget, AsyncMixin):
             series.append(values)
             chart.addSeries(series)
             axis_x = QBarCategoryAxis()
-            axis_x.append([f"{value:g}" for value in xs[:80]])
+            axis_x.append([f"{value:.6g}" for value in xs[:80]])
+            axis_x.setTitleText(self.x_field.currentText())
+            axis_x.setLabelsAngle(-45)
             chart.addAxis(axis_x, Qt.AlignmentFlag.AlignBottom)
             series.attachAxis(axis_x)
             axis_y = QValueAxis()
+            axis_y.setTitleText(self.y_field.currentText())
+            axis_y.setLabelFormat("%.6g")
+            axis_y.setTickCount(6)
+            axis_y.setRange(
+                *self._padded_axis_range(ys[:shown], include_zero=True)
+            )
             chart.addAxis(axis_y, Qt.AlignmentFlag.AlignLeft)
             series.attachAxis(axis_y)
         else:
@@ -2899,18 +3139,124 @@ class ResultsPage(QWidget, AsyncMixin):
             if isinstance(series, QScatterSeries):
                 series.setMarkerSize(8)
                 series.setBorderColor(QColor("#b8f5f7"))
-            for x, y in zip(xs, ys, strict=True):
+            points = list(zip(xs, ys, strict=True))
+            if isinstance(series, QLineSeries):
+                points.sort(key=lambda point: point[0])
+            for x, y in points:
                 series.append(x, y)
             chart.addSeries(series)
-            chart.createDefaultAxes()
+            axis_x = QValueAxis()
+            axis_x.setTitleText(self.x_field.currentText())
+            axis_x.setLabelFormat("%.6g")
+            axis_x.setTickCount(6)
+            axis_x.setRange(*self._padded_axis_range(xs))
+            chart.addAxis(axis_x, Qt.AlignmentFlag.AlignBottom)
+            series.attachAxis(axis_x)
+            axis_y = QValueAxis()
+            axis_y.setTitleText(self.y_field.currentText())
+            axis_y.setLabelFormat("%.6g")
+            axis_y.setTickCount(6)
+            axis_y.setRange(*self._padded_axis_range(ys))
+            chart.addAxis(axis_y, Qt.AlignmentFlag.AlignLeft)
+            series.attachAxis(axis_y)
         for axis in chart.axes():
             axis.setLabelsColor(QColor("#9fb1c7"))
             axis.setTitleBrush(QColor("#9fb1c7"))
             axis.setGridLineColor(QColor("#23364e"))
         chart.legend().setLabelColor(QColor("#a9bad0"))
-        self._set_plot_status(total, shown)
-        self.chart.setChart(chart)
-        self.chart_stack.setCurrentIndex(0)
+        if style == "scatter":
+            chart.legend().hide()
+        warning = ""
+        x_span = max(xs) - min(xs)
+        x_scale = max(abs(min(xs)), abs(max(xs)), 1.0)
+        if x_span / x_scale < 1e-5:
+            warning = "X 轴数据变化很小；折线可能接近竖直，建议使用散点图或更换 X 轴字段。"
+        return chart, total, shown, warning
+
+    @staticmethod
+    def _padded_axis_range(
+        values: list[float], *, include_zero: bool = False
+    ) -> tuple[float, float]:
+        low, high = min(values), max(values)
+        if include_zero:
+            low, high = min(0.0, low), max(0.0, high)
+        span = high - low
+        if span == 0:
+            padding = max(abs(low) * 0.01, 1.0)
+        else:
+            padding = max(span * 0.08, max(abs(low), abs(high), 1.0) * 1e-9)
+        return low - padding, high + padding
+
+    def open_chart_window(self) -> None:
+        if not self.headers or not self.rows:
+            QMessageBox.information(self, "没有图表", "请先加载优化结果数据。")
+            return
+        dialog = QDialog(self, Qt.WindowType.Window)
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        dialog.setWindowTitle("优化结果图表")
+        dialog.resize(1180, 760)
+        dialog_layout = QVBoxLayout(dialog)
+        dialog_layout.setContentsMargins(16, 16, 16, 16)
+        dialog_layout.setSpacing(10)
+        title = QLabel(
+            f"{self.style.currentText()} · {self.y_field.currentText()} / "
+            f"{self.x_field.currentText()}"
+        )
+        title.setObjectName("CardTitle")
+        dialog_layout.addWidget(title)
+
+        if self.style.currentData() == "scatter3d":
+            points, total = self._numeric_points_3d()
+            if not points:
+                dialog.deleteLater()
+                QMessageBox.information(
+                    self, "无法绘图", "所选 X、Y、Z 字段没有共同的数值数据。"
+                )
+                return
+            scatter3d = Q3DScatter()
+            scatter3d.setOrthoProjection(False)
+            self._populate_3d_chart(scatter3d, points)
+            container = QWidget.createWindowContainer(scatter3d, dialog)
+            container.setMinimumSize(800, 520)
+            dialog_layout.addWidget(container, 1)
+            detail = QLabel(f"显示 {len(points)} / {total} 个有效数据点；拖动旋转，滚轮缩放。")
+        else:
+            built = self._build_2d_chart()
+            if built is None:
+                dialog.deleteLater()
+                QMessageBox.information(self, "无法绘图", "所选字段没有可绘制的数值。")
+                return
+            chart, total, shown, warning = built
+            view = ZoomableChartView()
+            view.setRenderHint(QPainter.RenderHint.Antialiasing)
+            view.setChart(chart)
+            dialog_layout.addWidget(view, 1)
+            toolbar = QHBoxLayout()
+            toolbar.addStretch(1)
+            zoom_in = QPushButton("放大")
+            zoom_out = QPushButton("缩小")
+            zoom_reset = QPushButton("重置视图")
+            zoom_in.clicked.connect(lambda: view.chart().zoom(1.25))
+            zoom_out.clicked.connect(lambda: view.chart().zoom(0.8))
+            zoom_reset.clicked.connect(view.chart().zoomReset)
+            toolbar.addWidget(zoom_in)
+            toolbar.addWidget(zoom_out)
+            toolbar.addWidget(zoom_reset)
+            dialog_layout.addLayout(toolbar)
+            detail_text = f"显示 {shown} / {total} 个有效数据点；滚轮或框选可缩放。"
+            detail = QLabel(f"{detail_text} {warning}".strip())
+        detail.setObjectName("Caption")
+        detail.setWordWrap(True)
+        dialog_layout.addWidget(detail)
+        self.chart_windows.append(dialog)
+        dialog.destroyed.connect(
+            lambda _object=None, window=dialog: self._forget_chart_window(window)
+        )
+        dialog.show()
+
+    def _forget_chart_window(self, window: QDialog) -> None:
+        if window in self.chart_windows:
+            self.chart_windows.remove(window)
 
     def _update_3d_chart(self) -> None:
         points, total = self._numeric_points_3d()
@@ -2918,6 +3264,13 @@ class ResultsPage(QWidget, AsyncMixin):
             QMessageBox.information(self, "无法绘图", "所选 X、Y、Z 字段没有共同的数值数据。")
             return
         scatter3d = self._ensure_3d_chart()
+        self._populate_3d_chart(scatter3d, points)
+        self._set_plot_status(total, len(points))
+        self.chart_stack.setCurrentWidget(self.scatter3d_container)
+
+    def _populate_3d_chart(
+        self, scatter3d: Q3DScatter, points: list[tuple[float, float, float]]
+    ) -> None:
         for existing in list(scatter3d.seriesList()):
             scatter3d.removeSeries(existing)
         axes = []
@@ -2945,16 +3298,15 @@ class ResultsPage(QWidget, AsyncMixin):
             QScatterDataItem(QVector3D(x, y, z)) for x, y, z in points
         ])
         scatter3d.addSeries(series)
-        self._set_plot_status(total, len(points))
-        self.chart_stack.setCurrentWidget(self.scatter3d_container)
 
-    def _set_plot_status(self, total: int, shown: int) -> None:
+    def _set_plot_status(self, total: int, shown: int, warning: str = "") -> None:
         if shown < total:
-            self.plot_status.setText(
+            text = (
                 f"共有 {total} 个有效数据点；为保持交互流畅，当前均匀抽样显示 {shown} 个。"
             )
         else:
-            self.plot_status.setText(f"当前显示全部 {shown} 个有效数据点。")
+            text = f"当前显示全部 {shown} 个有效数据点。"
+        self.plot_status.setText(f"{text} {warning}".strip())
 
     def _ensure_3d_chart(self) -> Q3DScatter:
         if self.scatter3d is None:
@@ -3064,27 +3416,63 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(frame)
         layout.setContentsMargins(12, 18, 12, 18)
         layout.setSpacing(5)
-        entries = [
-            ("01", "工作台"),
-            ("02", "单工步计算"),
-            ("03", "多工步批处理"),
-            ("04", "代理模型"),
-            ("05", "优化中心"),
-            ("06", "结果分析"),
+        groups = [
+            ("工作台", [
+                (0, "工作台概览"),
+                (1, "单工步计算"),
+                (2, "多工步批处理"),
+            ]),
+            ("优化模块", [
+                (3, "代理模型"),
+                (4, "优化中心"),
+                (5, "结果分析"),
+            ]),
         ]
-        self.nav_buttons: list[QPushButton] = []
-        for index, (icon, name) in enumerate(entries):
-            button = QPushButton(f"{icon}   {name}")
-            button.setObjectName("Nav")
-            button.setCheckable(True)
-            button.clicked.connect(partial(self.navigate, index))
-            layout.addWidget(button)
-            self.nav_buttons.append(button)
+        self.nav_buttons = []
+        self.nav_group_buttons: list[QToolButton] = []
+        self.nav_group_contents: list[QWidget] = []
+        for group_index, (group_name, entries) in enumerate(groups):
+            if group_index:
+                layout.addSpacing(8)
+            group_button = QToolButton()
+            group_button.setObjectName("NavGroup")
+            group_button.setText(group_name)
+            group_button.setCheckable(True)
+            group_button.setChecked(True)
+            group_button.setArrowType(Qt.ArrowType.DownArrow)
+            group_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+            group_content = QWidget()
+            group_layout = QVBoxLayout(group_content)
+            group_layout.setContentsMargins(8, 0, 0, 0)
+            group_layout.setSpacing(4)
+            for page_index, name in entries:
+                button = QPushButton(name)
+                button.setObjectName("Nav")
+                button.setCheckable(True)
+                button.clicked.connect(partial(self.navigate, page_index))
+                group_layout.addWidget(button)
+                self.nav_buttons.append(button)
+            group_button.toggled.connect(
+                partial(self._toggle_nav_group, group_button, group_content)
+            )
+            layout.addWidget(group_button)
+            layout.addWidget(group_content)
+            self.nav_group_buttons.append(group_button)
+            self.nav_group_contents.append(group_content)
         layout.addStretch()
         version = QLabel("MOBO Desktop\n后端协议 v1")
         version.setObjectName("Caption")
         layout.addWidget(version)
         return frame
+
+    @staticmethod
+    def _toggle_nav_group(
+        button: QToolButton, content: QWidget, expanded: bool
+    ) -> None:
+        content.setVisible(expanded)
+        button.setArrowType(
+            Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow
+        )
 
     def api_client(self) -> ApiClient:
         return ApiClient(self.api_url.text().strip() or "http://127.0.0.1:5000")

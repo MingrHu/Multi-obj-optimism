@@ -8,7 +8,7 @@ import pytest
 
 def test_pyside_application_module_imports_when_gui_extra_is_installed():
     pytest.importorskip("PySide6")
-    module = importlib.import_module("UI.mobo_ui.app")
+    module = importlib.import_module("work_platform.mobo_ui.app")
     assert callable(module.main)
 
 
@@ -17,7 +17,7 @@ def test_path_picker_keeps_a_readable_browse_button(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtWidgets import QApplication
 
-    module = importlib.import_module("UI.mobo_ui.app")
+    module = importlib.import_module("work_platform.mobo_ui.app")
     app = QApplication.instance() or QApplication([])
     picker = module.PathPicker("训练数据")
     directory_picker = module.PathPicker("工作区", directory=True)
@@ -28,13 +28,49 @@ def test_path_picker_keeps_a_readable_browse_button(monkeypatch):
     app.processEvents()
 
 
+def test_sidebar_groups_pages_without_numeric_prefixes_and_collapses(monkeypatch):
+    pytest.importorskip("PySide6")
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QApplication
+
+    module = importlib.import_module("work_platform.mobo_ui.app")
+    app = QApplication.instance() or QApplication([])
+    window = module.MainWindow()
+
+    assert [button.text() for button in window.nav_group_buttons] == [
+        "工作台", "优化模块"
+    ]
+    assert [button.text() for button in window.nav_buttons] == [
+        "工作台概览",
+        "单工步计算",
+        "多工步批处理",
+        "代理模型",
+        "优化中心",
+        "结果分析",
+    ]
+    assert all(button.isChecked() for button in window.nav_group_buttons)
+    assert all(not content.isHidden() for content in window.nav_group_contents)
+
+    window.nav_group_buttons[0].click()
+    assert window.nav_group_contents[0].isHidden()
+    assert window.nav_group_buttons[0].arrowType() == Qt.ArrowType.RightArrow
+    window.nav_group_buttons[0].click()
+    assert not window.nav_group_contents[0].isHidden()
+    assert window.nav_group_buttons[0].arrowType() == Qt.ArrowType.DownArrow
+    window.nav_buttons[1].click()
+    assert window.stack.currentIndex() == 1
+    window.close()
+    app.processEvents()
+
+
 def test_connection_check_is_signal_driven_and_bounded(monkeypatch):
     pytest.importorskip("PySide6")
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtTest import QSignalSpy, QTest
     from PySide6.QtWidgets import QApplication
 
-    module = importlib.import_module("UI.mobo_ui.app")
+    module = importlib.import_module("work_platform.mobo_ui.app")
     app = QApplication.instance() or QApplication([])
     window = module.MainWindow()
     window.api_url.setText("http://127.0.0.1:1")
@@ -58,7 +94,7 @@ def test_results_page_maps_any_columns_to_2d_or_3d_axes(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtWidgets import QApplication
 
-    module = importlib.import_module("UI.mobo_ui.app")
+    module = importlib.import_module("work_platform.mobo_ui.app")
     app = QApplication.instance() or QApplication([])
     page = module.ResultsPage()
     headers = [f"process_{index}" for index in range(11)] + ["load", "grain", "roundness"]
@@ -83,7 +119,7 @@ def test_results_page_keeps_nan_column_in_table_but_not_axis_picker(monkeypatch)
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtWidgets import QApplication
 
-    module = importlib.import_module("UI.mobo_ui.app")
+    module = importlib.import_module("work_platform.mobo_ui.app")
     app = QApplication.instance() or QApplication([])
     page = module.ResultsPage()
     page.set_data(["load", "grain", "empty_target"], [[100, 20, float("nan")]])
@@ -100,7 +136,7 @@ def test_model_schema_uses_explicit_column_roles_and_populates_optimization(monk
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtWidgets import QApplication
 
-    module = importlib.import_module("UI.mobo_ui.app")
+    module = importlib.import_module("work_platform.mobo_ui.app")
     app = QApplication.instance() or QApplication([])
     pool = module.QThreadPool.globalInstance()
     model_page = module.ModelPage(pool, lambda: None)
@@ -126,7 +162,7 @@ def test_field_editor_returns_renamed_fields_and_roles(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtWidgets import QApplication, QTableWidgetItem
 
-    module = importlib.import_module("UI.mobo_ui.app")
+    module = importlib.import_module("work_platform.mobo_ui.app")
     app = QApplication.instance() or QApplication([])
     dialog = module.FieldEditorDialog(
         ["字段 1", "字段 2", "字段 3"], ["input", "input", "output"]
@@ -145,7 +181,7 @@ def test_completed_training_and_optimization_switch_to_restart_actions(monkeypat
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtWidgets import QApplication
 
-    module = importlib.import_module("UI.mobo_ui.app")
+    module = importlib.import_module("work_platform.mobo_ui.app")
     app = QApplication.instance() or QApplication([])
     pool = module.QThreadPool.globalInstance()
     model_page = module.ModelPage(pool, lambda: None)
@@ -178,7 +214,7 @@ def test_doe_lists_wait_for_manual_selection_and_optimization_does_not_navigate(
     from PySide6.QtTest import QSignalSpy
     from PySide6.QtWidgets import QApplication
 
-    module = importlib.import_module("UI.mobo_ui.app")
+    module = importlib.import_module("work_platform.mobo_ui.app")
     app = QApplication.instance() or QApplication([])
     pool = module.QThreadPool.globalInstance()
     items = {"items": [{"id": "done-1", "name": "已完成任务"}]}
@@ -208,7 +244,7 @@ def test_optimization_selection_loads_persisted_training_schema(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtWidgets import QApplication
 
-    module = importlib.import_module("UI.mobo_ui.app")
+    module = importlib.import_module("work_platform.mobo_ui.app")
     app = QApplication.instance() or QApplication([])
 
     class FakeClient:
@@ -245,7 +281,7 @@ def test_model_page_saves_field_definition_without_starting_training(monkeypatch
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtWidgets import QApplication
 
-    module = importlib.import_module("UI.mobo_ui.app")
+    module = importlib.import_module("work_platform.mobo_ui.app")
     app = QApplication.instance() or QApplication([])
     captured = {}
 
@@ -288,7 +324,7 @@ def test_model_page_uploads_selected_file_to_current_doe(monkeypatch, tmp_path):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtWidgets import QApplication
 
-    module = importlib.import_module("UI.mobo_ui.app")
+    module = importlib.import_module("work_platform.mobo_ui.app")
     app = QApplication.instance() or QApplication([])
     captured = {}
 
@@ -327,7 +363,7 @@ def test_model_page_resubmits_latest_file_after_duplicate_change(monkeypatch, tm
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtWidgets import QApplication
 
-    module = importlib.import_module("UI.mobo_ui.app")
+    module = importlib.import_module("work_platform.mobo_ui.app")
     app = QApplication.instance() or QApplication([])
     requests = []
     queued = []
@@ -375,7 +411,7 @@ def test_new_doe_refreshes_and_selects_the_created_task(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtWidgets import QApplication
 
-    module = importlib.import_module("UI.mobo_ui.app")
+    module = importlib.import_module("work_platform.mobo_ui.app")
     app = QApplication.instance() or QApplication([])
 
     class FakeClient:
@@ -401,7 +437,7 @@ def test_saved_doe_restores_dataset_preview_and_field_roles(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtWidgets import QApplication
 
-    module = importlib.import_module("UI.mobo_ui.app")
+    module = importlib.import_module("work_platform.mobo_ui.app")
     app = QApplication.instance() or QApplication([])
 
     class FakeClient:
@@ -449,7 +485,7 @@ def test_repeated_doe_refresh_and_status_requests_are_coalesced(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtWidgets import QApplication
 
-    module = importlib.import_module("UI.mobo_ui.app")
+    module = importlib.import_module("work_platform.mobo_ui.app")
     app = QApplication.instance() or QApplication([])
     queued = []
     page = module.ModelPage(module.QThreadPool.globalInstance(), lambda: None)
@@ -509,7 +545,7 @@ def test_async_mixin_keeps_worker_until_gui_callback(monkeypatch):
     from PySide6.QtCore import QEventLoop, QTimer
     from PySide6.QtWidgets import QApplication
 
-    module = importlib.import_module("UI.mobo_ui.app")
+    module = importlib.import_module("work_platform.mobo_ui.app")
     app = QApplication.instance() or QApplication([])
     page = module.ModelPage(module.QThreadPool.globalInstance(), lambda: None)
     completed = []
@@ -530,7 +566,7 @@ def test_lhs_ui_can_generate_exact_count_without_boundaries(monkeypatch, tmp_pat
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtWidgets import QApplication, QMessageBox
 
-    module = importlib.import_module("UI.mobo_ui.app")
+    module = importlib.import_module("work_platform.mobo_ui.app")
     app = QApplication.instance() or QApplication([])
     captured = {}
 
@@ -565,7 +601,7 @@ def test_model_page_status_and_dataset_requests_have_timeouts(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtWidgets import QApplication
 
-    module = importlib.import_module("UI.mobo_ui.app")
+    module = importlib.import_module("work_platform.mobo_ui.app")
     app = QApplication.instance() or QApplication([])
     page = module.ModelPage(module.QThreadPool.globalInstance(), lambda: None)
     page.doe_id.addItem("任务 A", "doe-a")
@@ -588,12 +624,51 @@ def test_model_page_status_and_dataset_requests_have_timeouts(monkeypatch):
     app.processEvents()
 
 
+def test_model_score_chart_shows_values_and_full_score_tooltip(monkeypatch):
+    pytest.importorskip("PySide6")
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtCore import QPointF
+    from PySide6.QtWidgets import QApplication
+
+    module = importlib.import_module("work_platform.mobo_ui.app")
+    app = QApplication.instance() or QApplication([])
+    page = module.ModelPage(module.QThreadPool.globalInstance(), lambda: None)
+    page.update_score_chart([
+        {"model_family": "PRG", "score": 0.860123},
+        {"model_family": "SVR", "score": 0.842567},
+    ])
+
+    series = page.score_chart.chart().series()[0]
+    values = series.barSets()[0]
+    assert series.isLabelsVisible()
+    assert series.labelsPrecision() == 3
+    assert series.labelsPosition() == module.QAbstractBarSeries.LabelsPosition.LabelsInsideEnd
+    values.hovered.emit(True, 0)
+    assert page.score_detail.text() == "当前模型  PRG：0.860123"
+    values.hovered.emit(False, 0)
+    assert "悬停或点击" in page.score_detail.text()
+    page.resize(1100, 760)
+    page.show()
+    app.processEvents()
+    hover_position = page.score_chart.chart().mapToPosition(
+        QPointF(0.5, 0.4), series
+    )
+    page._score_chart_mouse_moved(hover_position)
+    app.processEvents()
+    assert page.score_detail.text() == "当前模型  PRG：0.860123"
+    values.clicked.emit(1)
+    assert page.score_detail.text() == "已选择  SVR：0.842567"
+    values.hovered.emit(False, 1)
+    assert page.score_detail.text() == "已选择  SVR：0.842567"
+    app.processEvents()
+
+
 def test_optimization_tables_use_structured_editors_and_live_validation(monkeypatch):
     pytest.importorskip("PySide6")
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtWidgets import QApplication
 
-    module = importlib.import_module("UI.mobo_ui.app")
+    module = importlib.import_module("work_platform.mobo_ui.app")
     app = QApplication.instance() or QApplication([])
     page = module.OptimizationPage(module.QThreadPool.globalInstance(), lambda: None)
     page.set_schema({
@@ -619,7 +694,7 @@ def test_wide_tables_are_scrollable_resizable_and_rows_can_be_deleted(monkeypatc
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtWidgets import QApplication, QHeaderView
 
-    module = importlib.import_module("UI.mobo_ui.app")
+    module = importlib.import_module("work_platform.mobo_ui.app")
     app = QApplication.instance() or QApplication([])
     table = module.DataTable()
     table.enable_wide_columns()
@@ -642,7 +717,7 @@ def test_results_page_loads_a_completed_backend_task_directly(monkeypatch):
     from PySide6.QtCharts import QChartView
     from PySide6.QtWidgets import QApplication
 
-    module = importlib.import_module("UI.mobo_ui.app")
+    module = importlib.import_module("work_platform.mobo_ui.app")
     app = QApplication.instance() or QApplication([])
 
     class FakeClient:
@@ -696,18 +771,91 @@ def test_results_page_loads_a_completed_backend_task_directly(monkeypatch):
     page.result_task.setCurrentIndex(0)
     assert page.result_task.currentText() == "已完成任务"
     assert page.result_task.currentData() == "done-1"
-    page.load_selected_task()
 
     assert page.headers == ["temperature", "load"]
     assert page.table.rowCount() == 2
     assert "已加载任务 done-1" in page.task_hint.text()
-    assert page.history_table.rowCount() == 2
-    assert page.result_run.count() == 2
-    page.result_run.setCurrentIndex(page.result_run.findData("run-old"))
-    page.load_selected_run()
+    assert len(page.history_rows) == 2
+    assert page.history_run_ids == ["run-new", "run-old"]
+    assert not hasattr(page, "history_panel")
+    assert page.open_history_button.isEnabled()
+    page.open_history_window()
+    assert len(page.history_windows) == 1
+    assert page.history_windows[0].isVisible()
+    history_window_table = page.history_windows[0].findChild(module.DataTable)
+    assert history_window_table is not None
+    assert history_window_table.rowCount() == 2
+    history_window_table.selectRow(1)
+    history_load_button = next(
+        button for button in page.history_windows[0].findChildren(module.QPushButton)
+        if button.text() == "加载选中版本"
+    )
+    assert history_load_button.isEnabled()
+    history_load_button.click()
     assert page.table.rowCount() == 1
     assert "run-old" in page.task_hint.text()
     assert page.chart.rubberBand() == QChartView.RubberBand.RectangleRubberBand
+    app.processEvents()
+
+
+def test_results_auto_load_latest_completed_run_while_reoptimization_is_active(monkeypatch):
+    pytest.importorskip("PySide6")
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    module = importlib.import_module("work_platform.mobo_ui.app")
+    app = QApplication.instance() or QApplication([])
+
+    class FakeClient:
+        def optimization_progress(self, doe_id):
+            assert doe_id == "doe-1"
+            return {
+                "status": "running",
+                "current_run_id": "run-new",
+                "result": None,
+                "history": [
+                    {
+                        "run_id": "run-old",
+                        "status": "finished",
+                        "request": {"optimizer": "nsga2", "requested_mode": "multi"},
+                        "result": {
+                            "columns": ["temperature", "load"],
+                            "resource_id": "tos-old",
+                        },
+                    },
+                    {
+                        "run_id": "run-new",
+                        "status": "running",
+                        "request": {"optimizer": "nsga2", "requested_mode": "multi"},
+                        "result": None,
+                    },
+                ],
+            }
+
+        def get_data(self, doe_id, resource_id, fields):
+            assert (doe_id, resource_id, fields) == (
+                "doe-1", "tos-old", ["temperature", "load"]
+            )
+            return {"values": {"temperature": [900], "load": [8.2]}}
+
+    page = module.ResultsPage(module.QThreadPool.globalInstance(), FakeClient)
+    page.run_async = lambda fn, done=None, failed=None: (done or (lambda _value: None))(fn())
+    page._tasks_loaded({
+        "items": [{
+            "id": "doe-1",
+            "name": "任务一",
+            "has_optimization_result": True,
+        }]
+    })
+    assert page.result_task.currentIndex() == -1
+
+    page.result_task.setCurrentIndex(0)
+
+    assert len(page.history_rows) == 2
+    assert page.selected_run_id == "run-old"
+    assert page.headers == ["temperature", "load"]
+    assert page.table.rowCount() == 1
+    assert "run-old" in page.task_hint.text()
     app.processEvents()
 
 
@@ -716,7 +864,7 @@ def test_stale_doe_responses_do_not_overwrite_the_current_selection(monkeypatch)
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtWidgets import QApplication
 
-    module = importlib.import_module("UI.mobo_ui.app")
+    module = importlib.import_module("work_platform.mobo_ui.app")
     app = QApplication.instance() or QApplication([])
     pool = module.QThreadPool.globalInstance()
     model_page = module.ModelPage(pool, lambda: None)
@@ -749,7 +897,7 @@ def test_training_and_optimization_buttons_follow_runtime_state(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtWidgets import QApplication
 
-    module = importlib.import_module("UI.mobo_ui.app")
+    module = importlib.import_module("work_platform.mobo_ui.app")
     app = QApplication.instance() or QApplication([])
     pool = module.QThreadPool.globalInstance()
     model_page = module.ModelPage(pool, lambda: None)
@@ -773,17 +921,20 @@ def test_training_and_optimization_buttons_follow_runtime_state(monkeypatch):
     assert not optimization_page.stop_button.isEnabled()
     optimization_page.update_progress({"status": "running", "progress": 10})
     assert not optimization_page.start_button.isEnabled()
+    assert optimization_page.start_button.text() == "正在优化…"
     assert optimization_page.stop_button.isEnabled()
+    optimization_page.update_progress({"status": "queued", "progress": 0})
+    assert optimization_page.start_button.text() == "正在优化…"
     app.processEvents()
 
 
 def test_results_use_virtual_table_and_downsample_large_charts(monkeypatch):
     pytest.importorskip("PySide6")
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
-    from PySide6.QtCharts import QLineSeries
+    from PySide6.QtCharts import QScatterSeries, QValueAxis
     from PySide6.QtWidgets import QApplication, QTableView
 
-    module = importlib.import_module("UI.mobo_ui.app")
+    module = importlib.import_module("work_platform.mobo_ui.app")
     app = QApplication.instance() or QApplication([])
     page = module.ResultsPage()
     rows = [[index, index * 2, index * 3] for index in range(50_000)]
@@ -793,9 +944,17 @@ def test_results_use_virtual_table_and_downsample_large_charts(monkeypatch):
     assert isinstance(page.table, QTableView)
     assert isinstance(page.table.model(), module.ResultTableModel)
     assert page.table.rowCount() == 50_000
-    assert isinstance(series, QLineSeries)
+    assert isinstance(series, QScatterSeries)
     assert series.count() == module.MAX_2D_PLOT_POINTS
+    assert not page.chart.chart().legend().isVisible()
     assert "均匀抽样" in page.plot_status.text()
+    axes = [axis for axis in page.chart.chart().axes() if isinstance(axis, QValueAxis)]
+    assert [axis.titleText() for axis in axes] == ["x", "y"]
+    assert page.open_history_button.text() == "查看运行历史"
+    page.chart.double_clicked.emit()
+    assert len(page.chart_windows) == 1
+    assert page.chart_windows[0].isVisible()
+    page.chart_windows[0].close()
     points, total = page._numeric_points_3d()
     assert total == 50_000
     assert len(points) == module.MAX_3D_PLOT_POINTS
@@ -807,7 +966,7 @@ def test_ga_and_ppo_have_separate_parameter_panels_and_payloads(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtWidgets import QApplication
 
-    module = importlib.import_module("UI.mobo_ui.app")
+    module = importlib.import_module("work_platform.mobo_ui.app")
     app = QApplication.instance() or QApplication([])
     captured = []
 
@@ -829,6 +988,9 @@ def test_ga_and_ppo_have_separate_parameter_panels_and_payloads(monkeypatch):
     page.ga_generations.setValue(60)
     page.start_optimization()
     ga_payload = captured[0]
+    assert page.optimization_state == "queued"
+    assert page.start_button.text() == "正在优化…"
+    assert not page.start_button.isEnabled()
     assert ga_payload["algorithm"]["params"]["pop_size"] == 80
     assert ga_payload["algorithm"]["params"]["n_offsprings"] == 30
 
@@ -851,7 +1013,7 @@ def test_doe_refresh_failures_are_visible_inline(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtWidgets import QApplication
 
-    module = importlib.import_module("UI.mobo_ui.app")
+    module = importlib.import_module("work_platform.mobo_ui.app")
     app = QApplication.instance() or QApplication([])
     pool = module.QThreadPool.globalInstance()
     model_page = module.ModelPage(pool, lambda: None)

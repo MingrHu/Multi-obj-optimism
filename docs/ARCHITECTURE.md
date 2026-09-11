@@ -5,7 +5,7 @@
 
 ## 分层总览
 
-根目录 `UI/` 是独立的 PySide6 表现层，不属于后端 `mobo` 单包，也不承载业务或算法逻辑。
+根目录 `work_platform/` 是独立的 PySide6 表现层，不属于后端 `mobo` 单包，也不承载业务或算法逻辑。
 它通过 `mobo.automation` 调用本机 DEFORM 流程，通过 DOE HTTP API 调用采样、训练、推理与优化；
 因此界面可单独迭代，而既有算法函数体和外部 HTTP 协议保持不变。界面细节见
 [`DESKTOP_UI.md`](ui/DESKTOP_UI.md)。
