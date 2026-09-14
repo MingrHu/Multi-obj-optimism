@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import time
+import warnings
 
 import pytest
 
@@ -111,7 +112,58 @@ def test_results_page_maps_any_columns_to_2d_or_3d_axes(monkeypatch):
     page.style.setCurrentIndex(page.style.findData("scatter3d"))
     assert page.z_field.isVisibleTo(page)
     assert page.scatter3d is None
+    page.update_chart()
+    assert isinstance(page.scatter3d, module.Scatter3DCanvas)
+    assert page.chart_stack.currentWidget() is page.scatter3d
+    assert page.scatter3d.axes.get_xlabel() == "process_8"
+    assert page.scatter3d.axes.get_ylabel() == "roundness"
+    assert page.scatter3d.axes.get_zlabel() == "process_2"
+    original_x_limits = page.scatter3d.axes.get_xlim3d()
+    page.zoom_chart(1.25)
+    zoomed_x_limits = page.scatter3d.axes.get_xlim3d()
+    assert zoomed_x_limits[1] - zoomed_x_limits[0] < original_x_limits[1] - original_x_limits[0]
+    page.reset_chart_zoom()
+    assert page.scatter3d.axes.get_xlim3d() == pytest.approx(original_x_limits)
+    page.open_chart_window()
+    assert len(page.chart_windows) == 1
+    assert page.chart_windows[0].findChild(module.Scatter3DCanvas) is not None
+    page.chart_windows[0].close()
     app.processEvents()
+
+
+def test_results_3d_chart_renders_chinese_labels_without_layout_warnings(monkeypatch):
+    pytest.importorskip("PySide6")
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    module = importlib.import_module("work_platform.mobo_ui.app")
+    app = QApplication.instance() or QApplication([])
+    page = module.ResultsPage()
+    page.set_data(
+        ["驱动辊载荷 N", "等效应变标准差", "平均晶粒尺寸 μm"],
+        [[index, index / 10, 48 + index / 100] for index in range(20)],
+    )
+    page.style.setCurrentIndex(page.style.findData("scatter3d"))
+    supported_fonts = {
+        "Microsoft YaHei",
+        "SimHei",
+        "SimSun",
+        "Noto Sans CJK SC",
+        "Source Han Sans CN",
+    }
+    if module.matplotlib_cjk_font().get_name() not in supported_fonts:
+        pytest.skip("No supported CJK font is installed")
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        page.update_chart()
+        page.scatter3d.draw()
+        app.processEvents()
+
+    messages = [str(item.message) for item in caught]
+    assert not [message for message in messages if "Glyph" in message]
+    assert not [message for message in messages if "Tight layout" in message]
+    assert page.scatter3d.font_properties.get_name() in supported_fonts
 
 
 def test_results_page_keeps_nan_column_in_table_but_not_axis_picker(monkeypatch):
@@ -958,6 +1010,11 @@ def test_results_use_virtual_table_and_downsample_large_charts(monkeypatch):
     points, total = page._numeric_points_3d()
     assert total == 50_000
     assert len(points) == module.MAX_3D_PLOT_POINTS
+    page.style.setCurrentIndex(page.style.findData("scatter3d"))
+    page.update_chart()
+    assert isinstance(page.scatter3d, module.Scatter3DCanvas)
+    plotted = page.scatter3d.axes.collections[0]._offsets3d
+    assert len(plotted[0]) == module.MAX_3D_PLOT_POINTS
     app.processEvents()
 
 

@@ -6,7 +6,7 @@ import json
 import os
 import sys
 from dataclasses import replace
-from functools import partial
+from functools import lru_cache, partial
 from pathlib import Path
 from typing import Any, Callable
 
@@ -33,8 +33,7 @@ from PySide6.QtCore import (
     QUrl,
     Signal,
 )
-from PySide6.QtDataVisualization import Q3DScatter, QScatter3DSeries, QScatterDataItem, QValue3DAxis
-from PySide6.QtGui import QColor, QCursor, QFont, QFontDatabase, QPainter, QPalette, QVector3D
+from PySide6.QtGui import QColor, QCursor, QFont, QFontDatabase, QPainter, QPalette
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -70,6 +69,9 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from matplotlib import font_manager
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
+from matplotlib.figure import Figure
 
 from .core import (
     ApiClient,
@@ -397,7 +399,7 @@ class VirtualDataTable(QTableView):
 
 
 MAX_2D_PLOT_POINTS = 2000
-MAX_3D_PLOT_POINTS = 3000
+MAX_3D_PLOT_POINTS = 1000
 
 
 def evenly_sample(values: list[Any], limit: int) -> list[Any]:
@@ -426,6 +428,106 @@ class ZoomableChartView(QChartView):
     def mouseDoubleClickEvent(self, event) -> None:
         self.double_clicked.emit()
         event.accept()
+
+
+@lru_cache(maxsize=1)
+def matplotlib_cjk_font() -> font_manager.FontProperties:
+    """Select an installed font that contains Simplified Chinese glyphs."""
+    for family in (
+        "Microsoft YaHei",
+        "SimHei",
+        "SimSun",
+        "Noto Sans CJK SC",
+        "Source Han Sans CN",
+    ):
+        properties = font_manager.FontProperties(family=family)
+        try:
+            font_manager.findfont(properties, fallback_to_default=False)
+        except ValueError:
+            continue
+        return properties
+    return font_manager.FontProperties(family="DejaVu Sans")
+
+
+class Scatter3DCanvas(FigureCanvasQTAgg):
+    """Driver-independent, reusable 3D scatter canvas embedded as a Qt widget."""
+
+    def __init__(self, parent: QWidget | None = None):
+        self.figure = Figure(facecolor="#111d31")
+        self.figure.subplots_adjust(left=0.02, right=0.96, bottom=0.02, top=0.98)
+        super().__init__(self.figure)
+        self.setParent(parent)
+        self.axes = self.figure.add_subplot(111, projection="3d")
+        self.font_properties = matplotlib_cjk_font()
+        self._base_limits: tuple[tuple[float, float], ...] | None = None
+        self._base_view = (24.0, -58.0)
+
+    def set_points(
+        self,
+        points: list[tuple[float, float, float]],
+        labels: tuple[str, str, str],
+    ) -> None:
+        self.axes.clear()
+        xs, ys, zs = zip(*points, strict=True)
+        self.axes.scatter(
+            xs,
+            ys,
+            zs,
+            s=16,
+            c="#51d1da",
+            edgecolors="#b8f5f7",
+            linewidths=0.25,
+            depthshade=False,
+        )
+        self.axes.set_xlabel(
+            labels[0], color="#a9bad0", labelpad=7, fontproperties=self.font_properties
+        )
+        self.axes.set_ylabel(
+            labels[1], color="#a9bad0", labelpad=7, fontproperties=self.font_properties
+        )
+        self.axes.set_zlabel(
+            labels[2], color="#a9bad0", labelpad=7, fontproperties=self.font_properties
+        )
+        self.axes.tick_params(colors="#9fb1c7", labelsize=8)
+        self.axes.set_facecolor("#0d1829")
+        self.axes.set_box_aspect((1.0, 1.0, 0.82), zoom=0.78)
+        self.axes.grid(True, color="#23364e", linewidth=0.6)
+        for axis in (self.axes.xaxis, self.axes.yaxis, self.axes.zaxis):
+            axis.pane.set_facecolor("#0d1829")
+            axis.pane.set_edgecolor("#23364e")
+        self.axes.view_init(elev=self._base_view[0], azim=self._base_view[1])
+        self._base_limits = (
+            self.axes.get_xlim3d(),
+            self.axes.get_ylim3d(),
+            self.axes.get_zlim3d(),
+        )
+        self.draw_idle()
+
+    def zoom_by(self, factor: float) -> None:
+        if factor <= 0:
+            return
+        for getter, setter in (
+            (self.axes.get_xlim3d, self.axes.set_xlim3d),
+            (self.axes.get_ylim3d, self.axes.set_ylim3d),
+            (self.axes.get_zlim3d, self.axes.set_zlim3d),
+        ):
+            low, high = getter()
+            center = (low + high) / 2
+            half_span = (high - low) / (2 * factor)
+            setter(center - half_span, center + half_span)
+        self.draw_idle()
+
+    def wheelEvent(self, event) -> None:
+        self.zoom_by(1.2 if event.angleDelta().y() > 0 else 0.8)
+        event.accept()
+
+    def reset_view(self) -> None:
+        if self._base_limits is not None:
+            self.axes.set_xlim3d(*self._base_limits[0])
+            self.axes.set_ylim3d(*self._base_limits[1])
+            self.axes.set_zlim3d(*self._base_limits[2])
+        self.axes.view_init(elev=self._base_view[0], azim=self._base_view[1])
+        self.draw_idle()
 
 
 class ChoiceDelegate(QStyledItemDelegate):
@@ -2672,7 +2774,7 @@ class ResultsPage(QWidget, AsyncMixin):
         self.chart.setMinimumWidth(450)
         self.chart.double_clicked.connect(self.open_chart_window)
         self.chart_stack.addWidget(self.chart)
-        self.scatter3d: Q3DScatter | None = None
+        self.scatter3d: Scatter3DCanvas | None = None
         self.scatter3d_container: QWidget | None = None
         self.three_d_placeholder = QLabel("选择三个数值字段并点击“更新图表”加载三维视图")
         self.three_d_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -3076,15 +3178,14 @@ class ResultsPage(QWidget, AsyncMixin):
             return
         if self.scatter3d is None:
             return
-        camera = self.scatter3d.scene().activeCamera()
-        camera.setZoomLevel(max(10.0, min(500.0, camera.zoomLevel() * factor)))
+        self.scatter3d.zoom_by(factor)
 
     def reset_chart_zoom(self) -> None:
         if self.style.currentData() != "scatter3d":
             self.chart.chart().zoomReset()
             return
         if self.scatter3d is not None:
-            self.scatter3d.scene().activeCamera().setZoomLevel(100.0)
+            self.scatter3d.reset_view()
 
     def update_chart(self) -> None:
         if not self.headers or not self.rows:
@@ -3213,12 +3314,10 @@ class ResultsPage(QWidget, AsyncMixin):
                     self, "无法绘图", "所选 X、Y、Z 字段没有共同的数值数据。"
                 )
                 return
-            scatter3d = Q3DScatter()
-            scatter3d.setOrthoProjection(False)
+            scatter3d = Scatter3DCanvas(dialog)
             self._populate_3d_chart(scatter3d, points)
-            container = QWidget.createWindowContainer(scatter3d, dialog)
-            container.setMinimumSize(800, 520)
-            dialog_layout.addWidget(container, 1)
+            scatter3d.setMinimumSize(800, 520)
+            dialog_layout.addWidget(scatter3d, 1)
             detail = QLabel(f"显示 {len(points)} / {total} 个有效数据点；拖动旋转，滚轮缩放。")
         else:
             built = self._build_2d_chart()
@@ -3269,35 +3368,16 @@ class ResultsPage(QWidget, AsyncMixin):
         self.chart_stack.setCurrentWidget(self.scatter3d_container)
 
     def _populate_3d_chart(
-        self, scatter3d: Q3DScatter, points: list[tuple[float, float, float]]
+        self, scatter3d: Scatter3DCanvas, points: list[tuple[float, float, float]]
     ) -> None:
-        for existing in list(scatter3d.seriesList()):
-            scatter3d.removeSeries(existing)
-        axes = []
-        for title in (
-            self.x_field.currentText(),
-            self.y_field.currentText(),
-            self.z_field.currentText(),
-        ):
-            axis = QValue3DAxis()
-            axis.setTitle(title)
-            axis.setTitleVisible(True)
-            axis.setLabelFormat("%.4g")
-            axes.append(axis)
-        scatter3d.setAxisX(axes[0])
-        scatter3d.setAxisY(axes[1])
-        scatter3d.setAxisZ(axes[2])
-        series = QScatter3DSeries()
-        series.setName(
-            f"{self.x_field.currentText()} / {self.y_field.currentText()} / "
-            f"{self.z_field.currentText()}"
+        scatter3d.set_points(
+            points,
+            (
+                self.x_field.currentText(),
+                self.y_field.currentText(),
+                self.z_field.currentText(),
+            ),
         )
-        series.setBaseColor(QColor("#51d1da"))
-        series.setItemSize(0.12)
-        series.dataProxy().resetArray([
-            QScatterDataItem(QVector3D(x, y, z)) for x, y, z in points
-        ])
-        scatter3d.addSeries(series)
 
     def _set_plot_status(self, total: int, shown: int, warning: str = "") -> None:
         if shown < total:
@@ -3308,11 +3388,10 @@ class ResultsPage(QWidget, AsyncMixin):
             text = f"当前显示全部 {shown} 个有效数据点。"
         self.plot_status.setText(f"{text} {warning}".strip())
 
-    def _ensure_3d_chart(self) -> Q3DScatter:
+    def _ensure_3d_chart(self) -> Scatter3DCanvas:
         if self.scatter3d is None:
-            self.scatter3d = Q3DScatter()
-            self.scatter3d.setOrthoProjection(False)
-            self.scatter3d_container = QWidget.createWindowContainer(self.scatter3d)
+            self.scatter3d = Scatter3DCanvas(self.chart_stack)
+            self.scatter3d_container = self.scatter3d
             self.scatter3d_container.setMinimumSize(450, 360)
             self.chart_stack.addWidget(self.scatter3d_container)
         return self.scatter3d
