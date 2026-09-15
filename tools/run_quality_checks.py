@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import sysconfig
+import tempfile
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -48,7 +49,8 @@ def _tool_command(name: str) -> str:
 
 def _commands(report_dir: Path, min_score: float, with_security: bool) -> list[tuple[str, list[str]]]:
     coverage_file = report_dir / "coverage.json"
-    pytest_temp_dir = report_dir / "pytest-temp"
+    # 测试临时目录放在系统临时区 避免重复运行时报告目录残留导致清理失败
+    pytest_temp_dir = Path(tempfile.gettempdir()) / f"mobo-quality-pytest-{os.getpid()}"
     commands = [
         (
             "tests",

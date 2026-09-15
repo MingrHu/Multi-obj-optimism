@@ -27,7 +27,7 @@ Docker 环境可执行 `docker compose up --build -d`，容器会自动使用 Gu
 | 方法与路径 | 关键请求参数 | 说明 |
 |---|---|---|
 | `GET /health` | - | 健康检查 |
-| `POST /api/v1/doe/add` | `id?`, `name?`, `description?`, `metadata?` | 创建 DOE；未传 ID 时自动生成；名称和 ID 均唯一 |
+| `POST /api/v1/doe/add` | `id?`, `name?`, `description?`, `metadata?` | 创建 DOE；未传 ID 时自动生成；名称允许重复，ID 唯一 |
 | `GET /api/v1/doe/list` | - | 查询 DOE 列表 |
 | `POST /api/v1/doe/delete` | `id` | 删除 DOE 及其样本、模型、训练和优化文件 |
 | **`POST /api/v1/hust/doe/sample/generate`** | **`id`, `method`, `param_ranges`, `n_samples?`, `include_boundaries?`, `level_nums?`** | **LHS/全因子采样** |
@@ -46,8 +46,43 @@ Docker 环境可执行 `docker compose up --build -d`，容器会自动使用 Gu
 除健康检查外，成功响应统一使用 `code/message/data`。GET 参数通过 query string 传递，
 POST 参数使用 JSON 对象；GET 接口不读取请求体
 
-DOE 的 `id` 与展示名称 `name` 均为一对一唯一标识。显式名称会去除首尾空白，并采用不区分
-大小写的方式检查重名；同名或同 ID 创建返回 HTTP 409。未传 `name` 时使用唯一 `id` 作为名称。
+DOE 的 `id` 是任务唯一标识，展示名称 `name` 允许重复。显式名称会去除首尾空白，未传
+`name` 时使用唯一 `id` 作为名称。未传 `id` 时服务端自动生成并通过创建响应的 `data.id`
+返回；同 ID 创建返回 HTTP 409。客户端必须保存并使用 `id` 调用训练、推理、优化、查询和
+删除接口，不应使用 `name` 定位任务。
+
+创建两个同名任务时会得到两个不同的任务 ID：
+
+```json
+{
+  "name": "7050环件优化",
+  "description": "第一组参数"
+}
+```
+
+成功返回 HTTP 201：
+
+```json
+{
+  "code": 0,
+  "message": "DOE 任务已创建",
+  "data": {
+    "id": "doe_a1b2c3d4e5f67890",
+    "name": "7050环件优化",
+    "description": "第一组参数",
+    "metadata": {},
+    "status": "created",
+    "stage": "created",
+    "progress": 0,
+    "created_at": "2026-09-15T10:00:00+08:00",
+    "updated_at": "2026-09-15T10:00:00+08:00",
+    "optimization_run_count": 0,
+    "has_optimization_result": false
+  }
+}
+```
+
+再次使用相同 `name` 创建任务仍返回 HTTP 201，但 `data.id` 不同。
 
 
 

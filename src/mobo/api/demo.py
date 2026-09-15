@@ -38,19 +38,18 @@ def rows_by_fields(data: dict, fields: list[str]) -> list[list[float]]:
 
 def main() -> None:
     # 演示完整 DOE 生命周期 创建数据 训练评价 推理 优化 查询结果
-    doe_id = f"demo_doe_{int(time.time())}"
     input_names = ["temperature", "speed"]
     target_names = ["grain", "load"]
     param_ranges = {"temperature": [900, 1100], "speed": [10, 50]}
 
-    # 1 创建 DOE 任务
-    call("POST", "/api/v1/doe/add", json={
-        "id": doe_id,
-        "name": f"HTTP DOE 演示 {doe_id}",
+    # 1 创建可重名 DOE 任务并保存服务端生成的唯一 ID
+    created = call("POST", "/api/v1/doe/add", json={
+        "name": "HTTP DOE 演示",
         "metadata": {
             "workpiece": "ring"
         },
     })
+    doe_id = created["data"]["id"]
 
     # 2 生成 LHS 样本
     sample = call("POST", "/api/v1/hust/doe/sample/generate", json={

@@ -69,17 +69,6 @@ def create(payload: dict[str, Any]) -> dict[str, Any]:
     with _LOCK:
         if _state_file(doe_id).exists():
             raise ConflictError(f"DOE 任务已存在：{doe_id}")
-        duplicate = next(
-            (
-                state for state in list_all()
-                if str(state.get("name", "")).strip().casefold() == name.casefold()
-            ),
-            None,
-        )
-        if duplicate is not None:
-            raise ConflictError(
-                f"DOE 任务名称已存在：{name}（ID：{duplicate['id']}）"
-            )
         now = _now()
         # 顶层状态用于快速查询 子流程详情分别保存在 sample training optimization
         state = {

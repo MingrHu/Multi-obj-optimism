@@ -44,15 +44,20 @@ def test_add_list_progress_and_delete(monkeypatch, tmp_path):
     assert not (tmp_path / "doe_tasks" / "doe_1").exists()
 
 
-def test_add_rejects_duplicate_and_path_traversal(monkeypatch, tmp_path):
+def test_add_allows_duplicate_names_but_rejects_duplicate_id(monkeypatch, tmp_path):
     client = _client(monkeypatch, tmp_path)
     client.post("/api/v1/doe/add", json={"id": "same", "name": "Unique Task"})
     assert client.post("/api/v1/doe/add", json={"id": "same"}).status_code == 409
     duplicate_name = client.post(
         "/api/v1/doe/add", json={"id": "different", "name": "  unique task  "}
     )
-    assert duplicate_name.status_code == 409
-    assert "DOE 任务名称已存在" in duplicate_name.json["message"]
+    assert duplicate_name.status_code == 201
+    assert duplicate_name.json["data"]["id"] == "different"
+    assert duplicate_name.json["data"]["name"] == "unique task"
+    listed = client.get("/api/v1/doe/list").json["data"]["items"]
+    assert {(item["id"], item["name"]) for item in listed} == {
+        ("same", "Unique Task"), ("different", "unique task"),
+    }
     response = client.post("/api/v1/doe/add", json={"id": "../../outside"})
     assert response.status_code == 400
 

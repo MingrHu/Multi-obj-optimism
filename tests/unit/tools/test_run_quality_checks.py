@@ -17,11 +17,15 @@ def _load_module():
 def test_commands_add_security_only_when_requested(tmp_path):
     module = _load_module()
 
-    basic = [name for name, _ in module._commands(tmp_path, 60, False)]
+    basic_commands = module._commands(tmp_path, 60, False)
+    basic = [name for name, _ in basic_commands]
     secured = [name for name, _ in module._commands(tmp_path, 60, True)]
 
     assert basic == ["tests", "ruff", "complexity", "documentation", "score"]
     assert secured[-1] == "dependency-security"
+    pytest_command = dict(basic_commands)["tests"]
+    basetemp = next(value for value in pytest_command if value.startswith("--basetemp="))
+    assert str(tmp_path) not in basetemp
 
 
 def test_markdown_contains_score_and_failed_check():
