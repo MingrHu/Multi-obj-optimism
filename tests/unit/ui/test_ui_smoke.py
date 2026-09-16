@@ -371,6 +371,157 @@ def test_model_page_saves_field_definition_without_starting_training(monkeypatch
     app.processEvents()
 
 
+def test_model_page_submits_explicit_hyperparameter_overrides(monkeypatch):
+    pytest.importorskip("PySide6")
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    module = importlib.import_module("work_platform.mobo_ui.app")
+    app = QApplication.instance() or QApplication([])
+    captured = {}
+
+    class FakeClient:
+        def start_training(self, payload):
+            captured.update(payload)
+            return {"status": "queued"}
+
+        def training_progress(self, doe_id):
+            assert doe_id == "doe-a"
+            return {"status": "queued", "stage": "queued", "progress": 0}
+
+    page = module.ModelPage(module.QThreadPool.globalInstance(), FakeClient)
+    page.run_async = lambda fn, done=None, failed=None: (done or (lambda _value: None))(fn())
+    page._hyperparameters_loaded({
+        "models": {
+            "RF": {
+                "n_estimators": {
+                    "type": "integer", "default": 300, "minimum": 1,
+                    "label": "决策树数量",
+                },
+                "max_depth": {
+                    "type": "integer", "default": None, "nullable": True,
+                    "minimum": 1, "label": "最大深度",
+                },
+            }
+        }
+    })
+    page.doe_id.addItem("任务 A", "doe-a")
+    page.doe_id.setCurrentIndex(0)
+    page.headers = ["温度", "载荷"]
+    page.rows = [[900, 8.2], [1000, 8.0], [1100, 7.9]]
+    page.field_roles = ["input", "output"]
+    for name, checkbox in page.models.items():
+        checkbox.setChecked(name == "RF")
+    page.model_params["RF"] = {"n_estimators": 120, "max_depth": 8}
+    page._refresh_model_parameter_buttons()
+
+    page.start_training()
+
+    assert captured["models"] == [{
+        "name": "RF", "params": {"n_estimators": 120, "max_depth": 8}
+    }]
+    assert page.model_param_buttons["RF"].text() == "参数（2 项）"
+    assert page.model_param_buttons["RF"].isEnabled()
+    app.processEvents()
+
+
+def test_hyperparameter_dialog_blank_values_mean_defaults(monkeypatch):
+    pytest.importorskip("PySide6")
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    module = importlib.import_module("work_platform.mobo_ui.app")
+    app = QApplication.instance() or QApplication([])
+    dialog = module.ModelHyperparameterDialog(
+        "SVR",
+        {
+            "kernel": {
+                "type": "string", "default": "rbf", "choices": ["linear", "rbf"],
+                "label": "核函数",
+            },
+            "C": {"type": "number", "default": 1.0, "exclusive_minimum": 0, "label": "C"},
+        },
+        {},
+    )
+    assert dialog._collect_values() == {}
+    dialog.editors["C"].setText("12.5")
+    assert dialog._collect_values() == {"C": 12.5}
+    app.processEvents()
+
+
+def test_hyperparameter_dialog_accepts_numeric_or_named_union_value(monkeypatch):
+    pytest.importorskip("PySide6")
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication, QLineEdit
+
+    module = importlib.import_module("work_platform.mobo_ui.app")
+    app = QApplication.instance() or QApplication([])
+    dialog = module.ModelHyperparameterDialog(
+        "SVR",
+        {
+            "gamma": {
+                "type": "number_or_string",
+                "default": "scale",
+                "choices": ["scale", "auto"],
+                "exclusive_minimum": 0,
+                "label": "Gamma",
+            },
+        },
+        {},
+    )
+    assert isinstance(dialog.editors["gamma"], QLineEdit)
+    dialog.editors["gamma"].setText("0.125")
+    assert dialog._collect_values() == {"gamma": 0.125}
+    dialog.editors["gamma"].setText("auto")
+    assert dialog._collect_values() == {"gamma": "auto"}
+    app.processEvents()
+
+
+def test_model_parameter_button_can_retry_after_catalog_failure(monkeypatch):
+    pytest.importorskip("PySide6")
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    module = importlib.import_module("work_platform.mobo_ui.app")
+    app = QApplication.instance() or QApplication([])
+
+    class FakeClient:
+        def training_hyperparameters(self):
+            return {
+                "models": {
+                    "RF": {
+                        "n_estimators": {
+                            "type": "integer",
+                            "default": 300,
+                            "minimum": 1,
+                            "label": "决策树数量",
+                        }
+                    }
+                }
+            }
+
+    page = module.ModelPage(module.QThreadPool.globalInstance(), FakeClient)
+    page._hyperparameters_failed("404 NOT FOUND")
+    assert page.model_param_buttons["RF"].isEnabled()
+    assert page.model_param_buttons["RF"].text() == "参数（重试）"
+
+    class FakeDialog:
+        configured_values = {}
+
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def exec(self):
+            return module.QDialog.DialogCode.Rejected
+
+    monkeypatch.setattr(module, "ModelHyperparameterDialog", FakeDialog)
+    page.run_async = lambda fn, done=None, failed=None: (done or (lambda _value: None))(fn())
+    page.configure_model("RF")
+    assert "RF" in page.hyperparameter_catalog
+    assert page.model_param_buttons["RF"].text() == "参数（默认）"
+    app.processEvents()
+
+
 def test_model_page_uploads_selected_file_to_current_doe(monkeypatch, tmp_path):
     pytest.importorskip("PySide6")
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")

@@ -54,6 +54,7 @@ DOE 聚合服务。路由层位于 `api.handler`，实际处理层位于 `api.se
 | `common` | `logging.py` | `GlobalLogger` 单例；显式 stdout 重定向 |
 | `common` | `task_store.py` | 任务状态持久化（`data/tasks/<id>/state.json`），三流程共用；`history` 完整记录阶段转移（只追加不覆盖），`resolve_req` 三路解析续跑参数（记录 > 传入 > 报错） |
 | `surrogate` | `common.py` | 数据加载/划分/标准化、指标、`save_model`、`Time`、DNN 构建 |
+| `surrogate` | `hyperparameters.py` | 五类模型的参数元数据、默认值合并、类型/范围及关联约束校验 |
 | `surrogate` | `dnn/polynomial/svr/random_forest/kriging.py` | 五种代理模型训练入口 |
 | `surrogate` | `interface.py` | `Doe_surrogateModel` 统一训练接口 |
 | `surrogate` | `evaluate.py` | `SurrogateModelEvaluator` K 折交叉验证与报告 |

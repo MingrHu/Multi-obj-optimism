@@ -8,6 +8,7 @@ import pytest
 
 from mobo.common import task_store
 from mobo.surrogate import service
+from mobo.surrogate.hyperparameters import default_model_params
 
 
 @pytest.fixture(autouse=True)
@@ -45,8 +46,9 @@ def test_train_prg_maps_index_and_params():
     )
     assert resp["code"] == 0
     assert resp["model_id"] == "tr_x"
-    # 协议 model_index=0(PRG) -> which_model=2，degree 转成 ["3"]
-    assert _FakeDoe.calls == [(2, ["3"])]
+    expected = default_model_params("PRG")
+    expected["degree"] = 3
+    assert _FakeDoe.calls == [(2, expected)]
     assert resp["data"]["model_family"] == "PRG"
     # 目标名与保存路径落盘
     assert resp["data"]["target_names"] == ["grain", "load"]
@@ -59,8 +61,9 @@ def test_train_dnn_uses_keras_ext_and_param_order():
         model_index=4, biz_params={"epochs": 10, "batch_size": 8, "verbose": 0, "patience": 5},
         model_id="tr_dnn",
     )
-    # model_index=4(DNN) -> which_model=1；参数按 epochs,batch_size,verbose,patience 顺序
-    assert _FakeDoe.calls == [(1, ["10", "8", "0", "5"])]
+    expected = default_model_params("DNN")
+    expected.update({"epochs": 10, "batch_size": 8, "verbose": 0, "patience": 5})
+    assert _FakeDoe.calls == [(1, expected)]
     assert resp["data"]["model_save_paths"]["res"].endswith("res_model.keras")
 
 
@@ -75,6 +78,16 @@ def test_train_persists_state():
 def test_train_invalid_index():
     resp = service.train_surrogate("d.txt", ["1", "grain"], 1, model_index=9)
     assert resp["code"] == 1
+
+
+def test_train_rejects_invalid_hyperparameters():
+    resp = service.train_surrogate(
+        "d.txt", ["1", "grain"], 1,
+        model_index=2, biz_params={"n_estimators": 0}, model_id="tr_invalid_params",
+    )
+    assert resp["code"] == 1
+    assert "n_estimators" in resp["msg"]
+    assert _FakeDoe.calls == []
 
 
 def test_train_failure_records_failed(monkeypatch):
@@ -102,7 +115,7 @@ def test_train_resumes_from_record():
     # 只传 model_id，参数从记录读取
     resp = service.train_surrogate(model_id="tr_r")
     assert resp["code"] == 0
-    assert _FakeDoe.calls == [(2, [])]
+    assert _FakeDoe.calls == [(2, default_model_params("PRG"))]
 
 
 def test_train_missing_params_reports_error():

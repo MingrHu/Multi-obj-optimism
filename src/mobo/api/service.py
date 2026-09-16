@@ -10,12 +10,19 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from mobo.surrogate.hyperparameters import normalize_model_params, parameter_catalog
+
 from . import store
 from .errors import ApiError, ConflictError
 from .runtime import registry
 
 MODEL_FAMILIES = {0: "PRG", 1: "SVR", 2: "RF", 3: "KM", 4: "DNN"}
 MODEL_INDICES = {name: index for index, name in MODEL_FAMILIES.items()}
+
+
+def get_training_hyperparameters() -> dict[str, Any]:
+    """Return model parameter metadata for clients that build dynamic forms."""
+    return {"models": parameter_catalog()}
 
 
 # 所有需要 DOE 标识的 POST 请求先经过同一入口校验
@@ -221,6 +228,15 @@ def get_training_progress(doe_id: str) -> dict[str, Any]:
         {key: value for key, value in model.items() if key != "model_dir"}
         for model in training.get("models", [])
     ]
+    model_configs = [
+        {
+            "name": MODEL_FAMILIES[item["model_index"]],
+            "params": dict(item.get("params") or {}),
+            "param_overrides": dict(item.get("param_overrides") or {}),
+        }
+        for item in request.get("models", [])
+        if item.get("model_index") in MODEL_FAMILIES
+    ]
     return {
         "id": doe_id,
         "status": training.get("status", "not_started"),
@@ -235,6 +251,7 @@ def get_training_progress(doe_id: str) -> dict[str, Any]:
             if dataset.get(key) is not None
         },
         "models": models,
+        "model_configs": model_configs,
         "error": (
             "代理模型训练失败，内部异常详情由服务端维护"
             if training.get("error") else None
@@ -442,9 +459,16 @@ def _normalize_training_models(value: Any) -> list[dict[str, Any]]:
         params = model.get("params", {})
         if index not in MODEL_FAMILIES:
             raise ApiError("models.name 仅支持 PRG、SVR、RF、KM、DNN")
-        if not isinstance(params, dict):
-            raise ApiError("models.params 必须是 JSON 对象")
-        normalized.append({"model_index": index, "params": params})
+        family = MODEL_FAMILIES[index]
+        try:
+            params = normalize_model_params(family, params)
+        except ValueError as exc:
+            raise ApiError(str(exc)) from exc
+        normalized.append({
+            "model_index": index,
+            "params": params,
+            "param_overrides": dict(model.get("params") or {}),
+        })
     indices = [item["model_index"] for item in normalized]
     if len(indices) != len(set(indices)):
         raise ApiError("models 不能包含重复模型")

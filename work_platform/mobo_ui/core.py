@@ -243,6 +243,9 @@ class ApiClient:
     def training_progress(self, doe_id: str) -> dict[str, Any]:
         return self.request("GET", "/api/v1/hust/doe/train/progress", params={"id": doe_id})
 
+    def training_hyperparameters(self) -> dict[str, Any]:
+        return self.request("GET", "/api/v1/hust/doe/train/hyperparameters")
+
     def stop_training(self, doe_id: str) -> dict[str, Any]:
         return self.request("POST", "/api/v1/hust/doe/train/stop", payload={"id": doe_id})
 

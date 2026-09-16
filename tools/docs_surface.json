@@ -14,6 +14,10 @@
     },
     {
       "method": "GET",
+      "path": "/api/v1/hust/doe/train/hyperparameters"
+    },
+    {
+      "method": "GET",
       "path": "/api/v1/hust/doe/train/progress"
     },
     {
@@ -139,6 +143,7 @@
     "surrogate/common.py",
     "surrogate/dnn.py",
     "surrogate/evaluate.py",
+    "surrogate/hyperparameters.py",
     "surrogate/interface.py",
     "surrogate/kriging.py",
     "surrogate/polynomial.py",

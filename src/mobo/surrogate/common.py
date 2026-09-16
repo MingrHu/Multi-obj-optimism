@@ -14,6 +14,7 @@ import os
 import time
 from keras.models import Model
 from keras.layers import Dense, Dropout, BatchNormalization, Input
+from keras.optimizers import Adam
 
 from mobo.common.paths import MODELS_DIR
 
@@ -303,27 +304,40 @@ def evaluate_model(R2, T, T_min, T_max, w1=0.5, w2=0.5):
 
 #####################################各类代理模型定义部分######################################
 # DNN的模型定义
-def build_single_output_dnn(input_dim):
+def build_single_output_dnn(
+    input_dim,
+    *,
+    hidden_layer_1=64,
+    hidden_layer_2=32,
+    hidden_layer_3=16,
+    activation="relu",
+    dropout_1=0.2,
+    dropout_2=0.1,
+    batch_normalization=True,
+    learning_rate=0.001,
+):
     """构建单输出DNN模型"""
     inputs = Input(shape=(input_dim,))
     
     # 共享特征提取层
-    x = Dense(64, activation='relu')(inputs)
-    x = BatchNormalization()(x)
-    x = Dropout(0.2)(x)
+    x = Dense(hidden_layer_1, activation=activation)(inputs)
+    if batch_normalization:
+        x = BatchNormalization()(x)
+    x = Dropout(dropout_1)(x)
     
-    x = Dense(32, activation='relu')(x)
-    x = BatchNormalization()(x)
-    x = Dropout(0.1)(x)
+    x = Dense(hidden_layer_2, activation=activation)(x)
+    if batch_normalization:
+        x = BatchNormalization()(x)
+    x = Dropout(dropout_2)(x)
     
     # 输出层
-    out = Dense(16, activation='relu')(x)
+    out = Dense(hidden_layer_3, activation=activation)(x)
     out = Dense(1)(out)  # 线性输出
     
     model = Model(inputs=inputs, outputs=out)
     
     model.compile(
-        optimizer = 'adam',
+        optimizer=Adam(learning_rate=learning_rate),
         loss = 'mse',
         metrics = ['mae']
     )

@@ -34,6 +34,7 @@ Docker 环境可执行 `docker compose up --build -d`，容器会自动使用 Gu
 | `POST /api/v1/hust/doe/dataset/generate` | `id`, `param_ranges`, `target_names`, `input_names?`, `n_samples?`, `seed?`, `noise_ratio?` | 在 DOE 训练目录生成完整流程演示数据集 |
 | `POST /api/v1/hust/doe/dataset/save` | `id`, `data_source` | 保存训练数据及输入/输出字段定义，不启动训练 |
 | `GET /api/v1/hust/doe/data/get` | `id`, `resource_id`, `fields` | 按资源索引和字段获取样本、数据集、优化或推理结果 |
+| **`GET /api/v1/hust/doe/train/hyperparameters`** | - | **查询五类代理模型支持的超参数、默认值和约束** |
 | **`GET /api/v1/hust/doe/train/progress`** | **`id`** | **查询代理模型训练状态、阶段、进度及已训练模型** |
 | **`POST /api/v1/hust/doe/train/delete`** | **`id`** | **删除训练记录和代理模型** |
 | **`POST /api/v1/hust/doe/train/stop`** | **`id`** | **发出训练中止请求** |
@@ -426,13 +427,89 @@ DOE 的 `training` 目录落盘为无表头 TSV。`all_var_list`、`input_var_co
   {"name": "PRG", "params": {"degree": 2}},
   {"name": "SVR", "params": {"kernel": "rbf", "C": 1.0, "epsilon": 0.1}},
   {"name": "RF", "params": {"n_estimators": 300, "n_jobs": -1}},
-  {"name": "KM", "params": {"alpha": 0.1, "n_restarts_optimizer": 10}},
+  {"name": "KM", "params": {"alpha": 0.1, "n_restarts_optimizer": 20}},
   {
     "name": "DNN",
-    "params": {"epochs": 300, "batch_size": 16, "verbose": 0, "patience": 30}
+    "params": {"epochs": 1000, "batch_size": 16, "verbose": 1, "patience": 50}
   }
 ]
 ```
+
+`params` 可以省略或传空对象。后端只接受下表列出的字段，并把调用方覆盖值与默认值合并；未知字段、
+错误类型、越界值或不一致的上下界在启动后台任务前返回 HTTP 400。训练模型快照与 K 折交叉验证使用
+同一组完整有效参数，完整参数写入训练请求与模型记录，调用方显式覆盖项另存为
+`param_overrides`，便于界面恢复。
+
+**PRG 参数**
+
+| 字段 | 默认值 | 约束 |
+|---|---:|---|
+| `degree` | `2` | 1～10 的整数 |
+| `include_bias` | `false` | 布尔值 |
+| `fit_intercept` | `true` | 布尔值 |
+
+**SVR 参数**
+
+| 字段 | 默认值 | 约束 |
+|---|---:|---|
+| `kernel` | `rbf` | `linear` / `poly` / `rbf` / `sigmoid` |
+| `C` | `1.0` | 正数 |
+| `epsilon` | `0.1` | 非负数 |
+| `gamma` | `scale` | 正数或 `scale` / `auto` |
+| `degree` | `3` | 1～10 的整数，仅 `poly` 核使用 |
+| `coef0` | `0.0` | 数值 |
+| `shrinking` | `true` | 布尔值 |
+| `tol` | `0.001` | 正数 |
+| `max_iter` | `-1` | `-1` 或正整数 |
+
+**RF 参数**
+
+| 字段 | 默认值 | 约束 |
+|---|---:|---|
+| `n_estimators` | `300` | 1～5000 的整数 |
+| `criterion` | `squared_error` | `squared_error` / `absolute_error` / `friedman_mse` / `poisson` |
+| `max_depth` | `null` | `null` 或正整数 |
+| `min_samples_split` | `2` | ≥2 的整数，或 (0,1] 小数 |
+| `min_samples_leaf` | `1` | ≥1 的整数，或 (0,1] 小数 |
+| `max_features` | `1.0` | `null`、正整数、(0,1] 小数、`sqrt` 或 `log2` |
+| `bootstrap` | `true` | 布尔值 |
+| `max_samples` | `null` | `bootstrap=true` 时可用：正整数或 (0,1] 小数 |
+| `random_state` | `42` | `null` 或整数 |
+| `n_jobs` | `-1` | 非零整数，`-1` 表示使用全部可用核心 |
+
+**KM 参数**
+
+| 字段 | 默认值 | 约束 |
+|---|---:|---|
+| `alpha` | `0.1` | 非负数 |
+| `n_restarts_optimizer` | `20` | 非负整数 |
+| `normalize_y` | `false` | 布尔值 |
+| `random_state` | `42` | `null` 或整数 |
+| `constant_value` | `1.0` | 正数 |
+| `constant_lower` / `constant_upper` | `0.001` / `1000000` | 正数且下界小于上界 |
+| `length_scale` | `1.0` | 正数 |
+| `length_scale_lower` / `length_scale_upper` | `0.1` / `10000` | 正数且下界小于上界 |
+
+**DNN 参数**
+
+| 字段 | 默认值 | 约束 |
+|---|---:|---|
+| `hidden_layer_1` / `hidden_layer_2` / `hidden_layer_3` | `64` / `32` / `16` | 1～4096 的整数 |
+| `activation` | `relu` | `relu` / `tanh` / `sigmoid` / `elu` / `selu` |
+| `dropout_1` / `dropout_2` | `0.2` / `0.1` | [0,1) 数值 |
+| `batch_normalization` | `true` | 布尔值 |
+| `learning_rate` | `0.001` | 正数 |
+| `epochs` | `1000` | 1～100000 的整数 |
+| `batch_size` | `16` | 正整数 |
+| `verbose` | `1` | `0` / `1` / `2` |
+| `patience` | `50` | 正整数 |
+| `reduce_lr_factor` | `0.2` | (0,1) 数值 |
+| `reduce_lr_patience` | `5` | 正整数 |
+| `min_lr` | `0.000001` | 非负数 |
+
+客户端可通过 **GET `/api/v1/hust/doe/train/hyperparameters`** 动态读取以上元数据。响应中
+`data.models.<模型>.<参数>` 包含 `type`、`default`、`label`，以及适用的 `choices`、
+`minimum`、`maximum`、`exclusive_minimum`、`exclusive_maximum` 和 `nullable`。
 
 | 请求字段 | 类型 | 必填 | 说明 |
 |---|---|---:|---|
@@ -739,6 +816,24 @@ GET /api/v1/hust/doe/train/progress?id=doe_20260622_001
       "sample_count": 100,
       "source_name": "training-data.txt"
     },
+    "model_configs": [
+      {
+        "name": "RF",
+        "params": {
+          "n_estimators": 500,
+          "criterion": "squared_error",
+          "max_depth": null,
+          "min_samples_split": 2,
+          "min_samples_leaf": 1,
+          "max_features": 1.0,
+          "bootstrap": true,
+          "max_samples": null,
+          "random_state": 42,
+          "n_jobs": -1
+        },
+        "param_overrides": {"n_estimators": 500}
+      }
+    ],
     "models": [],
     "error": null,
     "updated_at": "2026-08-28T16:30:00+08:00"
@@ -769,6 +864,24 @@ GET /api/v1/hust/doe/train/progress?id=doe_20260622_001
       "sample_count": 100,
       "source_name": "training-data.txt"
     },
+    "model_configs": [
+      {
+        "name": "RF",
+        "params": {
+          "n_estimators": 500,
+          "criterion": "squared_error",
+          "max_depth": null,
+          "min_samples_split": 2,
+          "min_samples_leaf": 1,
+          "max_features": 1.0,
+          "bootstrap": true,
+          "max_samples": null,
+          "random_state": 42,
+          "n_jobs": -1
+        },
+        "param_overrides": {"n_estimators": 500}
+      }
+    ],
     "models": [
       {
         "model_id": "tr_doe_20260622_001_2_a1b2c3",
@@ -827,7 +940,12 @@ GET /api/v1/hust/doe/train/progress?id=doe_20260622_001
 | `data.dataset.columns` | string array | 训练数据集的无表头 TSV 列顺序 |
 | `data.dataset.sample_count` | integer | 训练数据集样本行数 |
 | `data.dataset.source_name` | string | 客户端提交的数据源名称或服务端生成的数据集名称 |
+| `data.model_configs` | object array | 本次训练选择的模型配置；未提交训练时为空数组 |
+| `data.model_configs[].name` | string | 模型族名称 |
+| `data.model_configs[].params` | object | 与默认值合并并通过校验后的完整有效参数 |
+| `data.model_configs[].param_overrides` | object | 调用方显式提交的覆盖项；界面据此恢复用户设置，空对象表示全部使用默认值 |
 | `data.models` | object array | 已完成训练或正在累计的模型记录 |
+| `data.models[].hyper_params` | object | 生成模型快照和交叉验证时共同使用的完整有效参数 |
 | `data.models[].model_id` | string | 当前 DOE 下唯一的代理模型标识，可用于推理和优化接口 |
 | `data.models[].model_index` | integer | 后端代理模型类型编号 |
 | `data.models[].model_family` | string | 代理模型类型，例如 `PRG`、`SVR`、`RF`、`KM` 或 `DNN` |

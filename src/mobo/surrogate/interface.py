@@ -3,6 +3,7 @@ from .dnn import dnn_run
 from .polynomial import prg_fun
 from .svr import svr_fun
 from .random_forest import rf_run
+from typing import Any
 #  @brief  代理模型类
 #  @return None
 #  @author Hu Mingrui
@@ -25,6 +26,6 @@ class Doe_surrogateModel:
     # which_model:取值0-4 分别对应如下
     # [kriging_fun,dnn_run,prg_fun,svr_fun,rf_run]
     def train_save_model(
-        self, which_model: int, model_par: list[str] | None = None
+        self, which_model: int, model_par: dict[str, Any] | None = None
     ):
-        self.model[which_model](self.file, self.vars_out, self.n, model_par or [])
+        self.model[which_model](self.file, self.vars_out, self.n, model_par or {})

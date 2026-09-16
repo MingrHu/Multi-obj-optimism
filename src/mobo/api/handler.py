@@ -148,6 +148,13 @@ def training_progress():
     return _ok(service.get_training_progress(request.args.get("id", "")))
 
 
+#  @brief  查询五类代理模型支持的超参数、默认值、类型与取值范围
+#  @return jsonify格式化信息 包含models超参数元数据
+@doe_api.get("/api/v1/hust/doe/train/hyperparameters")
+def training_hyperparameters():
+    return _ok(service.get_training_hyperparameters())
+
+
 #  @brief  删除DOE任务下的训练记录和代理模型文件
 #  @return jsonify格式化信息 包含DOE标识和清理后的训练状态 阶段及进度
 #  @param  id DOE唯一标识 必填

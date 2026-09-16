@@ -2,6 +2,9 @@ from .common import (load_and_preprocess_data,split_data_without_val,
                     save_model)
 from sklearn.svm import SVR
 from sklearn.metrics import r2_score
+from typing import Any
+
+from .hyperparameters import normalize_model_params
 
 # exp 目前支持任意参数输入 下面的例子是
 # 1-7 是自变量 X矩阵 后面的三个是因变量Y矩阵
@@ -10,7 +13,7 @@ from sklearn.metrics import r2_score
 # file = '/Users/hmr/Desktop/Multi-obj-optimism/data/TEST/simulated.txt'
 
 def svr_fun(file: str, vars_out: list[str], n_var: int,
-            model_par: list[str] | None = None):
+            model_par: dict[str, Any] | None = None):
         # 1. 加载数据
         X, Y = load_and_preprocess_data(file,vars_out,n_var)
     
@@ -19,8 +22,9 @@ def svr_fun(file: str, vars_out: list[str], n_var: int,
         Y_train_scaled_list, Y_test_scaled_list,
         scalers) = split_data_without_val(X, Y)            
 
+        params = normalize_model_params("SVR", model_par)
         for idx in range(len(Y_train_scaled_list)):
-            cur_model = SVR(kernel='rbf', C=1.0, epsilon=0.1)
+            cur_model = SVR(**params)
             cur_model.fit(X_train_scaled, Y_train_scaled_list[idx])
             pred_scaled = cur_model.predict(X_test_scaled)
             test_scaled = Y_test_scaled_list[idx]

@@ -3,9 +3,12 @@ from .common import (load_and_preprocess_data,split_data_without_val,
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF, ConstantKernel as C
 from sklearn.metrics import r2_score
+from typing import Any
+
+from .hyperparameters import normalize_model_params
 
 def kriging_fun(file: str, vars_out: list[str], n_var: int,
-                model_par: list[str] | None = None):
+                model_par: dict[str, Any] | None = None):
     # 1. 加载数据
     X, Y = load_and_preprocess_data(file,vars_out,n_var)
 
@@ -14,14 +17,24 @@ def kriging_fun(file: str, vars_out: list[str], n_var: int,
     Y_train_scaled_list, Y_test_scaled_list,
     scalers) = split_data_without_val(X, Y)            
 
+    params = normalize_model_params("KM", model_par)
     for idx in range(len(Y_train_scaled_list)):
         # 核函数 这也是能够调整的参数的地方
-        kernel = C(1.0, (1e-3, 1e6)) * RBF(length_scale=1.0, length_scale_bounds=(1e-1, 1e4))
+        kernel = C(
+            params["constant_value"],
+            (params["constant_lower"], params["constant_upper"]),
+        ) * RBF(
+            length_scale=params["length_scale"],
+            length_scale_bounds=(
+                params["length_scale_lower"], params["length_scale_upper"]
+            ),
+        )
         cur_model = GaussianProcessRegressor(
             kernel = kernel,
-            n_restarts_optimizer = 20,
-            alpha = 0.1,
-            random_state = 42
+            n_restarts_optimizer=params["n_restarts_optimizer"],
+            alpha=params["alpha"],
+            normalize_y=params["normalize_y"],
+            random_state=params["random_state"],
         )
         # 训练模型
         cur_model.fit(X_train_scaled, Y_train_scaled_list[idx])

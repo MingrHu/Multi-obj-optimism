@@ -44,6 +44,7 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QDoubleSpinBox,
     QFileDialog,
+    QFormLayout,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -549,6 +550,160 @@ class ChoiceDelegate(QStyledItemDelegate):
 
     def setModelData(self, editor, model, index) -> None:
         model.setData(index, editor.currentData(), Qt.ItemDataRole.EditRole)
+
+
+class ModelHyperparameterDialog(QDialog):
+    """Edit explicit model parameter overrides; blank fields retain defaults."""
+
+    def __init__(
+        self,
+        family: str,
+        schema: dict[str, dict[str, Any]],
+        overrides: dict[str, Any],
+        parent: QWidget | None = None,
+    ):
+        super().__init__(parent)
+        self.family = family
+        self.schema = schema
+        self.configured_values = dict(overrides)
+        self.editors: dict[str, QWidget] = {}
+        self.setWindowTitle(f"{family} 超参数设置")
+        self.resize(560, 650)
+        layout = QVBoxLayout(self)
+        hint = QLabel("留空或选择“使用默认值”时不提交该参数；后端会采用所示默认值。")
+        hint.setObjectName("Caption")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        content = QWidget()
+        form = QFormLayout(content)
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        for name, spec in schema.items():
+            editor = self._create_editor(name, spec, overrides.get(name))
+            self.editors[name] = editor
+            label = QLabel(str(spec.get("label") or name))
+            label.setToolTip(name)
+            form.addRow(label, editor)
+        scroll.setWidget(content)
+        layout.addWidget(scroll, 1)
+        self.summary = QLabel("")
+        self.summary.setObjectName("Caption")
+        self.summary.setWordWrap(True)
+        layout.addWidget(self.summary)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        reset = buttons.addButton("恢复全部默认值", QDialogButtonBox.ButtonRole.ResetRole)
+        reset.clicked.connect(self._reset_defaults)
+        buttons.accepted.connect(self._validate_and_accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def _create_editor(
+        self, name: str, spec: dict[str, Any], current: Any
+    ) -> QWidget:
+        choices = spec.get("choices")
+        default = spec.get("default")
+        kind = spec.get("type")
+        if kind == "boolean" or (choices is not None and kind != "number_or_string"):
+            editor = QComboBox()
+            editor.addItem(f"使用默认值（{self._display(default)}）", None)
+            values = [True, False] if spec.get("type") == "boolean" else list(choices)
+            for value in values:
+                editor.addItem(self._display(value), value)
+            if name in self.configured_values:
+                index = editor.findData(current)
+                editor.setCurrentIndex(max(index, 0))
+            return editor
+        editor = QLineEdit()
+        editor.setPlaceholderText(f"默认：{self._display(default)}")
+        if name in self.configured_values:
+            editor.setText(self._display(current))
+        if spec.get("nullable"):
+            editor.setToolTip("留空使用默认值；输入 null 可显式设置为空。")
+        if choices:
+            choice_hint = " / ".join(map(str, choices))
+            nullable_hint = "，也可输入 null" if spec.get("nullable") else ""
+            editor.setToolTip(
+                f"留空使用默认值；可输入数值或 {choice_hint}{nullable_hint}。"
+            )
+        return editor
+
+    @staticmethod
+    def _display(value: Any) -> str:
+        if value is None:
+            return "null"
+        if isinstance(value, bool):
+            return "true" if value else "false"
+        return str(value)
+
+    def _reset_defaults(self) -> None:
+        for editor in self.editors.values():
+            if isinstance(editor, QComboBox):
+                editor.setCurrentIndex(0)
+            elif isinstance(editor, QLineEdit):
+                editor.clear()
+        self.summary.setText("已恢复为全部使用默认值。")
+
+    def _validate_and_accept(self) -> None:
+        try:
+            self.configured_values = self._collect_values()
+        except ValueError as exc:
+            self.summary.setText(str(exc))
+            return
+        self.accept()
+
+    def _collect_values(self) -> dict[str, Any]:
+        values: dict[str, Any] = {}
+        for name, spec in self.schema.items():
+            editor = self.editors[name]
+            if isinstance(editor, QComboBox):
+                value = editor.currentData()
+                if editor.currentIndex() == 0:
+                    continue
+            else:
+                raw = editor.text().strip()
+                if not raw:
+                    continue
+                value = self._parse_text(name, raw, spec)
+            self._validate_range(name, value, spec)
+            values[name] = value
+        return values
+
+    def _parse_text(self, name: str, raw: str, spec: dict[str, Any]) -> Any:
+        if raw.lower() == "null" and spec.get("nullable"):
+            return None
+        kind = spec.get("type")
+        try:
+            if kind == "integer":
+                return int(raw)
+            if kind == "number":
+                return float(raw)
+            if kind == "integer_or_number":
+                return float(raw) if any(mark in raw.lower() for mark in (".", "e")) else int(raw)
+            if kind == "number_or_string":
+                if raw in spec.get("choices", []):
+                    return raw
+                return float(raw) if any(mark in raw.lower() for mark in (".", "e")) else int(raw)
+        except ValueError as exc:
+            raise ValueError(f"{name} 的输入格式不正确") from exc
+        return raw
+
+    @staticmethod
+    def _validate_range(name: str, value: Any, spec: dict[str, Any]) -> None:
+        if value is None or not isinstance(value, (int, float)) or isinstance(value, bool):
+            return
+        checks = (
+            ("minimum", value < spec.get("minimum", value), ">="),
+            ("maximum", value > spec.get("maximum", value), "<="),
+            ("exclusive_minimum", value <= spec.get("exclusive_minimum", value - 1), ">"),
+            ("exclusive_maximum", value >= spec.get("exclusive_maximum", value + 1), "<"),
+        )
+        for key, invalid, operator in checks:
+            if key in spec and invalid:
+                raise ValueError(f"{name} 必须 {operator} {spec[key]}")
 
 
 class NumericDelegate(QStyledItemDelegate):
@@ -1143,6 +1298,14 @@ class ModelPage(QWidget, AsyncMixin):
         self.selected_score_index: int | None = None
         self.hovered_score_index: int | None = None
         self.score_series: QBarSeries | None = None
+        self.hyperparameter_catalog: dict[str, dict[str, dict[str, Any]]] = {}
+        self.model_params: dict[str, dict[str, Any]] = {
+            name: {} for name in ("PRG", "SVR", "RF", "KM", "DNN")
+        }
+        self.model_param_buttons: dict[str, QPushButton] = {}
+        self.hyperparameters_loading = False
+        self.hyperparameters_error = ""
+        self.pending_model_configuration: str | None = None
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -1222,14 +1385,21 @@ class ModelPage(QWidget, AsyncMixin):
         self.save_hint.setWordWrap(True)
         config_layout.addWidget(self.save_hint)
         config_layout.addWidget(QLabel("待训练模型"))
-        model_row = QHBoxLayout()
+        model_grid = QGridLayout()
         self.models: dict[str, QCheckBox] = {}
-        for name in ("PRG", "SVR", "RF", "KM", "DNN"):
+        for column, name in enumerate(("PRG", "SVR", "RF", "KM", "DNN")):
             checkbox = QCheckBox(name)
             checkbox.setChecked(name in {"PRG", "SVR", "RF", "KM"})
             self.models[name] = checkbox
-            model_row.addWidget(checkbox)
-        config_layout.addLayout(model_row)
+            model_grid.addWidget(checkbox, 0, column, Qt.AlignmentFlag.AlignCenter)
+            param_button = QPushButton("参数（默认）")
+            param_button.setEnabled(False)
+            param_button.setToolTip("勾选模型后可设置超参数；不设置时使用后端默认值。")
+            param_button.clicked.connect(partial(self.configure_model, name))
+            checkbox.toggled.connect(self._refresh_model_parameter_buttons)
+            self.model_param_buttons[name] = param_button
+            model_grid.addWidget(param_button, 1, column)
+        config_layout.addLayout(model_grid)
         button_row = QHBoxLayout()
         self.save_button = QPushButton("保存 DOE 配置")
         self.save_button.setToolTip("保存当前数据、字段名称以及输入/输出角色，不会启动训练。")
@@ -1296,6 +1466,83 @@ class ModelPage(QWidget, AsyncMixin):
         scroll.setWidget(body)
         outer.addWidget(scroll)
         self._refresh_training_actions()
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        if not self.hyperparameter_catalog and not self.hyperparameters_loading:
+            self.load_hyperparameter_catalog()
+
+    def load_hyperparameter_catalog(self) -> None:
+        if self.hyperparameters_loading:
+            return
+        self.hyperparameters_loading = True
+        self.hyperparameters_error = ""
+        self._refresh_model_parameter_buttons()
+        self.run_async(
+            lambda: self.client_provider().training_hyperparameters(),
+            self._hyperparameters_loaded,
+            self._hyperparameters_failed,
+        )
+
+    def _hyperparameters_loaded(self, data: dict[str, Any]) -> None:
+        self.hyperparameters_loading = False
+        self.hyperparameters_error = ""
+        models = data.get("models")
+        if not isinstance(models, dict):
+            self._hyperparameters_failed("后端未返回模型参数定义")
+            return
+        self.hyperparameter_catalog = {
+            str(name): schema
+            for name, schema in models.items()
+            if isinstance(schema, dict)
+        }
+        self._refresh_model_parameter_buttons()
+        pending = self.pending_model_configuration
+        self.pending_model_configuration = None
+        if pending and pending in self.hyperparameter_catalog:
+            QTimer.singleShot(0, partial(self.configure_model, pending))
+
+    def _hyperparameters_failed(self, message: str) -> None:
+        self.hyperparameters_loading = False
+        self.hyperparameters_error = message
+        self.pending_model_configuration = None
+        self.hyperparameter_catalog = {}
+        self._refresh_model_parameter_buttons()
+        self.save_hint.setText(
+            f"超参数定义加载失败：{message}；可点击“参数（重试）”重新加载，默认训练仍可使用。"
+        )
+
+    def _refresh_model_parameter_buttons(self, _checked: bool | None = None) -> None:
+        for name, button in self.model_param_buttons.items():
+            count = len(self.model_params.get(name, {}))
+            if name in self.hyperparameter_catalog:
+                button.setText(f"参数（{count} 项）" if count else "参数（默认）")
+                button.setToolTip("设置该模型的超参数；留空时使用后端默认值。")
+                button.setEnabled(self.models[name].isChecked())
+            elif self.hyperparameters_loading:
+                button.setText("参数（加载中）")
+                button.setEnabled(False)
+            else:
+                button.setText("参数（重试）")
+                button.setToolTip(
+                    f"参数定义尚未加载，点击重试。{self.hyperparameters_error}"
+                )
+                button.setEnabled(self.models[name].isChecked())
+
+    def configure_model(self, family: str) -> None:
+        schema = self.hyperparameter_catalog.get(family)
+        if not schema:
+            self.pending_model_configuration = family
+            self.save_hint.setText("正在重新加载代理模型超参数定义…")
+            self.load_hyperparameter_catalog()
+            return
+        dialog = ModelHyperparameterDialog(
+            family, schema, self.model_params.get(family, {}), self
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        self.model_params[family] = dialog.configured_values
+        self._refresh_model_parameter_buttons()
 
     def refresh_does(self) -> None:
         if self.doe_refresh_in_flight:
@@ -1387,6 +1634,8 @@ class ModelPage(QWidget, AsyncMixin):
         self.headers = []
         self.rows = []
         self.field_roles = []
+        self.model_params = {name: {} for name in self.models}
+        self._refresh_model_parameter_buttons()
         self.configuration_dirty = False
         self.pending_configuration_save = False
         self.dataset_source_name = ""
@@ -1702,7 +1951,10 @@ class ModelPage(QWidget, AsyncMixin):
         payload = {
             "id": doe_id,
             "data_source": self._training_data_source(schema),
-            "models": [{"name": name, "params": {}} for name in selected],
+            "models": [
+                {"name": name, "params": dict(self.model_params.get(name, {}))}
+                for name in selected
+            ],
             "evaluation": {"enabled": True, "method": "k_fold", "n_splits": self.folds.value(), "random_state": 42},
         }
         self.start_button.setEnabled(False)
@@ -1830,6 +2082,7 @@ class ModelPage(QWidget, AsyncMixin):
         self.updated_label.setToolTip(str(raw_updated_at or ""))
         self.progress.setValue(int(data.get("progress", 0)))
         models = data.get("models", [])
+        self._restore_model_parameters(data.get("model_configs"))
         self.has_completed_training = state == "finished" and bool(models)
         self.start_button.setText("重新训练" if self.has_completed_training else "开始训练")
         if self.has_completed_training:
@@ -1858,6 +2111,27 @@ class ModelPage(QWidget, AsyncMixin):
         if state in {"finished", "failed", "stopped", "not_started"}:
             self.timer.stop()
         self._refresh_training_actions()
+
+    def _restore_model_parameters(self, configs: Any) -> None:
+        if not isinstance(configs, list):
+            return
+        selected_names = set()
+        restored = {name: {} for name in self.models}
+        for config in configs:
+            if not isinstance(config, dict):
+                continue
+            name = str(config.get("name") or "")
+            if name not in self.models:
+                continue
+            selected_names.add(name)
+            overrides = config.get("param_overrides")
+            if isinstance(overrides, dict):
+                restored[name] = dict(overrides)
+        if selected_names:
+            self.model_params = restored
+            for name, checkbox in self.models.items():
+                checkbox.setChecked(name in selected_names)
+            self._refresh_model_parameter_buttons()
 
     def _restore_saved_dataset(self, data: dict[str, Any]) -> None:
         dataset = dict(data.get("dataset") or {})

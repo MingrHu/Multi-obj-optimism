@@ -4,9 +4,12 @@ from sklearn.preprocessing import PolynomialFeatures
 from sklearn.linear_model import LinearRegression
 from sklearn.pipeline import make_pipeline
 from sklearn.metrics import r2_score
+from typing import Any
+
+from .hyperparameters import normalize_model_params
 
 def prg_fun(file: str, vars_out: list[str], n_var: int,
-            model_par: list[str] | None = None):
+            model_par: dict[str, Any] | None = None):
     # 1. 加载数据
     X, Y = load_and_preprocess_data(file,vars_out,n_var)
     # 2. 划分数据集并标准化
@@ -15,9 +18,11 @@ def prg_fun(file: str, vars_out: list[str], n_var: int,
     scalers) = split_data_without_val(X, Y)            
 
     for idx in range(len(Y_train_scaled_list)):
-        degree = 2
-        cur_model = make_pipeline(PolynomialFeatures(degree, include_bias=False), 
-            LinearRegression())
+        params = normalize_model_params("PRG", model_par)
+        cur_model = make_pipeline(
+            PolynomialFeatures(params["degree"], include_bias=params["include_bias"]),
+            LinearRegression(fit_intercept=params["fit_intercept"]),
+        )
         # 训练模型
         cur_model.fit(X_train_scaled, Y_train_scaled_list[idx])
         pred_scaled = cur_model.predict(X_test_scaled)

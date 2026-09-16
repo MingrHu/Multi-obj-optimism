@@ -19,6 +19,7 @@ from typing import Any, Dict, List, Optional
 from mobo.common import task_store
 from mobo.common.logging import logger
 from mobo.common.paths import model_family_dir
+from .hyperparameters import normalize_model_params
 from .interface import Doe_surrogateModel
 
 _KIND = "surrogate"
@@ -34,26 +35,12 @@ _INDEX_MAP = {
     4: (1, "DNN"),
 }
 
-# 各模型 biz_params 到底层 model_par 列表的顺序约定
-_PARAM_ORDER = {
-    "PRG": ["degree"],
-    "SVR": ["kernel", "C", "epsilon"],
-    "RF": ["n_estimators", "n_jobs"],
-    "KM": ["alpha", "n_restarts_optimizer"],
-    "DNN": ["epochs", "batch_size", "verbose", "patience"],
-}
-
 # 训练续跑所需的参数键（三路解析：记录 > 传入 > 报错）
 _REQUIRED_TRAIN_KEYS = ("data_file", "vars_out", "n_vars", "model_index", "biz_params")
 
 
 def _new_model_id() -> str:
     return "tr_" + datetime.now().strftime("%Y%m%d_%H%M_%S%f")[:-3]
-
-
-def _to_model_par(family: str, biz_params: Dict[str, Any]) -> List[str]:
-    """按各模型约定顺序把 biz_params 转成底层 model_par 字符串列表。"""
-    return [str(biz_params[k]) for k in _PARAM_ORDER.get(family, []) if k in biz_params]
 
 
 def _snapshot_model_artifacts(
@@ -119,13 +106,20 @@ def train_surrogate(
 
     which_model, family = _INDEX_MAP[model_index]
     data_file, vars_out, n_vars = req["data_file"], req["vars_out"], req["n_vars"]
-    biz_params = req["biz_params"] or {}
-    task_store.update(model_id, stage="train", status="running")
+    try:
+        biz_params = normalize_model_params(family, req["biz_params"] or {})
+    except ValueError as exc:
+        task_store.update(model_id, stage="train", status="failed")
+        return {"code": 1, "msg": str(exc), "model_id": model_id, "data": {}}
+    task_store.update(
+        model_id, req={"biz_params": biz_params}, stage="train", status="running"
+    )
 
     try:
-        model_par = _to_model_par(family, biz_params)
         started = time.time()
-        Doe_surrogateModel(data_file, vars_out, n_vars).train_save_model(which_model, model_par)
+        Doe_surrogateModel(data_file, vars_out, n_vars).train_save_model(
+            which_model, biz_params
+        )
         cost = round(time.time() - started, 2)
 
         target_names = vars_out[n_vars:]

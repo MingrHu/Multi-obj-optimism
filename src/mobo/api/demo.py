@@ -104,7 +104,10 @@ def main() -> None:
         "data_source": data_source,
     })
 
-    # 7 训练代理模型并评价
+    # 7 查询后端支持的模型超参数 再训练代理模型并评价
+    catalog = call("GET", "/api/v1/hust/doe/train/hyperparameters")
+    if "RF" not in catalog["data"]["models"]:
+        raise RuntimeError(f"后端未返回 RF 超参数定义 {catalog['data']}")
     call("POST", "/api/v1/hust/doe/train/startTrain", json={
         "id": doe_id,
         "data_source": data_source,

@@ -3,9 +3,12 @@ from .common import (load_and_preprocess_data,split_data_without_val,
 
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import r2_score
+from typing import Any
+
+from .hyperparameters import normalize_model_params
 
 def rf_run(file: str, vars_out: list[str], n_var: int,
-           model_par: list[str] | None = None):
+           model_par: dict[str, Any] | None = None):
     # 1. 加载数据
     X, Y = load_and_preprocess_data(file,vars_out,n_var)
     # 2. 划分数据集并标准化
@@ -13,9 +16,9 @@ def rf_run(file: str, vars_out: list[str], n_var: int,
     Y_train_scaled_list, Y_test_scaled_list,
     scalers) = split_data_without_val(X, Y)            
 
+    params = normalize_model_params("RF", model_par)
     for idx in range(len(Y_train_scaled_list)):
-        num = 300
-        cur_model = RandomForestRegressor(n_estimators=num, random_state=42, n_jobs=-1)
+        cur_model = RandomForestRegressor(**params)
         # 训练模型
         cur_model.fit(X_train_scaled, Y_train_scaled_list[idx])
         pred_scaled = cur_model.predict(X_test_scaled)

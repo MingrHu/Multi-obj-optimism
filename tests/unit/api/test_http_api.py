@@ -252,6 +252,7 @@ def test_training_request_is_async(monkeypatch, tmp_path):
 
 def test_training_accepts_inline_data_and_model_names(monkeypatch, tmp_path):
     from mobo.api import service
+    from mobo.surrogate.hyperparameters import default_model_params
 
     client = _client(monkeypatch, tmp_path)
     client.post("/api/v1/doe/add", json={"id": "inline_train"})
@@ -275,9 +276,36 @@ def test_training_accepts_inline_data_and_model_names(monkeypatch, tmp_path):
     dataset = Path(state["dataset"]["data_file"])
     assert dataset.parent == tmp_path / "doe_tasks" / "inline_train" / "training"
     assert dataset.read_text(encoding="utf-8").splitlines() == ["1\t2\t3", "2\t3\t5", "3\t4\t7"]
+    expected = default_model_params("RF")
+    expected.update({"n_estimators": 20, "n_jobs": 1})
     assert state["request"]["models"] == [{
-        "model_index": 2, "params": {"n_estimators": 20, "n_jobs": 1},
+        "model_index": 2,
+        "params": expected,
+        "param_overrides": {"n_estimators": 20, "n_jobs": 1},
     }]
+
+
+def test_training_hyperparameter_catalog_and_validation(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    catalog = client.get("/api/v1/hust/doe/train/hyperparameters")
+    assert catalog.status_code == 200
+    models = catalog.json["data"]["models"]
+    assert set(models) == {"PRG", "SVR", "RF", "KM", "DNN"}
+    assert models["RF"]["n_estimators"]["default"] == 300
+    assert models["DNN"]["learning_rate"]["type"] == "number"
+
+    client.post("/api/v1/doe/add", json={"id": "invalid_hyperparams"})
+    response = client.post("/api/v1/hust/doe/train/startTrain", json={
+        "id": "invalid_hyperparams",
+        "data_source": {
+            "input_data": {"labels": ["x"], "samples": [[1], [2], [3]]},
+            "output_data": {"labels": ["y"], "samples": [[2], [4], [6]]},
+        },
+        "models": [{"name": "RF", "params": {"n_estimators": 0}}],
+        "evaluation": {"n_splits": 3},
+    })
+    assert response.status_code == 400
+    assert "n_estimators" in response.json["message"]
 
 
 def test_training_rejects_mismatched_inline_rows(monkeypatch, tmp_path):

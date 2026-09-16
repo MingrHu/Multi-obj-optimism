@@ -27,6 +27,7 @@ from .common import (
     load_and_preprocess_data,
     normal_max_absolute_error,
 )
+from .hyperparameters import normalize_model_params
 
 output_dir = str(TEST_DIR)
 os.makedirs(output_dir, exist_ok=True)
@@ -369,43 +370,52 @@ class SurrogateModelEvaluator:
     # @param  model_name       模型名称
     # @param  input_dim        输入维度
     def _build_model(self, *, model_name: str, input_dim: int):
-        params = self.model_params.get(model_name, {})
+        params = normalize_model_params(model_name, self.model_params.get(model_name, {}))
 
         if model_name == "SVR":
-            return SVR(
-                kernel=params.get("kernel", "rbf"),
-                C=float(params.get("C", 1.0)),
-                epsilon=float(params.get("epsilon", 0.1)),
-            )
+            return SVR(**params)
 
         if model_name == "RF":
-            return RandomForestRegressor(
-                n_estimators=int(params.get("n_estimators", 300)),
-                random_state=int(params.get("random_state", self.random_state)),
-                n_jobs=int(params.get("n_jobs", -1)),
-            )
+            return RandomForestRegressor(**params)
 
         if model_name == "PRG":
-            degree = int(params.get("degree", 2))
             return make_pipeline(
-                PolynomialFeatures(degree, include_bias=False),
-                LinearRegression(),
+                PolynomialFeatures(
+                    params["degree"], include_bias=params["include_bias"]
+                ),
+                LinearRegression(fit_intercept=params["fit_intercept"]),
             )
 
         if model_name == "KM":
-            kernel = C(1.0, (1e-3, 1e6)) * RBF(
-                length_scale=float(params.get("length_scale", 1.0)),
-                length_scale_bounds=params.get("length_scale_bounds", (1e-1, 1e4)),
+            kernel = C(
+                params["constant_value"],
+                (params["constant_lower"], params["constant_upper"]),
+            ) * RBF(
+                length_scale=params["length_scale"],
+                length_scale_bounds=(
+                    params["length_scale_lower"], params["length_scale_upper"]
+                ),
             )
             return GaussianProcessRegressor(
                 kernel=kernel,
-                n_restarts_optimizer=int(params.get("n_restarts_optimizer", 10)),
-                alpha=float(params.get("alpha", 0.1)),
-                random_state=int(params.get("random_state", self.random_state)),
+                n_restarts_optimizer=params["n_restarts_optimizer"],
+                alpha=params["alpha"],
+                normalize_y=params["normalize_y"],
+                random_state=params["random_state"],
             )
 
         if model_name == "DNN":
-            return build_single_output_dnn(input_dim)
+            return build_single_output_dnn(
+                input_dim,
+                hidden_layer_1=params["hidden_layer_1"],
+                hidden_layer_2=params["hidden_layer_2"],
+                hidden_layer_3=params["hidden_layer_3"],
+                activation=params["activation"],
+                dropout_1=params["dropout_1"],
+                dropout_2=params["dropout_2"],
+                batch_normalization=params["batch_normalization"],
+                learning_rate=params["learning_rate"],
+            )
 
         raise ValueError(f"Unsupported model_name: {model_name}")
 
@@ -417,25 +427,30 @@ class SurrogateModelEvaluator:
     # @param  X_train_scaled    缩放后的训练特征矩阵
     # @param  y_train_scaled    缩放后的训练目标值向量
     def _fit_dnn(self, model, X_train_scaled: np.ndarray, y_train_scaled: np.ndarray) -> None:
-        params = self.model_params.get("DNN", {})
-        epochs = int(params.get("epochs", 300))
-        batch_size = int(params.get("batch_size", 16))
-        verbose = int(params.get("verbose", 0))
-        patience = int(params.get("patience", 30))
+        params = normalize_model_params("DNN", self.model_params.get("DNN", {}))
 
         callbacks = [
-            EarlyStopping(monitor="val_loss", patience=patience, restore_best_weights=True),
-            ReduceLROnPlateau(monitor="val_loss", factor=0.2, patience=5, min_lr=1e-6),
+            EarlyStopping(
+                monitor="val_loss",
+                patience=params["patience"],
+                restore_best_weights=True,
+            ),
+            ReduceLROnPlateau(
+                monitor="val_loss",
+                factor=params["reduce_lr_factor"],
+                patience=params["reduce_lr_patience"],
+                min_lr=params["min_lr"],
+            ),
         ]
 
         model.fit(
             X_train_scaled,
             y_train_scaled,
             validation_split=0.2,
-            epochs=epochs,
-            batch_size=batch_size,
+            epochs=params["epochs"],
+            batch_size=params["batch_size"],
             callbacks=callbacks,
-            verbose=verbose,
+            verbose=params["verbose"],
         )
 
     # @brief  计算并更新模型评估分数
