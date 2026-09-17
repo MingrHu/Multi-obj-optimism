@@ -10,10 +10,11 @@
 | 代理模型 | `mobo.surrogate.service` | `model_id`（`tr_` 前缀） | `train_surrogate`、`query_model_status` |
 | 优化 | `mobo.optimization.service` | `task_id`（`opt_` 前缀） | `run_optimization`、`query_optimization_status` |
 | 单工步 DEFORM | `mobo.automation.service` | `task_id` | `init_execution_task`、`run_execution_step`、`run_extract_data` |
-| 多工步 DEFORM | `mobo.automation.multi_operation_service` | `task_id` | `init_multi_operation_task`、`run_multi_operation_task`、`run_multi_operation_extract` |
+| 多工步 DEFORM | `mobo.automation.multi_operation_service` | `task_id` + 分片范围 | `init_multi_operation_task`、`run_multi_operation_task`、`run_multi_operation_extract` |
 
-任务状态统一存放在 `data/tasks/<task_id>/state.json`。状态包含 `kind`、`status`、
-`stage`、`req`、`data` 和只追加的 `history`。服务可通过任务 ID 读取已保存的请求参数，
+任务状态统一存放在 `data/tasks/<task_id>/`。普通任务使用 `state.json`；多工步分片任务使用
+`state_<start>_<end>.json`，并要求运行、提取和查询时传入与初始化一致的 `sample_start`、
+`sample_end`。状态包含 `kind`、`status`、`stage`、`req`、`data` 和只追加的 `history`，
 用于查询和断点恢复。
 
 ## 代理模型服务

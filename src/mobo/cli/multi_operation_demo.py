@@ -69,21 +69,33 @@ def generate_keyfile_test() -> None:
 
 def run_process_test() -> None:
     """运行或从磁盘状态续跑多工步任务。"""
-    print(run_multi_operation_task(_TASK_ID))
+    print(run_multi_operation_task(
+        _TASK_ID,
+        sample_start=_SAMPLE_START,
+        sample_end=_SAMPLE_END,
+    ))
 
 
 def extra_data_test() -> None:
     """提取已完成样本并生成结果数据集。"""
-    print(run_multi_operation_extract(_TASK_ID))
+    print(run_multi_operation_extract(
+        _TASK_ID,
+        sample_start=_SAMPLE_START,
+        sample_end=_SAMPLE_END,
+    ))
 
 
 def status_test() -> None:
     """查看任务及各样本、各工步状态。"""
-    print(query_multi_operation_status(_TASK_ID))
+    print(query_multi_operation_status(
+        _TASK_ID,
+        sample_start=_SAMPLE_START,
+        sample_end=_SAMPLE_END,
+    ))
 
 
 if __name__ == "__main__":
-    # 每一步可单独运行，只要 _TASK_ID 一致即可接着上一步继续
+    # 每一步可单独运行，_TASK_ID 与分片范围一致即可接着上一步继续
     sample_generate_test()
     # generate_keyfile_test()
     # run_process_test()

@@ -30,6 +30,21 @@ def _workflow_state_file(
     return str(task_dir(task_id) / f"multi_operation_state{suffix}.json")
 
 
+def _task_state_name(
+    sample_start: int = 0, sample_end: int | None = None
+) -> str:
+    """返回当前分片的任务级状态文件名。"""
+    return f"state{_range_suffix(sample_start, sample_end)}.json"
+
+
+def _incremental_state_file(
+    task_id: str, sample_start: int = 0, sample_end: int | None = None
+) -> str:
+    """返回当前分片的增量提取状态文件。"""
+    suffix = _range_suffix(sample_start, sample_end)
+    return str(task_dir(task_id) / f"incremental_dataset{suffix}.json")
+
+
 def create_multi_operation_sampling_task(task_id: str, operations: Sequence[Operation],
                                          save_dir: str, method: str = "lhs",
                                          n_samples: int = 0,
@@ -64,8 +79,9 @@ def init_multi_operation_task(task_id: str, sample_file: str,
            "incremental": incremental,
            "sample_start": sample_start, "sample_end": sample_end,
            "state_file": _workflow_state_file(task_id, sample_start, sample_end)}
-    task_store.init_state(task_id, _KIND, req)
-    task_store.update(task_id, req=req)
+    task_state_name = _task_state_name(sample_start, sample_end)
+    task_store.init_state(task_id, _KIND, req, state_name=task_state_name)
+    task_store.update(task_id, state_name=task_state_name, req=req)
     task = MultiOperationTask(
         task_id=task_id,
         sample_file=req["sample_file"],
@@ -79,21 +95,31 @@ def init_multi_operation_task(task_id: str, sample_file: str,
         sample_end=req["sample_end"],
     )
     key_files = task.prepare_parameterized_keys()
-    return task_store.update(task_id, stage="initialized", status="running",
-                             data={"workflow_state": task.state_file,
-                                   "key_file_count": len(key_files)})
+    return task_store.update(
+        task_id,
+        state_name=task_state_name,
+        stage="initialized",
+        status="running",
+        data={"workflow_state": task.state_file, "key_file_count": len(key_files)},
+    )
 
 
-def _rebuild(task_id: str, provided: Optional[Dict[str, Any]] = None) -> MultiOperationTask:
+def _rebuild(
+    task_id: str,
+    sample_start: int = 0,
+    sample_end: int | None = None,
+    provided: Optional[Dict[str, Any]] = None,
+) -> MultiOperationTask:
     required = ["sample_file", "operations", "work_dir"]
-    req = task_store.resolve_req(task_id, _KIND, provided or {}, required)
-    sample_start = int(req.get("sample_start", 0))
-    sample_end_value = req.get("sample_end")
-    sample_end = int(sample_end_value) if sample_end_value is not None else None
+    task_state_name = _task_state_name(sample_start, sample_end)
+    req = task_store.resolve_req(
+        task_id, _KIND, provided or {}, required, state_name=task_state_name
+    )
     state_file = _workflow_state_file(task_id, sample_start, sample_end)
     if req.get("state_file") != state_file:
         task_store.update(
             task_id,
+            state_name=task_state_name,
             req={"state_file": state_file},
             data={"workflow_state": state_file},
         )
@@ -109,11 +135,17 @@ def _rebuild(task_id: str, provided: Optional[Dict[str, Any]] = None) -> MultiOp
     )
 
 
-def run_multi_operation_task(task_id: str, **provided: Any) -> Dict[str, Any]:
-    """仅凭 task_id 从磁盘重建并运行或续跑多工步任务。"""
+def run_multi_operation_task(
+    task_id: str,
+    sample_start: int = 0,
+    sample_end: int | None = None,
+    **provided: Any,
+) -> Dict[str, Any]:
+    """根据任务 ID 和分片范围从磁盘重建并运行或续跑多工步任务。"""
     # 1 加载任务信息 可断点续跑
-    task = _rebuild(task_id, provided)
-    state = task_store.load(task_id) or {}
+    task_state_name = _task_state_name(sample_start, sample_end)
+    task = _rebuild(task_id, sample_start, sample_end, provided)
+    state = task_store.load(task_id, task_state_name) or {}
     req = state.get("req") or {}
 
     # 2 是否在计算完成DB后立马提取数据
@@ -131,8 +163,8 @@ def run_multi_operation_task(task_id: str, **provided: Any) -> Dict[str, Any]:
             int(requested_end_value) if requested_end_value is not None else None
         )
         suffix = _range_suffix(requested_start, requested_end)
-        incremental_state_file = str(
-            task_dir(task_id) / f"incremental_dataset{suffix}.json"
+        incremental_state_file = _incremental_state_file(
+            task_id, requested_start, requested_end
         )
         incremental_output_file = str(
             definition.workspace / "results"
@@ -176,22 +208,31 @@ def run_multi_operation_task(task_id: str, **provided: Any) -> Dict[str, Any]:
         task.on_sample_completed = on_sample_completed
 
     # 3 运行或续跑任务
-    task_store.update(task_id, stage="solving", status="running")
+    task_store.update(
+        task_id, state_name=task_state_name, stage="solving", status="running"
+    )
     result = task.run()
     status = "finished" if result["status"] == "completed" else "failed"
-    return task_store.update(task_id, stage="completed" if status == "finished" else "failed",
-                             status=status, data={"workflow": result,
-                                                 "workflow_state": task.state_file,
-                                                 "result_db_files": task.result_db_files(),
-                                                 "incremental_state_file":
-                                                     incremental_state_file,
-                                                 "incremental_output_file":
-                                                     incremental_output_file})
+    return task_store.update(
+        task_id,
+        state_name=task_state_name,
+        stage="completed" if status == "finished" else "failed",
+        status=status,
+        data={
+            "workflow": result,
+            "workflow_state": task.state_file,
+            "result_db_files": task.result_db_files(),
+            "incremental_state_file": incremental_state_file,
+            "incremental_output_file": incremental_output_file,
+        },
+    )
 
 
-def query_multi_operation_status(task_id: str) -> Optional[Dict[str, Any]]:
+def query_multi_operation_status(
+    task_id: str, sample_start: int = 0, sample_end: int | None = None
+) -> Optional[Dict[str, Any]]:
     """返回任务级状态，并在可用时附带逐样本、逐工步状态。"""
-    state = task_store.load(task_id)
+    state = task_store.load(task_id, _task_state_name(sample_start, sample_end))
     if state is None:
         return None
     path = (state.get("data") or {}).get("workflow_state")
@@ -203,15 +244,21 @@ def query_multi_operation_status(task_id: str) -> Optional[Dict[str, Any]]:
     return state
 
 
-def run_multi_operation_extract(task_id: str, result_dir: str | None = None) -> Dict[str, Any]:
-    """仅凭 task_id 恢复多工步任务并生成无表头结果数据集。"""
+def run_multi_operation_extract(
+    task_id: str,
+    result_dir: str | None = None,
+    sample_start: int = 0,
+    sample_end: int | None = None,
+) -> Dict[str, Any]:
+    """根据任务 ID 和分片范围恢复任务并生成无表头结果数据集。"""
     from .task_collection import get_multi_operation_task_definition
 
-    task = _rebuild(task_id)
+    task_state_name = _task_state_name(sample_start, sample_end)
+    task = _rebuild(task_id, sample_start, sample_end)
     definition = get_multi_operation_task_definition(task_id)
     result_file = definition.extract_dataset(task, result_dir=result_dir)
     return task_store.update(
-        task_id, stage="extract", status="finished",
+        task_id, state_name=task_state_name, stage="extract", status="finished",
         data={"result_file": result_file},
     )
 

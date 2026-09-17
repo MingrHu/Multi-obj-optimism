@@ -52,7 +52,7 @@ DOE 聚合服务。路由层位于 `api.handler`，实际处理层位于 `api.se
 |---|---|---|
 | `common` | `paths.py` | 集中式路径解析（包括 `DOE_TASKS_DIR/AUTO_SINGLE_DIR/AUTO_MULTI_DIR`）+ 环境变量覆盖 |
 | `common` | `logging.py` | `GlobalLogger` 单例；显式 stdout 重定向 |
-| `common` | `task_store.py` | 任务状态持久化（`data/tasks/<id>/state.json`），三流程共用；`history` 完整记录阶段转移（只追加不覆盖），`resolve_req` 三路解析续跑参数（记录 > 传入 > 报错） |
+| `common` | `task_store.py` | 任务状态持久化（默认 `data/tasks/<id>/state.json`，支持命名状态文件），三流程共用；`history` 完整记录阶段转移（只追加不覆盖），`resolve_req` 三路解析续跑参数（记录 > 传入 > 报错） |
 | `surrogate` | `common.py` | 数据加载/划分/标准化、指标、`save_model`、`Time`、DNN 构建 |
 | `surrogate` | `hyperparameters.py` | 五类模型的参数元数据、默认值合并、类型/范围及关联约束校验 |
 | `surrogate` | `dnn/polynomial/svr/random_forest/kriging.py` | 五种代理模型训练入口 |
@@ -191,10 +191,12 @@ TC4 碾环多工步任务由 `task_collection.TC4_RING_MULTI_TASK_1` 完整定�
 - 多工步可通过 `sample_start` 与 `sample_end` 只处理完整采样 TXT 的指定行范围；
   范围使用从 0 开始、结束下标不包含的全局样本编号，因此不同机器生成的
   `runs/<sample>/` 可以无冲突汇总。分片状态文件使用
-  `multi_operation_state_<start>_<end>.json`，并记录完整采样文件哈希；默认完整范围仍使用
-  历史文件名 `multi_operation_state.json`。
-- 任务状态集中在 `data/tasks/<task_id>/`：`state.json` 记录任务阶段，多工步的
-  `multi_operation_state.json` 记录逐样本/逐工步恢复状态，单工步的
+  `state_<start>_<end>.json`、`multi_operation_state_<start>_<end>.json` 和
+  `incremental_dataset_<start>_<end>.json`，分别隔离任务请求、逐工步恢复状态和增量提取状态；
+  三者均记录或引用同一分片范围。默认完整范围仍使用历史无后缀文件名。
+- 任务状态集中在 `data/tasks/<task_id>/`：`state.json` 或多工步分片对应的
+  `state_<start>_<end>.json` 记录任务阶段，多工步的 `multi_operation_state.json` 记录
+  逐样本/逐工步恢复状态，单工步的
   `process_info.json` 记录逐 DB 求解进度；启用增量数据集后，
   `incremental_dataset.json` 记录逐样本提取状态与数据行。`AUTO` 只保存样本、DB、KEY
   和结果数据。
@@ -211,7 +213,8 @@ TC4 碾环多工步任务由 `task_collection.TC4_RING_MULTI_TASK_1` 完整定�
 - 多工步调用 `init_multi_operation_task(..., incremental=True)` 启用；每个样本的最终
   工步完成后立即使用各工步终态 KEY 提取该样本，结果固定保存到任务工作区的
   `results` 目录。指定样本范围后，增量状态与结果文件同样附带 `<start>_<end>` 后缀，
-  各机器独立写入，数据行仍以完整采样 TXT 的全局样本序号排序。
+  任务级状态也写入 `state_<start>_<end>.json`。运行、提取和查询接口必须传入初始化时的
+  同一分片范围；各机器独立写入，数据行仍以完整采样 TXT 的全局样本序号排序。
 - 检查点以样本序号为主键，重复恢复只覆盖同一行；数据集始终按样本序号排序，并通过
   临时文件加 `os.replace` 原子更新。求解已完成而提取未完成的样本会在续跑时补提取。
 

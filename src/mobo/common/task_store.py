@@ -1,9 +1,8 @@
 """任务状态持久化。
 
 统一把任务的关键信息（输入参数、阶段状态、结果）以 JSON 落盘到
-``TASKS_DIR/<task_id>/state.json``，使得每一步可以只凭 ``task_id`` 续跑，
-无需重复输入目标、文件位置等参数。三类流程（automation / surrogate /
-optimization）共用本模块。
+``TASKS_DIR/<task_id>/``。默认文件为 ``state.json``，需要隔离分片的流程可指定命名状态
+文件。三类流程（automation / surrogate / optimization）共用本模块。
 
 state.json 结构（约定，字段按流程可选）::
 
@@ -37,30 +36,33 @@ def _now() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
-def state_path(task_id: str) -> str:
-    """返回任务 state.json 的完整路径。"""
-    return os.path.join(str(task_dir(task_id)), _STATE_FILE)
+def state_path(task_id: str, state_name: str = _STATE_FILE) -> str:
+    """返回任务状态文件的完整路径。"""
+    if os.path.basename(state_name) != state_name:
+        raise ValueError(f"状态文件名不能包含目录: {state_name}")
+    return os.path.join(str(task_dir(task_id)), state_name)
 
 
-def exists(task_id: str) -> bool:
+def exists(task_id: str, state_name: str = _STATE_FILE) -> bool:
     """判断任务是否已有持久化状态。"""
-    return os.path.exists(state_path(task_id))
+    return os.path.exists(state_path(task_id, state_name))
 
 
-def load(task_id: str) -> Optional[Dict[str, Any]]:
+def load(task_id: str, state_name: str = _STATE_FILE) -> Optional[Dict[str, Any]]:
     """读取任务状态；不存在返回 None。"""
-    path = state_path(task_id)
+    path = state_path(task_id, state_name)
     if not os.path.exists(path):
         return None
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
 
 
-def save(state: Dict[str, Any]) -> str:
+def save(state: Dict[str, Any], state_name: str = _STATE_FILE) -> str:
     """原子写入任务状态并刷新 ``updated_at``。
 
     :param state: 含 ``task_id`` 的完整状态字典
-    :return: state.json 路径
+    :param state_name: 状态文件名，默认 ``state.json``
+    :return: 状态文件路径
     """
     task_id = state["task_id"]
     directory = str(task_dir(task_id))
@@ -71,22 +73,24 @@ def save(state: Dict[str, Any]) -> str:
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(state, f, ensure_ascii=False, indent=2)
-        os.replace(tmp, state_path(task_id))
+        os.replace(tmp, state_path(task_id, state_name))
     finally:
         if os.path.exists(tmp):
             os.remove(tmp)
-    return state_path(task_id)
+    return state_path(task_id, state_name)
 
 
-def init_state(task_id: str, kind: str, req: Dict[str, Any]) -> Dict[str, Any]:
+def init_state(task_id: str, kind: str, req: Dict[str, Any],
+               state_name: str = _STATE_FILE) -> Dict[str, Any]:
     """创建并落盘一个新任务状态（已存在则原样读回）。
 
     :param task_id: 任务 ID
     :param kind: 流程类型 automation/surrogate/optimization
     :param req: 原始输入参数（用于续跑）
+    :param state_name: 状态文件名，默认 ``state.json``
     :return: 状态字典
     """
-    current = load(task_id)
+    current = load(task_id, state_name)
     if current is not None:
         return current
     now = _now()
@@ -101,20 +105,22 @@ def init_state(task_id: str, kind: str, req: Dict[str, Any]) -> Dict[str, Any]:
         "data": {},
         "history": [{"stage": "init", "status": "running", "at": now}],
     }
-    save(state)
+    save(state, state_name)
     return state
 
 
-def update(task_id: str, **fields: Any) -> Dict[str, Any]:
+def update(task_id: str, *, state_name: str = _STATE_FILE,
+           **fields: Any) -> Dict[str, Any]:
     """更新任务状态的顶层字段（``data``/``req`` 做浅合并）并落盘。
     每次更新都会把本次的 ``stage``/``status`` 作为一条记录追加到 ``history``
 
     :param task_id: 任务 ID
+    :param state_name: 状态文件名，默认 ``state.json``
     :param fields: 待更新字段，如 ``status`` / ``stage`` / ``data`` / ``req``
     :return: 更新后的状态字典
     :raises FileNotFoundError: 任务状态不存在
     """
-    state = load(task_id)
+    state = load(task_id, state_name)
     if state is None:
         raise FileNotFoundError(f"任务状态不存在：{task_id}")
     for key, value in fields.items():
@@ -133,12 +139,12 @@ def update(task_id: str, **fields: Any) -> Dict[str, Any]:
             "at": _now(),
         })
         state["history"] = history
-    save(state)
+    save(state, state_name)
     return state
 
 
 def resolve_req(task_id: str, kind: str, provided: Dict[str, Any],
-                required: Iterable[str]) -> Dict[str, Any]:
+                required: Iterable[str], state_name: str = _STATE_FILE) -> Dict[str, Any]:
     """三路解析续跑所需参数：优先用任务记录，其次用传入参数，否则报错。
 
     合并规则：任务记录 ``req`` 里已有的键沿用记录值；记录没有的传入键采用传入值
@@ -150,11 +156,12 @@ def resolve_req(task_id: str, kind: str, provided: Dict[str, Any],
     :param kind: 流程类型（任务不存在时用于初始化）
     :param provided: 本次调用传入的参数（值为 None 视为未提供）
     :param required: 续跑必需的参数键
+    :param state_name: 状态文件名，默认 ``state.json``
     :return: 合并后的完整 req 字典（记录值优先）
     :raises ValueError: 某个必需参数在记录与传入中都缺失
     """
     provided = {k: v for k, v in (provided or {}).items() if v is not None}
-    state = load(task_id)
+    state = load(task_id, state_name)
     stored = dict(state.get("req") or {}) if state is not None else {}
 
     # 记录优先合并；记录缺失的传入键需要回填
@@ -166,9 +173,9 @@ def resolve_req(task_id: str, kind: str, provided: Dict[str, Any],
         raise ValueError(f"续跑缺少必要参数（记录与传入均无）：{', '.join(missing)}")
 
     if state is None:
-        init_state(task_id, kind, resolved)
+        init_state(task_id, kind, resolved, state_name)
     elif backfill:
-        update(task_id, req=backfill)
+        update(task_id, state_name=state_name, req=backfill)
     return resolved
 
 
