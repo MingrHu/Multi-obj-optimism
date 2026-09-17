@@ -76,7 +76,7 @@ DOE 聚合服务。路由层位于 `api.handler`，实际处理层位于 `api.se
 | `automation` | `config.py` | `DeformConfig` 关键字/对象/目标函数映射 |
 | `automation` | `sampling.py` | LHS / 全因子采样（纯逻辑）|
 | `automation` | `keyfile.py` | KEY 文件文本处理：格式化、路径派生、`generate_key_files`（纯逻辑）|
-| `automation` | `solver.py` | DEFORM 子进程驱动（KEY↔DB）与 `DeformSolver` 求解调度；求解进度落盘到 `process_info_file`（记录各 DB 是否完成），支持中断后仅凭进度文件续跑 |
+| `automation` | `solver.py` | DEFORM 子进程驱动（KEY↔DB）与 `DeformSolver` 求解调度；前处理器调用使用跨进程锁，文件占用时有限重试，非零退出码直接判失败；求解进度落盘到 `process_info_file`（记录各 DB 是否完成），支持中断后仅凭进度文件续跑 |
 | `automation` | `extract.py` | 结果 DB→KEY 逐步导出与数据集提取编排 |
 | `automation` | `incremental.py` | 可选的边求解边提取检查点；按样本序号幂等保存数据行并原子重建数据集，支持并发乱序完成和宕机续跑 |
 | `automation` | `pipeline.py` | `TaskStatus`（枚举）/ `ForgingTask` 三阶段状态机 / `generate_sample_file` |
@@ -194,6 +194,9 @@ TC4 碾环多工步任务由 `task_collection.TC4_RING_MULTI_TASK_1` 完整定�
   `state_<start>_<end>.json`、`multi_operation_state_<start>_<end>.json` 和
   `incremental_dataset_<start>_<end>.json`，分别隔离任务请求、逐工步恢复状态和增量提取状态；
   三者均记录或引用同一分片范围。默认完整范围仍使用历史无后缀文件名。
+- 同一分片的 `run()` 使用 `<multi_operation_state>.run.lock` 跨进程互斥；重复启动会明确报错，
+  防止两个进程同时求解相同 DB 或覆盖同一恢复状态。不同分片可以并行求解，但所有
+  `DEF_PRE_64` 操作仍通过机器级文件锁串行，避免 DEFORM 前处理器争用内部资源。
 - 任务状态集中在 `data/tasks/<task_id>/`：`state.json` 或多工步分片对应的
   `state_<start>_<end>.json` 记录任务阶段，多工步的 `multi_operation_state.json` 记录
   逐样本/逐工步恢复状态，单工步的

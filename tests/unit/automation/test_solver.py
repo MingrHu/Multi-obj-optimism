@@ -168,6 +168,51 @@ def test_run_pre_with_commands_invokes_popen(monkeypatch, tmp_path):
     assert output == "log line 1\n"
 
 
+def test_run_pre_with_commands_raises_on_nonzero_exit(monkeypatch, tmp_path):
+    class _FailedProcess(_FakeProcess):
+        def poll(self):
+            return None if self._lines else 5
+
+    monkeypatch.setattr(
+        solver.subprocess,
+        "Popen",
+        lambda *args, **kwargs: _FailedProcess(["? Access Denied.\n"]),
+    )
+    monkeypatch.setattr(solver, "LOGS_DIR", tmp_path)
+    monkeypatch.setattr(solver, "_OPERATION_LOG", str(tmp_path / "op.log"))
+    monkeypatch.setattr(solver, "_PRE_PROCESS_LOCK", str(tmp_path / "pre.lock"))
+    monkeypatch.setattr(solver.time, "sleep", lambda *_: None)
+
+    with pytest.raises(RuntimeError, match="Access Denied"):
+        solver._run_pre_with_commands("E\nY\n")
+
+
+def test_run_pre_with_commands_retries_access_denied(monkeypatch, tmp_path):
+    attempts = 0
+
+    def flaky_run(_commands):
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            raise RuntimeError("? Access Denied.")
+        return "ok"
+
+    monkeypatch.setattr(solver, "_run_pre_with_commands_unlocked", flaky_run)
+    monkeypatch.setattr(solver, "_PRE_PROCESS_LOCK", str(tmp_path / "pre.lock"))
+    monkeypatch.setattr(solver.time, "sleep", lambda *_: None)
+
+    assert solver._run_pre_with_commands("E\nY\n") == "ok"
+    assert attempts == 3
+
+
+def test_interprocess_lock_rejects_second_nonblocking_owner(tmp_path):
+    lock_path = str(tmp_path / "task.lock")
+    with solver._interprocess_lock(lock_path):
+        with pytest.raises(BlockingIOError, match="文件锁已被占用"):
+            with solver._interprocess_lock(lock_path, blocking=False):
+                pass
+
+
 def test_deform_solver_running_counter():
     s = solver.DeformSolver(max_parallel=4)
     assert s.running == 0

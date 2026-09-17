@@ -1,6 +1,7 @@
 """多工步采样、KEY 拆分和磁盘续跑测试。"""
 
 import hashlib
+import json
 from pathlib import Path
 
 import mobo.automation.multi_operation as multi_operation_module
@@ -32,6 +33,28 @@ def _template(path: Path, center=(0, 0, 0)) -> Path:
         encoding="utf-8",
     )
     return path
+
+
+def test_atomic_json_retries_transient_windows_access_denied(monkeypatch, tmp_path):
+    destination = tmp_path / "state.json"
+    real_replace = multi_operation_module.os.replace
+    attempts = 0
+
+    def flaky_replace(source, target):
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            raise PermissionError(5, "Access is denied")
+        real_replace(source, target)
+
+    monkeypatch.setattr(multi_operation_module.os, "replace", flaky_replace)
+    monkeypatch.setattr(multi_operation_module.time, "sleep", lambda *_: None)
+    multi_operation_module._atomic_json(str(destination), {"status": "running"})
+
+    assert attempts == 3
+    assert json.loads(destination.read_text(encoding="utf-8")) == {
+        "status": "running"
+    }
 
 
 def _operations(tmp_path):
@@ -406,3 +429,43 @@ def test_solver_branch_uses_current_operation_for_grain_validation(
         "multi", str(samples), operations, str(tmp_path / "runs"), dry_run=False
     )
     assert task.run()["status"] == "completed"
+
+
+def test_resume_export_failure_does_not_rerun_solver(tmp_path, monkeypatch):
+    operations = _operations(tmp_path)
+    samples = tmp_path / "samples.txt"
+    samples.write_text("910\t810\n", encoding="utf-8")
+    task = MultiOperationTask(
+        "multi", str(samples), operations, str(tmp_path / "runs"),
+        dry_run=False, keep_checkpoints=False,
+    )
+    op1_dir = tmp_path / "runs" / "0" / "op1"
+    op1_dir.mkdir(parents=True, exist_ok=True)
+    (op1_dir / "result.DB").touch()
+    sample_state = task.state["samples"]["0"]
+    sample_state["status"] = "failed"
+    sample_state["operations"]["1"].update({
+        "status": "failed",
+        "phase": "failed",
+        "failed_phase": "exporting",
+        "db_path": str(op1_dir / "result.DB"),
+    })
+    sample_state["operations"]["2"].update({
+        "status": "completed",
+        "phase": "completed",
+    })
+    task._save()
+
+    monkeypatch.setattr(
+        multi_operation_module,
+        "solve_db_sync",
+        lambda _path: pytest.fail("导出失败续跑不应再次调用求解器"),
+    )
+    monkeypatch.setattr(
+        multi_operation_module,
+        "db_to_key",
+        lambda _db, key, _step: Path(key).write_text("terminal", encoding="utf-8"),
+    )
+
+    assert task.run()["status"] == "completed"
+    assert (op1_dir / "terminal.KEY").read_text(encoding="utf-8") == "terminal"

@@ -20,8 +20,9 @@ import subprocess
 import tempfile
 import threading
 import time
+from contextlib import contextmanager
 from queue import Queue
-from typing import Any, Callable, List, Sequence
+from typing import Any, BinaryIO, Callable, Iterator, List, Sequence
 
 from mobo.common.logging import logger
 from mobo.common.paths import LOGS_DIR
@@ -35,6 +36,56 @@ _OPERATION_LOG = os.path.join(str(LOGS_DIR), "deform_operation.log")
 
 # DEF_PRE_64 的全部前处理操作在同一进程内串行执行。
 _PRE_LOCK = threading.Lock()
+_PRE_PROCESS_LOCK = os.path.join(tempfile.gettempdir(), "mobo_deform_pre.lock")
+
+
+@contextmanager
+def _interprocess_lock(path: str, *, blocking: bool = True) -> Iterator[None]:
+    """使用操作系统文件锁协调多个 Python 进程。"""
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    stream: BinaryIO = open(path, "a+b")
+    if os.path.getsize(path) == 0:
+        stream.write(b"\0")
+        stream.flush()
+    stream.seek(0)
+    acquired = False
+    try:
+        if os.name == "nt":
+            import msvcrt
+
+            mode = msvcrt.LK_LOCK if blocking else msvcrt.LK_NBLCK
+            try:
+                msvcrt.locking(stream.fileno(), mode, 1)
+            except OSError as exc:
+                if not blocking:
+                    raise BlockingIOError(f"文件锁已被占用: {path}") from exc
+                raise
+        else:
+            import fcntl
+
+            flags = fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB)
+            try:
+                fcntl.flock(stream.fileno(), flags)
+            except OSError as exc:
+                if not blocking:
+                    raise BlockingIOError(f"文件锁已被占用: {path}") from exc
+                raise
+        acquired = True
+        yield
+    finally:
+        try:
+            if acquired:
+                stream.seek(0)
+                if os.name == "nt":
+                    import msvcrt
+
+                    msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+
+                    fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+        finally:
+            stream.close()
 
 
 def _pre_command_summary(commands: str) -> str:
@@ -64,7 +115,20 @@ def _run_pre_with_commands(commands: str) -> str:
     :param commands: 发送给 DEF_PRE_64 的完整命令串（含换行）
     """
     with _PRE_LOCK:
-        return _run_pre_with_commands_unlocked(commands)
+        with _interprocess_lock(_PRE_PROCESS_LOCK):
+            for attempt in range(3):
+                try:
+                    return _run_pre_with_commands_unlocked(commands)
+                except RuntimeError as exc:
+                    if "Access Denied" not in str(exc) or attempt == 2:
+                        raise
+                    delay = 2 * (attempt + 1)
+                    logger.warning(
+                        f"DEFORM 前处理器遇到文件占用，{delay} 秒后进行第 "
+                        f"{attempt + 2}/3 次尝试"
+                    )
+                    time.sleep(delay)
+    raise RuntimeError("DEFORM 前处理器重试流程异常结束")
 
 
 def _run_pre_with_commands_unlocked(commands: str) -> str:
@@ -102,10 +166,12 @@ def _run_pre_with_commands_unlocked(commands: str) -> str:
             )
         if return_code not in (0, None):
             output_tail = "".join(output_lines)[-2000:].strip()
-            logger.error(
+            message = (
                 f"DEFORM 前处理器异常退出: id={call_id}, return_code={return_code}, "
                 f"{summary}, output_tail={output_tail!r}"
             )
+            logger.error(message)
+            raise RuntimeError(message)
     except Exception as exc:
         logger.error(f"DEFORM 前处理器调用异常: id={call_id}, {summary}, error={exc}")
         raise

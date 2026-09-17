@@ -9,6 +9,7 @@ import re
 import shutil
 import tempfile
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
@@ -20,7 +21,13 @@ from mobo.common.logging import logger
 
 from .keyfile import apply_parameters, write_parameterized_key
 from .sampling import generate_full_factorial, generate_lhs, save_samples
-from .solver import db_to_key, key_to_db, run_key_actions, solve_db_sync
+from .solver import (
+    _interprocess_lock,
+    db_to_key,
+    key_to_db,
+    run_key_actions,
+    solve_db_sync,
+)
 
 Operation = Dict[str, Any]
 
@@ -193,7 +200,14 @@ def _atomic_json(path: str, value: Dict[str, Any]) -> None:
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(value, f, ensure_ascii=False, indent=2)
-        os.replace(temp_path, path)
+        for attempt in range(10):
+            try:
+                os.replace(temp_path, path)
+                break
+            except PermissionError:
+                if attempt == 9:
+                    raise
+                time.sleep(min(0.05 * (attempt + 1), 0.5))
     finally:
         if os.path.exists(temp_path):
             os.remove(temp_path)
@@ -594,11 +608,23 @@ class MultiOperationTask:
                     raise FileNotFoundError(
                         f"工步 {operation_index} 准备完成后未生成结果 DB: {db_path}"
                     )
-                self._set_operation(sample_index, operation_index, status="running", phase="solving")
-
                 # 非空跑情况下执行deform求解
                 if not self.dry_run:
-                    solve_db_sync(db_path)
+                    phase = op_state.get("phase", "prepared")
+                    solver_completed = phase == "exporting" or (
+                        phase == "failed" and op_state.get("failed_phase") == "exporting"
+                    )
+                    if not solver_completed:
+                        self._set_operation(
+                            sample_index, operation_index,
+                            status="running", phase="solving",
+                        )
+                        solve_db_sync(db_path)
+                        self._set_operation(
+                            sample_index, operation_index,
+                            status="running", phase="exporting",
+                            solver_completed_at=_now(),
+                        )
                     # 终态 KEY 文件 用于结果获取以及后续工步换模
                     db_to_key(db_path, terminal, "")
                     # 下一个工步
@@ -615,6 +641,10 @@ class MultiOperationTask:
                             f"工步 {operation_index} 终态 KEY 缺少工件 GRAIN 状态: {terminal}"
                         )
                 else:
+                    self._set_operation(
+                        sample_index, operation_index,
+                        status="running", phase="exporting",
+                    )
                     shutil.copy2(self.operations[operation_index - 1]["template_key"], terminal)
                 if self.keep_checkpoints:
                     shutil.copy2(db_path, checkpoint)
@@ -658,6 +688,16 @@ class MultiOperationTask:
 
     def run(self) -> Dict[str, Any]:
         """运行或续跑全部样本，已完成工步不会重复执行"""
+        try:
+            with _interprocess_lock(self.state_file + ".run.lock", blocking=False):
+                return self._run_locked()
+        except BlockingIOError as exc:
+            raise RuntimeError(
+                f"当前分片已有运行进程，请勿重复启动: {self.state_file}"
+            ) from exc
+
+    def _run_locked(self) -> Dict[str, Any]:
+        """在取得分片级跨进程锁后执行任务。"""
         # 1 准备DB
         self.prepare_initial_db_files()
         self.state["status"] = "running"
