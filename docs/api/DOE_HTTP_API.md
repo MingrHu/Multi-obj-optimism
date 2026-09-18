@@ -1,6 +1,6 @@
 # DOE HTTP API（v1）
 
-服务启动：`mobo-api`，默认监听 `0.0.0.0:5000`。可通过 `MOBO_API_HOST` 和
+服务启动：`mobo-api`，默认监听 `0.0.0.0:5050`。可通过 `MOBO_API_HOST` 和
 `MOBO_API_PORT` 修改。客户端示例：`python -m mobo.api.demo`
 
 Docker 环境可执行 `docker compose up --build -d`，容器会自动使用 Gunicorn 启动服务；
@@ -26,7 +26,7 @@ Docker 环境可执行 `docker compose up --build -d`，容器会自动使用 Gu
 
 | 方法与路径 | 关键请求参数 | 说明 |
 |---|---|---|
-| `GET /health` | - | 健康检查 |
+| `GET /health` | - | 健康检查并返回采样、代理模型、推理、遗传优化和强化学习依赖的就绪状态 |
 | `POST /api/v1/doe/add` | `id?`, `name?`, `description?`, `metadata?` | 创建 DOE；未传 ID 时自动生成；名称允许重复，ID 唯一 |
 | `GET /api/v1/doe/list` | - | 查询 DOE 列表 |
 | `POST /api/v1/doe/delete` | `id` | 删除 DOE 及其样本、模型、训练和优化文件 |
@@ -46,6 +46,35 @@ Docker 环境可执行 `docker compose up --build -d`，容器会自动使用 Gu
 
 除健康检查外，成功响应统一使用 `code/message/data`。GET 参数通过 query string 传递，
 POST 参数使用 JSON 对象；GET 接口不读取请求体
+
+服务会在 Flask/Gunicorn worker 启动阶段预加载 NumPy、Pandas、PyDOE、Joblib、
+采样、代理模型训练与评价、推理、遗传优化和强化学习模块。任一运行依赖加载失败时
+worker 启动失败，不接受业务请求。依赖全部就绪时健康检查返回 HTTP 200：
+
+```json
+{
+  "code": 0,
+  "message": "ok",
+  "data": {
+    "service": "mobo-doe",
+    "dependencies": {
+      "ready": true,
+      "components": {
+        "numpy": "2.4.0",
+        "pandas": "2.3.3",
+        "pyDOE": "0.3.8",
+        "sampling": "ready",
+        "surrogate_training": "ready",
+        "surrogate_evaluation": "ready",
+        "inference": "ready",
+        "optimization_ga": "ready",
+        "optimization_rl": "ready"
+      },
+      "error": null
+    }
+  }
+}
+```
 
 DOE 的 `id` 是任务唯一标识，展示名称 `name` 允许重复。显式名称会去除首尾空白，未传
 `name` 时使用唯一 `id` 作为名称。未传 `id` 时服务端自动生成并通过创建响应的 `data.id`

@@ -59,7 +59,7 @@ DOE 聚合服务。路由层位于 `api.handler`，实际处理层位于 `api.se
 | `surrogate` | `interface.py` | `Doe_surrogateModel` 统一训练接口 |
 | `surrogate` | `evaluate.py` | `SurrogateModelEvaluator` K 折交叉验证与报告 |
 | `surrogate` | `service.py` | `train_surrogate`/`query_model_status`：`model_id` 主键，req/resp 落盘 |
-| `api` | `app.py` / `handler.py` / `service.py` | Flask 应用、HTTP 路由、按字段取数及 DOE 聚合处理层 |
+| `api` | `app.py` / `handler.py` / `service.py` / `readiness.py` | Flask 应用、运行依赖预加载、HTTP 路由、按字段取数及 DOE 聚合处理层 |
 | `api` | `store.py` / `runtime.py` | DOE 独立目录持久化与后台任务中止控制 |
 | `optimization/ga` | `problem.py` | `SurrogateOptimizationProblem`（pymoo 问题）|
 | `optimization/ga` | `operators.py` | `AdaptiveSBX` 自适应交叉、Pareto 结果读写 |
@@ -111,6 +111,11 @@ DOE 聚合服务。路由层位于 `api.handler`，实际处理层位于 `api.se
 外部系统通过 `mobo.api` 访问 DOE 聚合服务，不直接读取 CLI 输出或底层任务目录。一个
 `data/doe_tasks/<doe_id>/doe.json` 聚合样本、训练、模型、推理和优化状态；训练与优化在
 后台线程执行，路由层保持轻量。
+
+Flask/Gunicorn worker 在接受请求前通过 `api.readiness` 一次性加载采样、代理模型训练
+与评价、推理、遗传优化和强化学习所需的运行模块；加载失败会阻止 worker 启动。
+`GET /health` 按能力返回依赖就绪状态，Docker 健康检查仅在这些依赖全部可用时通过。
+具体模型文件、数据集和 DEFORM 外部程序不在启动检查中加载或执行。
 
 - 样本、演示训练数据集和参数化 NSGA-II 解集均以无表头 TSV 落盘。
 - `sample.columns`、`training.dataset.all_var_list` 和

@@ -100,10 +100,10 @@ else
     fi
 fi
 
-if command -v ss >/dev/null 2>&1 && ss -ltn 2>/dev/null | awk '{print $4}' | grep -Eq '(^|:)5000$'; then
-    warn "宿主机 TCP 5000 端口已被占用；部署时请设置 MOBO_HTTP_PORT"
+if command -v ss >/dev/null 2>&1 && ss -ltn 2>/dev/null | awk '{print $4}' | grep -Eq '(^|:)5050$'; then
+    warn "宿主机 TCP 5050 端口已被占用；部署时请设置 MOBO_HTTP_PORT"
 else
-    ok "未发现 TCP 5000 端口占用"
+    ok "未发现 TCP 5050 端口占用"
 fi
 
 printf '\n检查结果: %d 个失败，%d 个警告\n' "$failures" "$warnings"

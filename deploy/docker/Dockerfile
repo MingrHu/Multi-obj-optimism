@@ -12,7 +12,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     MOBO_PROJECT_DIR=/app \
     MOBO_DATA_DIR=/app/data \
     MOBO_API_HOST=0.0.0.0 \
-    MOBO_API_PORT=5000
+    MOBO_API_PORT=5050
 
 WORKDIR /app
 
@@ -29,15 +29,16 @@ COPY . .
 RUN python -m pip install . --no-deps \
     && mkdir -p /app/data /app/logs /tmp/matplotlib \
     && python -m pip check \
+    && python -c "from mobo.api.readiness import load_runtime_dependencies; assert load_runtime_dependencies()['ready']" \
     && groupadd --system mobo \
     && useradd --system --gid mobo --home-dir /app --no-create-home mobo \
     && chown -R mobo:mobo /app/data /app/logs /tmp/matplotlib
 
 USER mobo
 
-EXPOSE 5000
+EXPOSE 5050
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
-    CMD python -c "import json, os, urllib.request; port=os.environ.get('MOBO_API_PORT', '5000'); data=json.load(urllib.request.urlopen(f'http://127.0.0.1:{port}/health', timeout=3)); assert data['code'] == 0" || exit 1
+    CMD python -c "import json, os, urllib.request; port=os.environ.get('MOBO_API_PORT', '5050'); data=json.load(urllib.request.urlopen(f'http://127.0.0.1:{port}/health', timeout=3)); assert data['code'] == 0 and data['data']['dependencies']['ready']" || exit 1
 
 CMD ["gunicorn", "--config", "deploy/docker/gunicorn.conf.py", "mobo.api.app:create_app()"]

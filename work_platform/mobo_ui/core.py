@@ -177,7 +177,7 @@ def read_tabular_file(path: str | Path) -> tuple[list[str], list[list[Any]]]:
 class ApiClient:
     """Small synchronous client; callers run it in a Qt worker thread."""
 
-    def __init__(self, base_url: str = "http://127.0.0.1:5000", timeout: float = 15.0):
+    def __init__(self, base_url: str = "http://127.0.0.1:5050", timeout: float = 15.0):
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
 

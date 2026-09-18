@@ -75,7 +75,7 @@ source .venv/bin/activate
 
 ```bash
 docker compose up --build -d
-curl http://127.0.0.1:5000/health
+curl http://127.0.0.1:5050/health
 ```
 
 完整说明见 [`DOCKER_DEPLOYMENT.md`](DOCKER_DEPLOYMENT.md)。
@@ -89,19 +89,19 @@ mobo-api
 默认监听地址
 
 ```text
-http://127.0.0.1:5000
+http://127.0.0.1:5050
 ```
 
 日志中出现以下内容表示服务已经启动
 
 ```text
-Running on http://127.0.0.1:5000
+Running on http://127.0.0.1:5050
 ```
 
 可以在另一个 PowerShell 中检查健康状态
 
 ```powershell
-Invoke-RestMethod http://127.0.0.1:5000/health
+Invoke-RestMethod http://127.0.0.1:5050/health
 ```
 
 预期返回

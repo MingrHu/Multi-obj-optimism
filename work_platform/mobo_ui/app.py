@@ -3744,7 +3744,7 @@ class MainWindow(QMainWindow):
         brand.setStyleSheet("font-size:20px;font-weight:800;color:#edf9ff;letter-spacing:2px")
         product = QLabel("锻造工艺优化工作台")
         product.setObjectName("Subtitle")
-        self.api_url = QLineEdit(os.environ.get("MOBO_API_URL", "http://127.0.0.1:5000"))
+        self.api_url = QLineEdit(os.environ.get("MOBO_API_URL", "http://127.0.0.1:5050"))
         self.api_url.setFixedWidth(235)
         self.api_url.setPlaceholderText("后端服务地址")
         self.connect_button = QPushButton("检测连接")
@@ -3828,7 +3828,7 @@ class MainWindow(QMainWindow):
         )
 
     def api_client(self) -> ApiClient:
-        return ApiClient(self.api_url.text().strip() or "http://127.0.0.1:5000")
+        return ApiClient(self.api_url.text().strip() or "http://127.0.0.1:5050")
 
     def navigate(self, index: int) -> None:
         self.stack.setCurrentIndex(index)

@@ -3,7 +3,7 @@
 import os
 
 
-bind = f"{os.environ.get('MOBO_API_HOST', '0.0.0.0')}:{os.environ.get('MOBO_API_PORT', '5000')}"
+bind = f"{os.environ.get('MOBO_API_HOST', '0.0.0.0')}:{os.environ.get('MOBO_API_PORT', '5050')}"
 
 # 训练、优化及停止信号目前由进程内运行时协调。保持单 worker，避免多进程状态割裂；
 # 并发 HTTP 查询由线程承担。

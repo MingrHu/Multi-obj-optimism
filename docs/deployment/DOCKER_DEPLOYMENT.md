@@ -19,8 +19,8 @@
   → 从仓库构建 mobo-api 镜像
   → Compose 创建容器、网络和持久卷
   → Gunicorn 自动启动 HTTP API
-  → 宿主机通过 127.0.0.1:5000 调用
-  → 远程客户端通过 <服务器IP或域名>:5000 调用
+  → 宿主机通过 127.0.0.1:5050 调用
+  → 远程客户端通过 <服务器IP或域名>:5050 调用
 ```
 
 镜像包括以下 Python 能力：
@@ -76,7 +76,7 @@ Docker 构建上下文。若采用已经导出的镜像 tar 包，则服务器�
 | 内存 | 建议至少 8 GiB |
 | 磁盘 | 首次构建建议至少预留 12 GiB |
 | 网络 | 在线构建需访问 GitHub、Docker Hub、PyPI 和 PyTorch CPU wheel 源 |
-| 端口 | 默认使用宿主机 TCP 5000 |
+| 端口 | 默认使用宿主机 TCP 5050 |
 
 仓库提供只读检查脚本，不会安装软件、修改用户组或开放端口：
 
@@ -85,7 +85,7 @@ bash scripts/check_docker_host.sh
 ```
 
 脚本检查操作系统、架构、CPU、内存、磁盘、Git、curl、Docker daemon、Compose v2 和
-5000 端口。最终显示 `0 个失败` 才表示可以直接进入构建阶段。
+5050 端口。最终显示 `0 个失败` 才表示可以直接进入构建阶段。
 
 也可以人工检查：
 
@@ -195,7 +195,7 @@ Compose 启动时会：
 
 1. 创建 `mobo-api` 容器；
 2. 创建数据卷和日志卷；
-3. 把宿主机 `5000` 映射到容器 `5000`；
+3. 把宿主机 `5050` 映射到容器 `5050`；
 4. 由 Gunicorn 自动启动 Flask API；
 5. 配置容器异常退出和宿主机重启后的自动恢复；
 6. 持续执行 `/health` 健康检查。
@@ -209,7 +209,7 @@ docker compose logs -f mobo-api
 
 状态显示 `healthy` 后才开始发送业务请求。
 
-如果 5000 端口已被占用：
+如果 5050 端口已被占用：
 
 ```bash
 MOBO_HTTP_PORT=8000 docker compose up -d
@@ -240,14 +240,14 @@ MOBO_IMAGE_TAG=1.1.1 docker compose up -d --no-build
 Compose 的端口映射为：
 
 ```text
-宿主机 0.0.0.0:5000  →  容器 mobo-api:5000
+宿主机 0.0.0.0:5050  →  容器 mobo-api:5050
 ```
 
 因此在同一台 CentOS 宿主机上不需要安装服务发现组件，也不需要知道容器 IP，直接请求
-`127.0.0.1:5000`：
+`127.0.0.1:5050`：
 
 ```bash
-curl http://127.0.0.1:5000/health
+curl http://127.0.0.1:5050/health
 ```
 
 预期返回：
@@ -259,7 +259,7 @@ curl http://127.0.0.1:5000/health
 创建一个 DOE：
 
 ```bash
-curl -X POST http://127.0.0.1:5000/api/v1/doe/add \
+curl -X POST http://127.0.0.1:5050/api/v1/doe/add \
   -H 'Content-Type: application/json' \
   -d '{"id":"doe_test_001","name":"Docker测试"}'
 ```
@@ -267,7 +267,7 @@ curl -X POST http://127.0.0.1:5000/api/v1/doe/add \
 查询 DOE：
 
 ```bash
-curl http://127.0.0.1:5000/api/v1/doe/list
+curl http://127.0.0.1:5050/api/v1/doe/list
 ```
 
 端上完整接口、参数和响应以 [DOE_HTTP_API.md](../api/DOE_HTTP_API.md) 为准。
@@ -279,7 +279,7 @@ curl http://127.0.0.1:5000/api/v1/doe/list
 
 ```bash
 docker exec \
-  -e MOBO_API_URL=http://127.0.0.1:5000 \
+  -e MOBO_API_URL=http://127.0.0.1:5050 \
   mobo-api \
   python -m mobo.api.demo
 ```
@@ -291,7 +291,7 @@ docker exec \
 
 ```bash
 bash scripts/setup_env.sh
-MOBO_API_URL=http://127.0.0.1:5000 .venv/bin/python -m mobo.api.demo
+MOBO_API_URL=http://127.0.0.1:5050 .venv/bin/python -m mobo.api.demo
 ```
 
 这会在宿主机额外安装完整 Python 依赖，通常没有必要；日常连通性验证使用 `curl`，完整流程
@@ -302,33 +302,33 @@ MOBO_API_URL=http://127.0.0.1:5000 .venv/bin/python -m mobo.api.demo
 远程客户端不需要发现容器，只需要知道宿主机 IP 或域名及公开端口：
 
 ```text
-http://<CentOS服务器IP>:5000/health
+http://<CentOS服务器IP>:5050/health
 ```
 
 如服务器使用 firewalld，并且确实要允许可信内网直接访问：
 
 ```bash
-sudo firewall-cmd --permanent --add-port=5000/tcp
+sudo firewall-cmd --permanent --add-port=5050/tcp
 sudo firewall-cmd --reload
 ```
 
 然后在客户端执行：
 
 ```bash
-curl http://<CentOS服务器IP>:5000/health
+curl http://<CentOS服务器IP>:5050/health
 ```
 
-当前 API 本身没有 TLS 和身份认证，不应把 5000 端口直接暴露到公网。正式环境建议由现有
+当前 API 本身没有 TLS 和身份认证，不应把 5050 端口直接暴露到公网。正式环境建议由现有
 Nginx、网关或端上服务提供 HTTPS、认证和访问控制，再反向代理到
-`http://127.0.0.1:5000`。
+`http://127.0.0.1:5050`。
 
 不同调用位置使用的地址如下：
 
 | 调用位置 | 地址 | 是否需要服务发现 |
 |---|---|---|
-| 同一宿主机 | `http://127.0.0.1:5000` | 不需要 |
-| 远程端上客户端 | `http://<宿主机IP或域名>:5000` | 不需要；可使用已有 DNS/网关 |
-| 同一 Compose 网络中的其他容器 | `http://mobo-api:5000` | Compose 自带 DNS，以服务名解析 |
+| 同一宿主机 | `http://127.0.0.1:5050` | 不需要 |
+| 远程端上客户端 | `http://<宿主机IP或域名>:5050` | 不需要；可使用已有 DNS/网关 |
+| 同一 Compose 网络中的其他容器 | `http://mobo-api:5050` | Compose 自带 DNS，以服务名解析 |
 
 ## 9. 数据持久化
 
@@ -390,14 +390,14 @@ docker compose up --build -d
 docker compose ps
 
 # 8. 从宿主机验证服务
-curl http://127.0.0.1:5000/health
+curl http://127.0.0.1:5050/health
 ```
 
 运行一个HTTP请求（基于curl工具）
 
 ```bash
 docker exec \
-  -e MOBO_API_URL=http://127.0.0.1:5000 \
+  -e MOBO_API_URL=http://127.0.0.1:5050 \
   mobo-api \
   python -m mobo.api.demo
 ```
@@ -421,7 +421,7 @@ docker logs -f mobo-api
 docker compose up --build -d
 
 docker compose ps
-curl http://127.0.0.1:5000/health
+curl http://127.0.0.1:5050/health
 ```
 
 2 宿主机通过git拉取开发机的更新并更新docker服务
@@ -439,7 +439,7 @@ docker compose up --build -d
 docker compose ps
 
 # 检查新容器是否已经进入 healthy 状态 后端服务是否就绪
-curl http://127.0.0.1:5000/health
+curl http://127.0.0.1:5050/health
 ```
 
 需要关注的点：
@@ -658,7 +658,7 @@ WSL2 只用于 Windows 开发机的本地构建和接口测试。启用 Docker D
 
 ```bash
 docker compose up --build -d
-curl http://127.0.0.1:5000/health
+curl http://127.0.0.1:5050/health
 ```
 
 服务器端使用 Docker Engine，不需要 WSL2，也不需要 Docker Desktop。

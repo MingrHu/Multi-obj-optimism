@@ -8,7 +8,7 @@ import time
 
 import requests
 
-BASE_URL = os.environ.get("MOBO_API_URL", "http://127.0.0.1:5000")
+BASE_URL = os.environ.get("MOBO_API_URL", "http://127.0.0.1:5050")
 
 
 def call(method: str, path: str, **kwargs):

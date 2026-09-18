@@ -24,7 +24,7 @@ mobo-api
 .\.venv\Scripts\python.exe .\work_platform\main.py
 ```
 
-默认后端地址为 `http://127.0.0.1:5000`，也可在界面顶部修改。使用远程服务时可以预先设置
+默认后端地址为 `http://127.0.0.1:5050`，也可在界面顶部修改。使用远程服务时可以预先设置
 `MOBO_API_URL`。DEFORM 单/多工步功能始终在启动界面的本机执行；真实求解前需要配置
 `MOBO_DEF_PRE_64` 和 `MOBO_DEF_ARM_CTL`，首次验证建议启用“演练模式”。
 

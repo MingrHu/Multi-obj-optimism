@@ -97,7 +97,7 @@ git clone https://github.com/MingrHu/Multi-obj-optimism.git
 # 3. 进入包含 compose.yaml 的仓库根目录
 cd Multi-obj-optimism
 
-# 4. 检查系统资源、Docker daemon、Compose v2 和 5000 端口
+# 4. 检查系统资源、Docker daemon、Compose v2 和 5050 端口
 bash scripts/check_docker_host.sh
 
 # 5. 仅当 CentOS Stream 9/10 尚未安装 Docker 时执行；其他系统使用官方对应安装方式
@@ -113,7 +113,7 @@ docker compose up --build -d
 docker compose ps
 
 # 9. 从当前宿主机直接请求容器映射出来的 HTTP 服务
-curl http://127.0.0.1:5000/health
+curl http://127.0.0.1:5050/health
 ```
 
 如果第 4 步已经显示 Docker 和 Compose 均可用，则跳过第 5、6 步。CentOS Stream 8 已结束
@@ -125,7 +125,7 @@ curl http://127.0.0.1:5000/health
 ```bash
 # 在已经运行的容器内执行完整采样、训练、推理和优化 Demo
 docker exec \
-  -e MOBO_API_URL=http://127.0.0.1:5000 \
+  -e MOBO_API_URL=http://127.0.0.1:5050 \
   mobo-api \
   python -m mobo.api.demo
 ```
@@ -156,7 +156,7 @@ docker compose up --build -d
 docker compose ps
 
 # 4. 从宿主机验证新容器的 HTTP 服务
-curl http://127.0.0.1:5000/health
+curl http://127.0.0.1:5050/health
 ```
 
 更新原理如下：

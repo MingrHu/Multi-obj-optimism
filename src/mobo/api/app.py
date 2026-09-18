@@ -6,8 +6,12 @@ import os
 
 from flask import Flask
 
+from . import readiness
+
 
 def create_app(config: dict | None = None) -> Flask:
+    # 在Gunicorn开始处理多线程请求前完成DOE全部运行依赖的首次加载
+    readiness.load_runtime_dependencies()
     # 使用应用工厂便于生产部署 测试环境也可以传入独立配置
     app = Flask(__name__)
     app.json.sort_keys = False
@@ -22,7 +26,13 @@ def create_app(config: dict | None = None) -> Flask:
 
     @app.get("/health")
     def health():
-        return {"code": 0, "message": "ok", "data": {"service": "mobo-doe"}}
+        dependency_status = readiness.get_readiness()
+        status = 200 if dependency_status["ready"] else 503
+        return {
+            "code": 0 if dependency_status["ready"] else 1,
+            "message": "ok" if dependency_status["ready"] else "service not ready",
+            "data": {"service": "mobo-doe", "dependencies": dependency_status},
+        }, status
 
     return app
 
@@ -32,7 +42,7 @@ def main() -> None:
     # 地址和端口通过环境变量覆盖 便于同一代码适配本机和服务器环境
     app.run(
         host=os.environ.get("MOBO_API_HOST", "0.0.0.0"),
-        port=int(os.environ.get("MOBO_API_PORT", "5000")),
+        port=int(os.environ.get("MOBO_API_PORT", "5050")),
         debug=False,
     )
 

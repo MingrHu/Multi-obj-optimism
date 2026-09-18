@@ -92,6 +92,7 @@
     "api/demo.py",
     "api/errors.py",
     "api/handler.py",
+    "api/readiness.py",
     "api/runtime.py",
     "api/service.py",
     "api/store.py",
