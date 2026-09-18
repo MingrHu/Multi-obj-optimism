@@ -12,6 +12,7 @@ def test_registry_resolves_parameter_capability():
 
     assert registry.resolve("temperature") is spec
     assert registry.resolve("missing") is None
+    assert registry.keys() == ["temperature"]
 
 
 def test_registry_groups_document_parameter_aliases():
@@ -27,4 +28,5 @@ def test_registry_groups_document_parameter_aliases():
 
     assert registry.resolve("speed_lower") is spec
     assert registry.resolve("speed_upper") is spec
+    assert registry.keys() == ["speed_lower", "speed_upper"]
     assert spec.name == "speed_profile"

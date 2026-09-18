@@ -43,6 +43,13 @@ from .task_collection import (
     get_multi_operation_task_definition,
     get_single_operation_task_definition,
 )
+from .template_store import (
+    delete_template,
+    list_templates,
+    load_template,
+    save_template,
+    validate_template,
+)
 
 __all__ = [
     "DeformConfig",
@@ -72,4 +79,9 @@ __all__ = [
     "get_task_definition",
     "get_multi_operation_task_definition",
     "get_single_operation_task_definition",
+    "validate_template",
+    "list_templates",
+    "load_template",
+    "save_template",
+    "delete_template",
 ]

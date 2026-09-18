@@ -32,5 +32,9 @@ class ReplacementRegistry:
     def resolve(self, parameter_name: str) -> ReplacerSpec | None:
         return self._specs.get(parameter_name)
 
+    def keys(self) -> list[str]:
+        """列出所有已注册的工艺参数名称，供配置界面和校验器使用。"""
+        return list(self._specs.keys())
+
 
 __all__ = ["ReplacementRegistry"]

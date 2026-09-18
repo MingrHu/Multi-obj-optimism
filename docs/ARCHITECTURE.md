@@ -50,7 +50,7 @@ DOE 聚合服务。路由层位于 `api.handler`，实际处理层位于 `api.se
 
 | 子包 | 模块 | 职责 |
 |---|---|---|
-| `common` | `paths.py` | 集中式路径解析（包括 `DOE_TASKS_DIR/AUTO_SINGLE_DIR/AUTO_MULTI_DIR`）+ 环境变量覆盖 |
+| `common` | `paths.py` | 集中式路径解析（包括 `DOE_TASKS_DIR/AUTO_SINGLE_DIR/AUTO_MULTI_DIR/AUTOMATION_TEMPLATES_DIR`）+ 环境变量覆盖 |
 | `common` | `logging.py` | `GlobalLogger` 单例；显式 stdout 重定向 |
 | `common` | `task_store.py` | 任务状态持久化（默认 `data/tasks/<id>/state.json`，支持命名状态文件），三流程共用；`history` 完整记录阶段转移（只追加不覆盖），`resolve_req` 三路解析续跑参数（记录 > 传入 > 报错） |
 | `surrogate` | `common.py` | 数据加载/划分/标准化、指标、`save_model`、`Time`、DNN 构建 |
@@ -76,6 +76,7 @@ DOE 聚合服务。路由层位于 `api.handler`，实际处理层位于 `api.se
 | `automation` | `config.py` | `DeformConfig` 关键字/对象/目标函数映射 |
 | `automation` | `sampling.py` | LHS / 全因子采样（纯逻辑）|
 | `automation` | `keyfile.py` | KEY 文件文本处理：格式化、路径派生、`generate_key_files`（纯逻辑）|
+| `automation` | `template_store.py` | 单/多工步用户任务模板的校验、版本化 JSON 持久化、唯一性检查与增删改查 |
 | `automation` | `solver.py` | DEFORM 子进程驱动（KEY↔DB）与 `DeformSolver` 求解调度；前处理器调用使用跨进程锁，文件占用时有限重试，非零退出码直接判失败；求解进度落盘到 `process_info_file`（记录各 DB 是否完成），支持中断后仅凭进度文件续跑 |
 | `automation` | `extract.py` | 结果 DB→KEY 逐步导出与数据集提取编排 |
 | `automation` | `incremental.py` | 可选的边求解边提取检查点；按样本序号幂等保存数据行并原子重建数据集，支持并发乱序完成和宕机续跑 |
@@ -181,6 +182,11 @@ TC4 碾环多工步任务由 `task_collection.TC4_RING_MULTI_TASK_1` 完整定�
 先从 DEFORM 的 `Step Numbers` 查询 DB 实际保存步号，再逐帧导出。多工步全过程目标从
 各工步 checkpoint DB 提取，因此启用这类目标时必须保留工步检查点。
 
+桌面工作台把上述代码内定义作为只读预设，并通过 `automation.template_store` 管理用户模板。
+用户模板与求解任务状态分离，保存到 `data/AUTO/templates/<task_id>.json`；保存与实际运行前都会
+校验任务 ID/名称、KEY 文件、已注册参数能力、对象、上下界、工步引用和目标提取能力。模板服务
+属于本机 DEFORM 自动化层，不通过 DOE HTTP API，也不把本机 KEY 路径发送到容器后端。
+
 ## 路径集中化
 
 所有路径统一由 `mobo.common.paths` 提供，取代旧代码中的 `../../data/...` 相对路径与
@@ -190,6 +196,8 @@ TC4 碾环多工步任务由 `task_collection.TC4_RING_MULTI_TASK_1` 完整定�
 - 支持环境变量覆盖：`MOBO_PROJECT_DIR`、`MOBO_DATA_DIR`。
 - 函数改造仅限「默认参数/路径来源」，算法体保持 byte-for-byte 不变。
 - 运行时工作区分为 `data/AUTO/single/<task>` 和 `data/AUTO/mult/<task>`。
+- 用户创建的单/多工步模板统一保存在 `data/AUTO/templates/`，任务 ID 和显示名称均不得与
+  内置模板或其他用户模板重复；删除模板不删除已有样本、KEY、DB 和结果目录。
 - 多工步样本按工步归档产物：`runs/<sample>/op<n>/` 内集中保存
   `<模板名>_parameterized.KEY`、`result.DB`、`terminal.KEY`、`checkpoint.DB`、
   DEFORM 日志及换模 KEY；下一工步从前一工步 DB 副本继续计算。

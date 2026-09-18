@@ -108,6 +108,7 @@
     "automation/service.py",
     "automation/solver.py",
     "automation/task_collection.py",
+    "automation/template_store.py",
     "cli/__init__.py",
     "cli/automation_demo.py",
     "cli/ga.py",
@@ -175,6 +176,7 @@
     "work_platform/main.py",
     "work_platform/mobo_ui/__init__.py",
     "work_platform/mobo_ui/app.py",
-    "work_platform/mobo_ui/core.py"
+    "work_platform/mobo_ui/core.py",
+    "work_platform/mobo_ui/task_editor.py"
   ]
 }

@@ -799,6 +799,147 @@ def test_lhs_ui_can_generate_exact_count_without_boundaries(monkeypatch, tmp_pat
     app.processEvents()
 
 
+def test_single_operation_editor_builds_definition_from_ui(monkeypatch, tmp_path):
+    pytest.importorskip("PySide6")
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    module = importlib.import_module("work_platform.mobo_ui.task_editor")
+    tasks = importlib.import_module("mobo.automation.task_collection")
+    app = QApplication.instance() or QApplication([])
+    editor = module.TaskDefinitionEditor(multi=False)
+    editor.load_definition(tasks.RING_7050_SINGLE_TASK_1)
+
+    editor.task_id.setText("custom-single")
+    editor.task_name.setText("自定义单工步")
+    editor.parameter_table.item(0, 3).setText("300")
+    editor.parameter_table.item(0, 4).setText("480")
+    definition = editor.build_definition(
+        tasks.RING_7050_SINGLE_TASK_1,
+        workspace=str(tmp_path / "single"),
+        template_key=str(tmp_path / "template.KEY"),
+    )
+
+    assert definition.task_id == "custom-single"
+    assert definition.name == "自定义单工步"
+    assert definition.workspace == tmp_path / "single"
+    assert definition.template_key == str(tmp_path / "template.KEY")
+    assert definition.parameters[0]["range"] == [300.0, 480.0]
+    assert definition.targets == tasks.RING_7050_SINGLE_TASK_1.targets
+    app.processEvents()
+
+
+def test_multi_operation_editor_applies_operation_and_parameter_rows(monkeypatch, tmp_path):
+    pytest.importorskip("PySide6")
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    module = importlib.import_module("work_platform.mobo_ui.task_editor")
+    tasks = importlib.import_module("mobo.automation.task_collection")
+    app = QApplication.instance() or QApplication([])
+    editor = module.TaskDefinitionEditor(multi=True)
+    editor.load_definition(tasks.TC4_RING_MULTI_TASK_1)
+
+    editor.task_id.setText("custom-multi")
+    editor.operation_table.item(0, 1).setText(str(tmp_path / "first.KEY"))
+    editor.parameter_table.item(0, 3).setText("810")
+    editor.parameter_table.item(0, 4).setText("955")
+    definition = editor.build_definition(
+        tasks.TC4_RING_MULTI_TASK_1,
+        workspace=str(tmp_path / "multi"),
+    )
+
+    assert definition.task_id == "custom-multi"
+    assert definition.workspace == tmp_path / "multi"
+    assert definition.operations[0]["template_key"] == str(tmp_path / "first.KEY")
+    assert definition.operations[1]["parameters"][0]["range"] == [810.0, 955.0]
+    assert definition.operations[1]["inherit_materials"] is True
+    assert definition.operations[1]["enable_grain"] is True
+    app.processEvents()
+
+
+def test_task_editor_rejects_unknown_parameter_type(monkeypatch, tmp_path):
+    pytest.importorskip("PySide6")
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    module = importlib.import_module("work_platform.mobo_ui.task_editor")
+    tasks = importlib.import_module("mobo.automation.task_collection")
+    app = QApplication.instance() or QApplication([])
+    editor = module.TaskDefinitionEditor(multi=False)
+    editor.load_definition(tasks.RING_7050_SINGLE_TASK_1)
+    editor.parameter_table.cellWidget(0, 1).setCurrentText("not_registered")
+
+    with pytest.raises(ValueError, match="未注册的参数类型"):
+        editor.build_definition(
+            tasks.RING_7050_SINGLE_TASK_1,
+            workspace=str(tmp_path),
+            template_key=str(tmp_path / "template.KEY"),
+        )
+    app.processEvents()
+
+
+def test_automation_page_reports_invalid_task_definition_without_starting(monkeypatch):
+    pytest.importorskip("PySide6")
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    module = importlib.import_module("work_platform.mobo_ui.app")
+    app = QApplication.instance() or QApplication([])
+    page = module.AutomationPage(module.QThreadPool.globalInstance(), multi=False)
+    page.task_editor.parameter_table.cellWidget(0, 1).setCurrentText("not_registered")
+    errors = []
+    page.show_error = errors.append
+    page.run_async = lambda *args, **kwargs: pytest.fail("invalid definition started work")
+
+    page.generate_samples()
+
+    assert errors and "未注册的参数类型" in errors[0]
+    assert not page.busy
+    app.processEvents()
+
+
+def test_automation_page_can_create_and_delete_user_template(monkeypatch, tmp_path):
+    pytest.importorskip("PySide6")
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication, QMessageBox
+
+    store = importlib.import_module("mobo.automation.template_store")
+    monkeypatch.setattr(store, "AUTOMATION_TEMPLATES_DIR", tmp_path / "templates")
+    module = importlib.import_module("work_platform.mobo_ui.app")
+    app = QApplication.instance() or QApplication([])
+    page = module.AutomationPage(module.QThreadPool.globalInstance(), multi=False)
+    key_file = tmp_path / "custom.KEY"
+    key_file.write_text("REFTMP 1 300\n", encoding="utf-8")
+    monkeypatch.setattr(QMessageBox, "information", lambda *args: None)
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *args: QMessageBox.StandardButton.Yes,
+    )
+
+    page.new_template()
+    page.task_editor.task_id.setText("ui-custom-single")
+    page.task_editor.task_name.setText("界面自定义单工步")
+    page.template_path.setText(str(key_file))
+    page.workspace_path.setText(str(tmp_path / "workspace"))
+    page.task_editor.target_table.item(0, 0).setText("stress_result")
+    page.save_current_template()
+
+    assert store.load_template("ui-custom-single").name == "界面自定义单工步"
+    assert page.definition.currentData() == {
+        "source": "custom",
+        "task_id": "ui-custom-single",
+    }
+    assert page.delete_template_button.isEnabled()
+
+    page.delete_current_template()
+
+    with pytest.raises(FileNotFoundError):
+        store.load_template("ui-custom-single")
+    app.processEvents()
+
+
 def test_model_page_status_and_dataset_requests_have_timeouts(monkeypatch):
     pytest.importorskip("PySide6")
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")

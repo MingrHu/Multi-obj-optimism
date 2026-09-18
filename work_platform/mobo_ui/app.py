@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import os
 import sys
-from dataclasses import replace
 from functools import lru_cache, partial
 from pathlib import Path
 from typing import Any, Callable
@@ -85,6 +84,7 @@ from .core import (
     stage_text,
     status_view,
 )
+from .task_editor import TaskDefinitionEditor
 
 
 APP_STYLE = """
@@ -874,6 +874,7 @@ class AutomationPage(QWidget, AsyncMixin):
         self.multi = multi
         self.busy = False
         self.last_sample_file = ""
+        self.creating_template = False
         self.timer = QTimer(self)
         self.timer.setInterval(1500)
         self.timer.timeout.connect(self.refresh_progress)
@@ -893,14 +894,31 @@ class AutomationPage(QWidget, AsyncMixin):
         layout.setContentsMargins(0, 0, 8, 4)
         layout.setSpacing(16)
 
-        setup, setup_layout = card("1 · 任务与路径")
+        setup, setup_layout = card("1 · 任务定义")
         grid = QGridLayout()
         self.definition = QComboBox()
         self.definition.currentIndexChanged.connect(self.load_definition)
-        grid.addWidget(QLabel("任务模板"), 0, 0)
-        grid.addWidget(self.definition, 0, 1, 1, 3)
+        grid.addWidget(QLabel("配置预设"), 0, 0)
+        definition_row = QHBoxLayout()
+        definition_row.addWidget(self.definition, 1)
+        self.new_template_button = QPushButton("新建模板")
+        self.new_template_button.clicked.connect(self.new_template)
+        self.save_template_button = QPushButton("保存模板")
+        self.save_template_button.setObjectName("Primary")
+        self.save_template_button.clicked.connect(self.save_current_template)
+        self.delete_template_button = QPushButton("删除模板")
+        self.delete_template_button.setObjectName("Danger")
+        self.delete_template_button.clicked.connect(self.delete_current_template)
+        self.refresh_template_button = QPushButton("刷新模板")
+        self.refresh_template_button.clicked.connect(self.refresh_templates)
+        definition_row.addWidget(self.new_template_button)
+        definition_row.addWidget(self.save_template_button)
+        definition_row.addWidget(self.delete_template_button)
+        definition_row.addWidget(self.refresh_template_button)
+        grid.addLayout(definition_row, 0, 1, 1, 3)
         self.template_path = PathPicker("DEFORM 模板 KEY 文件")
-        grid.addWidget(QLabel("模板 KEY"), 1, 0)
+        self.template_label = QLabel("模板 KEY")
+        grid.addWidget(self.template_label, 1, 0)
         grid.addWidget(self.template_path, 1, 1, 1, 3)
         self.sample_path = PathPicker("样本 TSV 文件；也可在下方生成")
         grid.addWidget(QLabel("样本文件"), 2, 0)
@@ -909,6 +927,11 @@ class AutomationPage(QWidget, AsyncMixin):
         grid.addWidget(QLabel("工作区"), 3, 0)
         grid.addWidget(self.workspace_path, 3, 1, 1, 3)
         setup_layout.addLayout(grid)
+        self.task_editor = TaskDefinitionEditor(multi=multi)
+        setup_layout.addWidget(self.task_editor)
+        if multi:
+            self.template_label.hide()
+            self.template_path.hide()
         layout.addWidget(setup)
 
         sample, sample_layout = card("2 · 抽样设计")
@@ -935,9 +958,6 @@ class AutomationPage(QWidget, AsyncMixin):
         controls.addWidget(self.include_boundaries)
         controls.addWidget(self.sample_button)
         sample_layout.addLayout(controls)
-        self.parameter_table = DataTable()
-        self.parameter_table.setMinimumHeight(150)
-        sample_layout.addWidget(self.parameter_table)
         layout.addWidget(sample)
 
         execution, execution_layout = card("3 · 执行与进度")
@@ -999,64 +1019,162 @@ class AutomationPage(QWidget, AsyncMixin):
 
     def populate_definitions(self) -> None:
         from mobo.automation.task_collection import TASK_COLLECTION, MultiOperationTaskDefinition
+        from mobo.automation.template_store import list_templates
 
+        selected = self.definition.currentData()
         self.definition.blockSignals(True)
+        self.definition.clear()
         for task_id, definition in TASK_COLLECTION.items():
             if isinstance(definition, MultiOperationTaskDefinition) == self.multi:
-                self.definition.addItem(definition.name, task_id)
+                self.definition.addItem(
+                    definition.name, {"source": "builtin", "task_id": task_id}
+                )
+        for definition in list_templates(multi=self.multi):
+            self.definition.addItem(
+                definition.name,
+                {"source": "custom", "task_id": definition.task_id},
+            )
+        selected_index = self.definition.findData(selected) if selected else -1
+        self.definition.setCurrentIndex(selected_index if selected_index >= 0 else 0)
         self.definition.blockSignals(False)
+        self.creating_template = False
         self.load_definition()
 
-    def current_definition(self):
-        from mobo.automation.task_collection import get_task_definition
+    def refresh_templates(self) -> None:
+        try:
+            self.populate_definitions()
+        except (OSError, ValueError) as exc:
+            self.show_error(f"刷新任务模板失败：{exc}")
 
-        task_id = self.definition.currentData()
-        if not task_id:
-            raise ValueError("没有可用的任务模板")
-        definition = get_task_definition(str(task_id))
-        selected_template = self.template_path.text() if hasattr(self, "template_path") else ""
-        if not selected_template:
-            return definition
-        if self.multi:
-            operations = definition.operation_configs()
-            operations[0]["template_key"] = selected_template
-            return replace(definition, operations=tuple(operations))
-        return replace(definition, template_key=selected_template)
+    def _selected_template(self) -> tuple[Any | None, dict[str, str] | None]:
+        from mobo.automation.task_collection import get_task_definition
+        from mobo.automation.template_store import load_template
+
+        data = self.definition.currentData()
+        if not isinstance(data, dict):
+            return None, None
+        task_id = str(data.get("task_id") or "")
+        if data.get("source") == "custom":
+            return load_template(task_id), data
+        return get_task_definition(task_id), data
+
+    def current_definition(self):
+        preset, _data = self._selected_template()
+        return self.task_editor.build_definition(
+            preset,
+            workspace=self.workspace_path.text(),
+            template_key=self.template_path.text(),
+        )
 
     def load_definition(self) -> None:
-        if self.definition.count() == 0:
+        if self.definition.count() == 0 or self.creating_template:
             return
-        from mobo.automation.task_collection import get_task_definition
-
-        definition = get_task_definition(str(self.definition.currentData()))
+        definition, data = self._selected_template()
+        if definition is None:
+            return
+        self.task_editor.load_definition(definition)
         if self.multi:
-            operations = definition.operations
-            first_template = str(operations[0]["template_key"])
-            rows = []
-            for op_index, operation in enumerate(operations, 1):
-                for parameter in operation.get("parameters", []):
-                    rows.append([f"工步 {op_index}", parameter["name"], *parameter["range"]])
-            headers = ["工步", "参数", "下限", "上限"]
             sample_dir = definition.sample_dir
-            workspace = definition.run_dir
+            workspace = (
+                definition.workspace
+                if data and data.get("source") == "custom"
+                else definition.run_dir
+            )
         else:
-            first_template = definition.template_key
-            rows = [[item["name"], item["object"], *item["range"]] for item in definition.parameters]
-            headers = ["参数", "作用对象", "下限", "上限"]
+            self.template_path.setText(definition.template_key)
             sample_dir = definition.workspace / "samples"
             workspace = definition.workspace
-        self.template_path.setText(first_template)
         self.workspace_path.setText(str(workspace))
-        self.parameter_table.set_data(headers, rows)
         existing = sorted(Path(sample_dir).glob("*.txt"), key=lambda p: p.stat().st_mtime, reverse=True) if Path(sample_dir).exists() else []
         if existing:
             self.sample_path.setText(str(existing[0]))
+        else:
+            self.sample_path.setText("")
+        is_custom = bool(data and data.get("source") == "custom")
+        self.delete_template_button.setEnabled(is_custom)
+        self.save_template_button.setText("保存模板" if is_custom else "另存为用户模板")
         self.refresh_progress()
+
+    def new_template(self) -> None:
+        self.creating_template = True
+        self.definition.blockSignals(True)
+        self.definition.setCurrentIndex(-1)
+        self.definition.blockSignals(False)
+        self.task_editor.clear_for_new()
+        self.template_path.setText("")
+        self.sample_path.setText("")
+        self.workspace_path.setText("")
+        self.delete_template_button.setEnabled(False)
+        self.save_template_button.setText("创建模板")
+        set_status(self.status_label, "not_started")
+        self.stage_label.setText("填写模板定义后保存")
+        self.batch_table.set_data(["样本", "状态", "当前工步", "更新时间"], [])
+
+    def save_current_template(self) -> None:
+        from mobo.automation.template_store import save_template
+
+        try:
+            definition = self.current_definition()
+            _selected, data = self._selected_template()
+            overwrite = bool(
+                data
+                and data.get("source") == "custom"
+                and data.get("task_id") == definition.task_id
+            )
+            path = save_template(definition, overwrite=overwrite)
+        except (KeyError, OSError, TypeError, ValueError) as exc:
+            self.show_error(f"保存任务模板失败：{exc}")
+            return
+        self.creating_template = False
+        self.populate_definitions()
+        target = self.definition.findData(
+            {"source": "custom", "task_id": definition.task_id}
+        )
+        if target >= 0:
+            self.definition.setCurrentIndex(target)
+        QMessageBox.information(self, "模板已保存", f"用户任务模板已保存：\n{path}")
+
+    def delete_current_template(self) -> None:
+        from mobo.automation.template_store import delete_template
+
+        _definition, data = self._selected_template()
+        if not data or data.get("source") != "custom":
+            self.show_error("只能删除用户创建的任务模板")
+            return
+        task_id = str(data["task_id"])
+        answer = QMessageBox.question(
+            self,
+            "删除任务模板",
+            f"确定删除用户任务模板 {task_id} 吗？运行产物不会被删除。",
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            delete_template(task_id)
+            self.populate_definitions()
+        except (OSError, ValueError) as exc:
+            self.show_error(f"删除任务模板失败：{exc}")
 
     def set_busy(self, busy: bool, stage: str = "") -> None:
         self.busy = busy
-        for button in (self.sample_button, self.prepare_button, self.run_button, self.extract_button):
+        for button in (
+            self.sample_button,
+            self.prepare_button,
+            self.run_button,
+            self.extract_button,
+            self.new_template_button,
+            self.save_template_button,
+            self.delete_template_button,
+            self.refresh_template_button,
+        ):
             button.setEnabled(not busy)
+        self.definition.setEnabled(not busy)
+        self.task_editor.setEnabled(not busy)
+        if not busy:
+            data = self.definition.currentData()
+            self.delete_template_button.setEnabled(
+                bool(isinstance(data, dict) and data.get("source") == "custom")
+            )
         if busy:
             set_status(self.status_label, "running")
             self.stage_label.setText(stage)
@@ -1067,7 +1185,9 @@ class AutomationPage(QWidget, AsyncMixin):
             self.timer.stop()
 
     def generate_samples(self) -> None:
-        definition = self.current_definition()
+        definition = self.require_definition()
+        if definition is None:
+            return
         method = self.method.currentData()
         count = self.sample_count.value()
         include_boundaries = self.include_boundaries.isChecked()
@@ -1105,7 +1225,9 @@ class AutomationPage(QWidget, AsyncMixin):
         sample = self.require_sample()
         if not sample:
             return
-        definition = self.current_definition()
+        definition = self.require_definition()
+        if definition is None:
+            return
         workspace = self.workspace_path.text()
         self.set_busy(True, "正在生成参数化 KEY")
 
@@ -1126,7 +1248,9 @@ class AutomationPage(QWidget, AsyncMixin):
         sample = self.require_sample()
         if not sample:
             return
-        definition = self.current_definition()
+        definition = self.require_definition()
+        if definition is None:
+            return
         workspace = self.workspace_path.text()
         self.set_busy(True, "正在执行批处理")
 
@@ -1170,7 +1294,9 @@ class AutomationPage(QWidget, AsyncMixin):
         sample = self.require_sample()
         if not sample:
             return
-        definition = self.current_definition()
+        definition = self.require_definition()
+        if definition is None:
+            return
         workspace = self.workspace_path.text()
         self.set_busy(True, "正在提取结果")
 
@@ -1211,6 +1337,25 @@ class AutomationPage(QWidget, AsyncMixin):
             self.show_error("请选择任务工作区")
             return None
         return path
+
+    def require_definition(self) -> Any | None:
+        from mobo.automation.task_collection import (
+            MultiOperationTaskDefinition,
+            SingleOperationTaskDefinition,
+        )
+        from mobo.automation.template_store import validate_template
+
+        try:
+            definition = self.current_definition()
+            if isinstance(
+                definition,
+                (MultiOperationTaskDefinition, SingleOperationTaskDefinition),
+            ):
+                validate_template(definition)
+            return definition
+        except (KeyError, OSError, TypeError, ValueError) as exc:
+            self.show_error(str(exc))
+            return None
 
     def refresh_progress(self, active_task: Any = None) -> None:
         try:
