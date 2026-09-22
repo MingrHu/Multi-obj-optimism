@@ -79,9 +79,9 @@ def test_extract_dataset_writes_result(monkeypatch, tmp_path):
     assert out.endswith("_result.txt")
     content = open(out, encoding="utf-8").read()
     # 工艺参数 + 目标值（无行号列）
-    assert "900" in content and "30" in content and "42.00" in content
+    assert "900.00" in content and "30.00" in content and "42.00" in content
     # 不再写行号列：首行应直接以参数值开头
-    assert content.splitlines()[0].split("\t")[0] == "900"
+    assert content.splitlines()[0].split("\t")[0] == "900.00"
     # 提取函数应收到对象 ID（"1"）与 select_component（3）
     assert received == [("1", [["frame"]], 3)]
 
@@ -111,7 +111,7 @@ def test_extract_dataset_routes_roundness(monkeypatch, tmp_path):
         str(tmp_path / "result"),
     )
     content = open(out, encoding="utf-8").read()
-    assert "1.500000" in content  # 圆度 6 位小数
+    assert "1.50" in content
     # 用最终步 KEY 文件、inner 圈、对象 ID=1
     assert len(calls) == 1
     key_path, which, object_id = calls[0]

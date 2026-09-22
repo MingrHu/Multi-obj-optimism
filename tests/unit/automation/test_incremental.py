@@ -60,3 +60,13 @@ def test_missing_output_is_rebuilt_from_state(tmp_path):
     IncrementalDataset(state_file, str(output))
 
     assert output.read_text(encoding="utf-8") == "p0\ty0\np2\ty2\n"
+
+
+def test_incremental_dataset_saves_numeric_values_with_two_decimals(tmp_path):
+    state_file = str(tmp_path / "incremental.json")
+    output = tmp_path / "result.txt"
+    dataset = IncrementalDataset(state_file, str(output))
+
+    dataset.commit(0, [5, "1.239", "nan"])
+
+    assert output.read_text(encoding="utf-8") == "5.00\t1.23\tnan\n"

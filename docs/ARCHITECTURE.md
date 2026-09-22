@@ -79,6 +79,7 @@ DOE 聚合服务。路由层位于 `api.handler`，实际处理层位于 `api.se
 | `automation` | `template_store.py` | 单/多工步用户任务模板的校验、版本化 JSON 持久化、唯一性检查与增删改查 |
 | `automation` | `solver.py` | DEFORM 子进程驱动（KEY↔DB）与 `DeformSolver` 求解调度；前处理器调用使用跨进程锁，文件占用时有限重试，非零退出码直接判失败；求解进度落盘到 `process_info_file`（记录各 DB 是否完成），支持中断后仅凭进度文件续跑 |
 | `automation` | `extract.py` | 结果 DB→KEY 逐步导出与数据集提取编排 |
+| `automation` | `dataset_format.py` | 提取数据集数值统一向零截断并保留两位小数 |
 | `automation` | `incremental.py` | 可选的边求解边提取检查点；按样本序号幂等保存数据行并原子重建数据集，支持并发乱序完成和宕机续跑 |
 | `automation` | `pipeline.py` | `TaskStatus`（枚举）/ `ForgingTask` 三阶段状态机 / `generate_sample_file` |
 | `automation` | `service.py` | 任务级服务函数：state.json 落盘 + 仅凭 task_id 从磁盘重建续跑 |

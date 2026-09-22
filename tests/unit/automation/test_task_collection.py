@@ -234,7 +234,7 @@ def test_multi_operation_dataset_has_no_header(monkeypatch, tmp_path):
     )
     output = TC4_RING_MULTI_TASK_1.extract_dataset(task, result_dir=tmp_path)
     assert Path(output).read_text(encoding="utf-8") == (
-        "800\t200\t0.1\t900\t300\t1.0\t12.30\t50.10\n"
+        "800.00\t200.00\t0.10\t900.00\t300.00\t1.00\t12.30\t50.10\n"
     )
 
 

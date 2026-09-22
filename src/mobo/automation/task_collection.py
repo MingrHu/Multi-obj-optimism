@@ -14,6 +14,7 @@ from mobo.common.logging import logger
 from mobo.extraction import registry as extraction_registry
 
 from .config import DeformConfig
+from .dataset_format import format_dataset_row
 from .extract import export_saved_step_keys
 from .keyfile import read_key_frames
 from .multi_operation import MultiOperationTask, Operation, generate_multi_operation_samples
@@ -198,9 +199,8 @@ class MultiOperationTaskDefinition:
                 key_files = self._completed_key_files(task, sample_index) # type: ignore
                 try:
                     targets = self.extract_targets(key_files)
-                    stream.write("\t".join(
-                        [str(value) for value in sample] + list(targets.values())
-                    ) + "\n")
+                    row = [*sample, *targets.values()]
+                    stream.write("\t".join(format_dataset_row(row)) + "\n")
                     stream.flush()
                 except Exception as exc:
                     logger.error(f"样本 {sample_index} 数据提取失败: {exc}")

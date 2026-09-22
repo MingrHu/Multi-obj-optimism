@@ -386,7 +386,7 @@ def test_run_extract_data_resume_loads_samples_and_no_index_col(monkeypatch, tmp
     rows = [ln.split("\t") for ln in out_files[0].read_text().splitlines()]
     assert len(rows) == n
     for i, row in enumerate(rows):
-        assert row[0] == str(i)   # 首列是样本首参数(=序号 i)，非行号
+        assert row[0] == f"{i:.2f}"  # 首列是样本首参数(=序号 i)，非行号
         assert row[-1] == "T"     # 末列是目标值
 
 

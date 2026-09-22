@@ -98,6 +98,7 @@
     "api/store.py",
     "automation/__init__.py",
     "automation/config.py",
+    "automation/dataset_format.py",
     "automation/extract.py",
     "automation/incremental.py",
     "automation/keyfile.py",

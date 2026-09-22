@@ -14,6 +14,7 @@ from typing import Any, List, Sequence
 
 from mobo.common.logging import logger
 from .config import DeformConfig
+from .dataset_format import format_dataset_row
 from .keyfile import derive_output_path, read_key_frames
 from .solver import db_to_key, query_db_steps
 
@@ -145,7 +146,7 @@ def extract_dataset(
                 row.extend(_extract_values(
                     db_file, step_dir, target_table, in_progress
                 ))
-                line = "\t".join(map(str, row)) + "\n"
+                line = "\t".join(format_dataset_row(row)) + "\n"
                 logger.info(line)
                 # 追加
                 f.write(line)

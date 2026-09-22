@@ -9,6 +9,8 @@ import threading
 import time
 from typing import Any, Sequence
 
+from .dataset_format import format_dataset_row
+
 
 class IncrementalDataset:
     """以样本序号为主键，原子保存数据行并生成稳定的数据集文件。"""
@@ -69,7 +71,10 @@ class IncrementalDataset:
             for key in sorted(current["samples"], key=int)
             if current["samples"][key].get("status") == "completed"
         )
-        content = "".join("\t".join(item["row"]) + "\n" for item in completed)
+        content = "".join(
+            "\t".join(format_dataset_row(item["row"])) + "\n"
+            for item in completed
+        )
         self._atomic_text(self.output_file, content)
 
     def is_completed(self, sample_index: int) -> bool:
@@ -120,7 +125,7 @@ class IncrementalDataset:
             state = self._load()
             state["samples"][str(sample_index)] = {
                 "status": "completed",
-                "row": [str(value) for value in row],
+                "row": format_dataset_row(row),
                 "finished_at": self._now(),
                 "error": "",
             }
