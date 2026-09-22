@@ -30,9 +30,10 @@ from PySide6.QtCore import (
     QThreadPool,
     QTimer,
     QUrl,
+    QSettings,
     Signal,
 )
-from PySide6.QtGui import QColor, QCursor, QFont, QFontDatabase, QPainter, QPalette
+from PySide6.QtGui import QColor, QCursor, QFont, QFontDatabase, QPainter, QPixmap
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -85,56 +86,15 @@ from .core import (
     status_view,
 )
 from .task_editor import TaskDefinitionEditor
-
-
-APP_STYLE = """
-* { font-family: "Microsoft YaHei UI", "Segoe UI"; font-size: 14px; }
-QMainWindow, QWidget#Root { background: #0b1220; color: #dce7f5; }
-QFrame#TopBar { background: #101a2d; border-bottom: 1px solid #24344d; }
-QFrame#Sidebar { background: #0e1728; border-right: 1px solid #24344d; }
-QFrame#Card { background: #111d31; border: 1px solid #243650; border-radius: 12px; }
-QFrame#StatCard { background: #13233a; border: 1px solid #284666; border-radius: 10px; }
-QLabel#Title { font-size: 26px; font-weight: 700; color: #f4f8ff; }
-QLabel#Subtitle { color: #8fa3bd; font-size: 13px; }
-QLabel#Section { font-size: 17px; font-weight: 600; color: #eff6ff; }
-QLabel#Metric { font-size: 25px; font-weight: 700; color: #69d6df; }
-QLabel#Caption { color: #93a6bf; font-size: 12px; }
-QLabel#StatusPill { padding: 5px 10px; border-radius: 9px; font-weight: 600; }
-QPushButton, QToolButton { background: #172740; border: 1px solid #304864; border-radius: 7px;
-  color: #e7f0fb; padding: 7px 13px; min-height: 20px; }
-QPushButton:hover, QToolButton:hover { background: #1d3352; border-color: #42b9c7; }
-QPushButton:pressed { background: #132239; }
-QPushButton:disabled { color: #607188; background: #111a29; border-color: #1c2a3c; }
-QPushButton#Primary { background: #1b8190; border-color: #35a9b6; color: white; font-weight: 600; }
-QPushButton#Primary:hover { background: #2397a5; }
-QPushButton#Danger { color: #ffb6b3; border-color: #7f4448; }
-QPushButton#Nav { border: 0; background: transparent; text-align: left; padding: 11px 15px;
-  color: #a9bad0; border-radius: 8px; }
-QPushButton#Nav:hover { background: #14243b; color: #f6fbff; }
-QPushButton#Nav:checked { background: #17364d; color: #71dbe2; border-left: 3px solid #5bd0d8; }
-QToolButton#NavGroup { border: 0; background: transparent; color: #edf5ff; padding: 9px 8px;
-  font-weight: 700; text-align: left; }
-QToolButton#NavGroup:hover { background: #14243b; color: #71dbe2; }
-QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QTextEdit, QTableWidget, QTableView { background: #0d1829; color: #deebf8;
-  border: 1px solid #2c4059; border-radius: 6px; padding: 6px; selection-background-color: #256d82; }
-QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus, QTextEdit:focus { border-color: #43bdc8; }
-QComboBox::drop-down { border: 0; width: 25px; }
-QComboBox#TaskSelector { background: #1b2635; color: #d8e0e9; border-color: #465466; }
-QComboBox#TaskSelector QAbstractItemView { background: #202b3a; color: #d8e0e9;
-  selection-background-color: #586575; selection-color: #ffffff; }
-QHeaderView::section { background: #17263b; color: #9fb2c9; border: 0; border-right: 1px solid #263a53;
-  border-bottom: 1px solid #263a53; padding: 8px; font-weight: 600; }
-QTableWidget, QTableView { gridline-color: #21334a; alternate-background-color: #101d30; }
-QProgressBar { background: #0d1828; border: 1px solid #2a4059; border-radius: 5px; height: 10px;
-  text-align: center; color: transparent; }
-QProgressBar::chunk { background: #4ac7d1; border-radius: 4px; }
-QTabWidget::pane { border: 1px solid #263a52; border-radius: 7px; top: -1px; }
-QTabBar::tab { background: #111d30; color: #91a5bd; padding: 9px 18px; border-bottom: 2px solid transparent; }
-QTabBar::tab:selected { color: #62d4dc; border-bottom-color: #62d4dc; }
-QScrollBar:vertical { background: #0d1725; width: 10px; margin: 0; }
-QScrollBar::handle:vertical { background: #2a425d; border-radius: 5px; min-height: 30px; }
-QStatusBar { background: #0e1727; color: #91a3b8; }
-"""
+from .theme import (
+    DisplayMode,
+    apply_application_theme,
+    current_theme,
+    normalize_mode,
+    status_colors,
+    style_chart,
+    ui_asset_path,
+)
 
 
 def card(title: str | None = None) -> tuple[QFrame, QVBoxLayout]:
@@ -165,14 +125,8 @@ def page_header(title: str, subtitle: str) -> QVBoxLayout:
 
 def set_status(label: QLabel, state: str | None) -> None:
     view = status_view(state)
-    colors = {
-        "neutral": ("#24344b", "#adbed2"),
-        "info": ("#173d55", "#73d9e1"),
-        "warning": ("#503e1c", "#ffd47c"),
-        "success": ("#153e35", "#75e1bd"),
-        "danger": ("#4d262d", "#ffaaa8"),
-    }
-    bg, fg = colors[view.tone]
+    bg, fg = status_colors(view.tone)
+    label.setProperty("statusState", state or "not_started")
     label.setText(f"●  {view.text}")
     label.setStyleSheet(f"background:{bg}; color:{fg}; padding:5px 10px; border-radius:9px;")
 
@@ -454,7 +408,8 @@ class Scatter3DCanvas(FigureCanvasQTAgg):
     """Driver-independent, reusable 3D scatter canvas embedded as a Qt widget."""
 
     def __init__(self, parent: QWidget | None = None):
-        self.figure = Figure(facecolor="#111d31")
+        theme = current_theme()
+        self.figure = Figure(facecolor=theme.plot)
         self.figure.subplots_adjust(left=0.02, right=0.96, bottom=0.02, top=0.98)
         super().__init__(self.figure)
         self.setParent(parent)
@@ -462,12 +417,17 @@ class Scatter3DCanvas(FigureCanvasQTAgg):
         self.font_properties = matplotlib_cjk_font()
         self._base_limits: tuple[tuple[float, float], ...] | None = None
         self._base_view = (24.0, -58.0)
+        self._points: list[tuple[float, float, float]] = []
+        self._labels = ("X", "Y", "Z")
 
     def set_points(
         self,
         points: list[tuple[float, float, float]],
         labels: tuple[str, str, str],
     ) -> None:
+        self._points = list(points)
+        self._labels = labels
+        theme = current_theme()
         self.axes.clear()
         xs, ys, zs = zip(*points, strict=True)
         self.axes.scatter(
@@ -475,33 +435,43 @@ class Scatter3DCanvas(FigureCanvasQTAgg):
             ys,
             zs,
             s=16,
-            c="#51d1da",
-            edgecolors="#b8f5f7",
+            c=theme.accent,
+            edgecolors=theme.point_edge,
             linewidths=0.25,
             depthshade=False,
         )
         self.axes.set_xlabel(
-            labels[0], color="#a9bad0", labelpad=7, fontproperties=self.font_properties
+            labels[0], color=theme.muted, labelpad=7, fontproperties=self.font_properties
         )
         self.axes.set_ylabel(
-            labels[1], color="#a9bad0", labelpad=7, fontproperties=self.font_properties
+            labels[1], color=theme.muted, labelpad=7, fontproperties=self.font_properties
         )
         self.axes.set_zlabel(
-            labels[2], color="#a9bad0", labelpad=7, fontproperties=self.font_properties
+            labels[2], color=theme.muted, labelpad=7, fontproperties=self.font_properties
         )
-        self.axes.tick_params(colors="#9fb1c7", labelsize=8)
-        self.axes.set_facecolor("#0d1829")
+        self.figure.set_facecolor(theme.plot)
+        self.axes.tick_params(colors=theme.muted, labelsize=8)
+        self.axes.set_facecolor(theme.plot)
         self.axes.set_box_aspect((1.0, 1.0, 0.82), zoom=0.78)
-        self.axes.grid(True, color="#23364e", linewidth=0.6)
+        self.axes.grid(True, color=theme.grid, linewidth=0.6)
         for axis in (self.axes.xaxis, self.axes.yaxis, self.axes.zaxis):
-            axis.pane.set_facecolor("#0d1829")
-            axis.pane.set_edgecolor("#23364e")
+            axis.pane.set_facecolor(theme.plot)
+            axis.pane.set_edgecolor(theme.grid)
         self.axes.view_init(elev=self._base_view[0], azim=self._base_view[1])
         self._base_limits = (
             self.axes.get_xlim3d(),
             self.axes.get_ylim3d(),
             self.axes.get_zlim3d(),
         )
+        self.draw_idle()
+
+    def apply_display_mode(self) -> None:
+        if self._points:
+            self.set_points(self._points, self._labels)
+            return
+        theme = current_theme()
+        self.figure.set_facecolor(theme.plot)
+        self.axes.set_facecolor(theme.plot)
         self.draw_idle()
 
     def zoom_by(self, factor: float) -> None:
@@ -836,7 +806,7 @@ class DashboardPage(QWidget, AsyncMixin):
             step.setObjectName("StatCard")
             box = QVBoxLayout(step)
             number = QLabel(index)
-            number.setStyleSheet("color:#5ed1da;font-size:19px;font-weight:700")
+            number.setObjectName("StepNumber")
             title = QLabel(name)
             title.setObjectName("Section")
             desc = QLabel(detail)
@@ -2413,7 +2383,15 @@ class ModelPage(QWidget, AsyncMixin):
         chart.addAxis(axis_y, Qt.AlignmentFlag.AlignLeft)
         series.attachAxis(axis_y)
         chart.legend().setLabelColor(QColor("#a9bad0"))
+        style_chart(chart)
         self.score_chart.setChart(chart)
+
+    def apply_display_mode(self) -> None:
+        models = [
+            {"model_family": name, "score": score}
+            for name, score in self.score_entries
+        ]
+        self.update_score_chart(models)
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         if watched is self.score_chart.viewport():
@@ -2869,7 +2847,11 @@ class OptimizationPage(QWidget, AsyncMixin):
         for table in (self.objectives, self.variables):
             table.blockSignals(True)
             for row in range(table.rowCount()):
-                color = QColor("#4d262d") if (table, row) in error_rows else QColor("transparent")
+                color = (
+                    QColor(status_colors("danger")[0])
+                    if (table, row) in error_rows
+                    else QColor("transparent")
+                )
                 for column in range(table.columnCount()):
                     item = table.item(row, column)
                     if item:
@@ -2878,16 +2860,22 @@ class OptimizationPage(QWidget, AsyncMixin):
         self.configuration_valid = not errors
         if errors:
             self.validation_hint.setText("配置错误：" + "；".join(dict.fromkeys(errors)))
-            self.validation_hint.setStyleSheet("color:#ffaaa8")
+            self.validation_hint.setStyleSheet(
+                f"color:{status_colors('danger')[1]}"
+            )
         elif warnings:
             self.validation_hint.setText("范围警告：" + "；".join(warnings))
-            self.validation_hint.setStyleSheet("color:#ffd47c")
+            self.validation_hint.setStyleSheet(
+                f"color:{status_colors('warning')[1]}"
+            )
         else:
             message = "配置检查通过"
             if self.mode.currentData() == "multi":
                 message += "；多目标模式的权重仅记录，不参与 NSGA-II 的 Pareto 排序"
             self.validation_hint.setText(message)
-            self.validation_hint.setStyleSheet("color:#75e1bd")
+            self.validation_hint.setStyleSheet(
+                f"color:{status_colors('success')[1]}"
+            )
         self._refresh_optimization_actions()
         return self.configuration_valid
 
@@ -3062,6 +3050,9 @@ class OptimizationPage(QWidget, AsyncMixin):
             self.timer.stop()
         self._refresh_optimization_actions()
 
+    def apply_display_mode(self) -> None:
+        self.validate_configuration()
+
 
 class ResultsPage(QWidget, AsyncMixin):
     def __init__(
@@ -3176,7 +3167,6 @@ class ResultsPage(QWidget, AsyncMixin):
         zoom_out = QPushButton("缩小")
         zoom_reset = QPushButton("重置视图")
         self.open_chart_button = QPushButton("单独查看图表")
-        self.open_chart_button.setObjectName("Primary")
         zoom_in.clicked.connect(lambda: self.zoom_chart(1.25))
         zoom_out.clicked.connect(lambda: self.zoom_chart(0.8))
         zoom_reset.clicked.connect(self.reset_chart_zoom)
@@ -3684,8 +3674,7 @@ class ResultsPage(QWidget, AsyncMixin):
             axis.setTitleBrush(QColor("#9fb1c7"))
             axis.setGridLineColor(QColor("#23364e"))
         chart.legend().setLabelColor(QColor("#a9bad0"))
-        if style == "scatter":
-            chart.legend().hide()
+        style_chart(chart, hide_legend=style == "scatter")
         warning = ""
         x_span = max(xs) - min(xs)
         x_scale = max(abs(min(xs)), abs(max(xs)), 1.0)
@@ -3818,10 +3807,7 @@ class ResultsPage(QWidget, AsyncMixin):
     def _base_chart(self, title: str) -> QChart:
         chart = QChart()
         chart.setTitle(title)
-        chart.setTitleBrush(QColor("#dce7f5"))
-        chart.setBackgroundBrush(QColor("#111d31"))
-        chart.setPlotAreaBackgroundBrush(QColor("#0d1829"))
-        chart.setPlotAreaBackgroundVisible(True)
+        style_chart(chart)
         return chart
 
     def _empty_chart(self, text: str = "加载结果后即可绘图") -> None:
@@ -3830,12 +3816,30 @@ class ResultsPage(QWidget, AsyncMixin):
         self.chart.setChart(chart)
         self.plot_status.setText(text)
 
+    def apply_display_mode(self) -> None:
+        style_chart(self.chart.chart())
+        if self.scatter3d is not None:
+            self.scatter3d.apply_display_mode()
+        if self.headers and self.rows:
+            self.update_chart()
+        else:
+            self._empty_chart()
+        for dialog in list(self.chart_windows):
+            for view in dialog.findChildren(QChartView):
+                style_chart(view.chart())
+            for canvas in dialog.findChildren(Scatter3DCanvas):
+                canvas.apply_display_mode()
+
 
 class MainWindow(QMainWindow):
     connection_checked = Signal(bool)
 
     def __init__(self):
         super().__init__()
+        self.settings = QSettings()
+        self.display_mode: DisplayMode = normalize_mode(
+            self.settings.value("display/mode", "engineering")
+        )
         self.setWindowTitle("MOBO · 锻造工艺优化工作台")
         self.resize(1440, 900)
         self.setMinimumSize(1120, 720)
@@ -3877,6 +3881,7 @@ class MainWindow(QMainWindow):
         status.showMessage("就绪")
         self.setStatusBar(status)
         self.nav_buttons[0].setChecked(True)
+        self.apply_display_mode(self.display_mode, persist=False)
         QTimer.singleShot(250, self.check_connection)
 
     def _top_bar(self) -> QFrame:
@@ -3885,27 +3890,105 @@ class MainWindow(QMainWindow):
         frame.setFixedHeight(64)
         layout = QHBoxLayout(frame)
         layout.setContentsMargins(20, 0, 20, 0)
-        brand = QLabel("MOBO")
-        brand.setStyleSheet("font-size:20px;font-weight:800;color:#edf9ff;letter-spacing:2px")
-        product = QLabel("锻造工艺优化工作台")
-        product.setObjectName("Subtitle")
+        self.brand = QLabel("MOBO")
+        self.brand.setObjectName("Brand")
+        self.brand.setMinimumWidth(68)
+        self.product = QLabel("锻造工艺优化工作台")
+        self.product.setObjectName("Subtitle")
+        self.hust_brand = QLabel()
+        self.hust_brand.setFixedSize(250, 44)
+        self.hust_brand.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.hust_brand.setStyleSheet(
+            "background:#005b96; border-radius:4px; padding:3px"
+        )
+        pixmap = QPixmap(ui_asset_path("hust_mark_name.png"))
+        if not pixmap.isNull():
+            mark_only = pixmap.copy(
+                0, 0, min(2250, pixmap.width()), pixmap.height()
+            )
+            self.hust_brand.setPixmap(
+                mark_only.scaled(
+                    238,
+                    38,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+            )
+        self.hust_brand.setToolTip("华中科技大学官方视觉标识")
+        self.hust_brand.hide()
         self.api_url = QLineEdit(os.environ.get("MOBO_API_URL", "http://127.0.0.1:5050"))
         self.api_url.setFixedWidth(235)
         self.api_url.setPlaceholderText("后端服务地址")
         self.connect_button = QPushButton("检测连接")
         self.connect_button.clicked.connect(self.check_connection)
         self.connection = QLabel()
+        self.connection.setFixedHeight(34)
         set_status(self.connection, "not_started")
         self.connection.setText("●  未检测")
-        layout.addWidget(brand)
+        layout.addWidget(self.brand)
         layout.addSpacing(10)
-        layout.addWidget(product)
+        layout.addWidget(self.product)
+        layout.addSpacing(12)
+        layout.addWidget(self.hust_brand)
         layout.addStretch()
+        self.display_mode_selector = QComboBox()
+        self.display_mode_selector.setToolTip("切换整个界面及图表的显示风格")
+        self.display_mode_selector.addItem("工程深色", "engineering")
+        self.display_mode_selector.addItem("论文科研", "publication")
+        selected = self.display_mode_selector.findData(self.display_mode)
+        self.display_mode_selector.setCurrentIndex(max(0, selected))
+        self.display_mode_selector.currentIndexChanged.connect(
+            self._display_mode_changed
+        )
+        layout.addWidget(QLabel("显示模式"))
+        layout.addWidget(self.display_mode_selector)
         layout.addWidget(QLabel("API"))
         layout.addWidget(self.api_url)
         layout.addWidget(self.connect_button)
         layout.addWidget(self.connection)
         return frame
+
+    def _display_mode_changed(self) -> None:
+        self.apply_display_mode(
+            normalize_mode(self.display_mode_selector.currentData())
+        )
+
+    def apply_display_mode(
+        self, mode: DisplayMode, *, persist: bool = True
+    ) -> None:
+        self.display_mode = normalize_mode(mode)
+        selector_index = self.display_mode_selector.findData(self.display_mode)
+        if (
+            selector_index >= 0
+            and selector_index != self.display_mode_selector.currentIndex()
+        ):
+            self.display_mode_selector.blockSignals(True)
+            self.display_mode_selector.setCurrentIndex(selector_index)
+            self.display_mode_selector.blockSignals(False)
+        app = QApplication.instance()
+        if app is not None:
+            apply_application_theme(app, self.display_mode)
+        if persist:
+            self.settings.setValue("display/mode", self.display_mode)
+        self.hust_brand.setVisible(self.display_mode == "publication")
+        self.product.setVisible(self.display_mode == "engineering")
+        for label in self.findChildren(QLabel):
+            state = label.property("statusState")
+            if state is not None:
+                previous_text = label.text()
+                set_status(label, str(state))
+                if label is self.connection:
+                    label.setText(previous_text)
+        for page in self.pages:
+            apply_mode = getattr(page, "apply_display_mode", None)
+            if callable(apply_mode):
+                apply_mode()
+        message = (
+            "已切换到论文科研显示模式"
+            if self.display_mode == "publication"
+            else "已切换到工程深色显示模式"
+        )
+        self.statusBar().showMessage(message, 3500)
 
     def _sidebar(self) -> QFrame:
         frame = QFrame()
@@ -4045,14 +4128,7 @@ def configure_application(app: QApplication) -> None:
     font_path = Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts" / "msyh.ttc"
     if font_path.is_file():
         QFontDatabase.addApplicationFont(str(font_path))
-    palette = QPalette()
-    palette.setColor(QPalette.ColorRole.Window, QColor("#0b1220"))
-    palette.setColor(QPalette.ColorRole.WindowText, QColor("#dce7f5"))
-    palette.setColor(QPalette.ColorRole.Base, QColor("#0d1829"))
-    palette.setColor(QPalette.ColorRole.Text, QColor("#dce7f5"))
-    palette.setColor(QPalette.ColorRole.Highlight, QColor("#26889a"))
-    app.setPalette(palette)
-    app.setStyleSheet(APP_STYLE)
+    apply_application_theme(app, "engineering")
     app.setFont(QFont("Microsoft YaHei UI", 10))
 
 

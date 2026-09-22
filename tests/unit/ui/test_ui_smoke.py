@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import time
 import warnings
+from pathlib import Path
 
 import pytest
 
@@ -11,6 +12,17 @@ def test_pyside_application_module_imports_when_gui_extra_is_installed():
     pytest.importorskip("PySide6")
     module = importlib.import_module("work_platform.mobo_ui.app")
     assert callable(module.main)
+
+
+def test_ui_assets_resolve_when_desktop_entry_imports_top_level_package(monkeypatch):
+    pytest.importorskip("PySide6")
+    work_platform = Path(__file__).resolve().parents[3] / "work_platform"
+    monkeypatch.syspath_prepend(str(work_platform))
+    theme = importlib.import_module("mobo_ui.theme")
+
+    assert Path(theme.ui_asset_path("hust_mark_name.png")).is_file()
+    assert Path(theme.ui_asset_path("spin_up.svg")).is_file()
+    assert Path(theme.ui_asset_path("spin_up_light.svg")).is_file()
 
 
 def test_path_picker_keeps_a_readable_browse_button(monkeypatch):
@@ -86,6 +98,63 @@ def test_connection_check_is_signal_driven_and_bounded(monkeypatch):
     assert time.monotonic() - started < 4
     assert window.connect_button.isEnabled()
     assert window.connection.text() == "●  未连接"
+    window.close()
+    app.processEvents()
+
+
+def test_display_mode_switch_updates_widgets_and_all_chart_engines(monkeypatch):
+    pytest.importorskip("PySide6")
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    from matplotlib.colors import to_hex
+    from PySide6.QtWidgets import QApplication
+
+    module = importlib.import_module("work_platform.mobo_ui.app")
+    app = QApplication.instance() or QApplication([])
+    module.configure_application(app)
+    window = module.MainWindow()
+    window.show()
+    publication_index = window.display_mode_selector.findData("publication")
+
+    window.display_mode_selector.setCurrentIndex(publication_index)
+    app.processEvents()
+
+    assert app.property("displayMode") == "publication"
+    assert not window.hust_brand.isHidden()
+    assert window.hust_brand.pixmap() is not None
+    assert not window.hust_brand.pixmap().isNull()
+    assert window.hust_brand.width() == 250
+    assert "#e4e6e8" in app.styleSheet()
+    assert "spin_up.svg" in app.styleSheet()
+    assert "border-left: 3px solid #005b96" in app.styleSheet()
+
+    model_page = window.pages[3]
+    model_page.update_score_chart(
+        [{"model_family": "PRG", "score": 0.91}]
+    )
+    assert model_page.score_chart.chart().backgroundBrush().color().name() == "#f2f3f4"
+    assert not model_page.score_chart.chart().isBackgroundVisible()
+    assert model_page.score_chart.chart().plotAreaBackgroundBrush().color().name() == "#ffffff"
+
+    results_page = window.pages[5]
+    results_page.set_data(
+        ["温度", "载荷", "晶粒尺寸"],
+        [[900.0, 100.0, 48.2], [1000.0, 120.0, 49.1]],
+    )
+    results_page.update_chart()
+    assert results_page.chart.chart().backgroundBrush().color().name() == "#f2f3f4"
+    assert not results_page.chart.chart().isBackgroundVisible()
+    assert results_page.chart.chart().plotAreaBackgroundBrush().color().name() == "#ffffff"
+    results_page.style.setCurrentIndex(results_page.style.findData("scatter3d"))
+    results_page.update_chart()
+    assert to_hex(results_page.scatter3d.figure.get_facecolor()) == "#ffffff"
+    assert to_hex(results_page.scatter3d.axes.get_facecolor()) == "#ffffff"
+
+    window.apply_display_mode("engineering")
+    app.processEvents()
+    assert window.hust_brand.isHidden()
+    assert "spin_up_light.svg" in app.styleSheet()
+    assert results_page.chart.chart().backgroundBrush().color().name() == "#132139"
+    assert to_hex(results_page.scatter3d.figure.get_facecolor()) == "#0d1829"
     window.close()
     app.processEvents()
 

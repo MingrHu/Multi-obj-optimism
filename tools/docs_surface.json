@@ -177,6 +177,7 @@
     "work_platform/mobo_ui/__init__.py",
     "work_platform/mobo_ui/app.py",
     "work_platform/mobo_ui/core.py",
-    "work_platform/mobo_ui/task_editor.py"
+    "work_platform/mobo_ui/task_editor.py",
+    "work_platform/mobo_ui/theme.py"
   ]
 }
