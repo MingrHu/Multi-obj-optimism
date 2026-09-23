@@ -10,6 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from mobo.common.logging import logger
 from mobo.surrogate.hyperparameters import normalize_model_params, parameter_catalog
 
 from . import store
@@ -18,11 +19,51 @@ from .runtime import registry
 
 MODEL_FAMILIES = {0: "PRG", 1: "SVR", 2: "RF", 3: "KM", 4: "DNN"}
 MODEL_INDICES = {name: index for index, name in MODEL_FAMILIES.items()}
+_TRANSIENT_OPTIMIZATION_STATUSES = {"queued", "running", "stopping"}
 
 
 def get_training_hyperparameters() -> dict[str, Any]:
     """Return model parameter metadata for clients that build dynamic forms."""
     return {"models": parameter_catalog()}
+
+
+def _recover_interrupted_optimizations() -> list[str]:
+    """收敛服务重启后不再有运行线程的优化瞬态记录。"""
+    recovered = []
+    for state in store.list_all():
+        doe_id = state["id"]
+        optimization = dict(state.get("optimization") or {})
+        if (
+            optimization.get("status") not in _TRANSIENT_OPTIMIZATION_STATUSES
+            or registry.running(doe_id, "optimization")
+        ):
+            continue
+        current_run_id = optimization.get("current_run_id")
+        history = list(optimization.get("history") or [])
+        recovered_at = _history_timestamp()
+        for index, run in enumerate(history):
+            if (
+                run.get("run_id") == current_run_id
+                and run.get("status") in _TRANSIENT_OPTIMIZATION_STATUSES
+            ):
+                recovered_run = dict(run)
+                recovered_run.update(
+                    status="stopped", stage="stopped", updated_at=recovered_at,
+                )
+                history[index] = recovered_run
+                break
+        optimization.update(
+            status="stopped", stage="stopped", current_run_id=None, history=history,
+        )
+        store.update(
+            doe_id,
+            status="stopped",
+            stage="optimization_stopped",
+            optimization=optimization,
+        )
+        recovered.append(doe_id)
+        logger.warning(f"已将服务重启遗留的优化任务标记为停止：{doe_id}")
+    return recovered
 
 
 # 所有需要 DOE 标识的 POST 请求先经过同一入口校验

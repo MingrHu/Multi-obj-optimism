@@ -19,8 +19,12 @@ def create_app(config: dict | None = None) -> Flask:
         app.config.update(config)
 
     # 延迟导入路由模块 避免仅导入包时提前加载业务层及算法依赖
+    from . import service
     from .handler import doe_api, register_error_handlers
 
+    # 后台线程不跨进程重启恢复；生产启动时收敛上次进程遗留的瞬态优化状态。
+    if not app.testing:
+        service._recover_interrupted_optimizations()
     app.register_blueprint(doe_api)
     register_error_handlers(app)
 

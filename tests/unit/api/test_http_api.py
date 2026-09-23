@@ -758,6 +758,65 @@ def test_get_optimization_returns_stable_fields(monkeypatch, tmp_path):
     }
 
 
+def test_recover_interrupted_optimization_after_service_restart(monkeypatch, tmp_path):
+    from mobo.api import service
+
+    _client(monkeypatch, tmp_path)
+    store.create({"id": "interrupted_opt"})
+    store.update(
+        "interrupted_opt", status="stopping", stage="optimization_stopping", progress=5,
+    )
+    store.update_section(
+        "interrupted_opt",
+        "optimization",
+        status="stopping",
+        stage="stopping",
+        progress=10,
+        current_run_id="run_interrupted",
+        history=[{
+            "run_id": "run_interrupted",
+            "status": "stopping",
+            "stage": "stopping",
+            "progress": 10,
+            "request": {"mode": "multi"},
+            "result": None,
+            "error": None,
+            "created_at": "2026-09-23T13:11:29+08:00",
+            "updated_at": "2026-09-23T13:31:10+08:00",
+        }],
+    )
+    monkeypatch.setattr(service.registry, "running", lambda *args: False)
+
+    assert service._recover_interrupted_optimizations() == ["interrupted_opt"]
+
+    state = store.load("interrupted_opt")
+    assert (state["status"], state["stage"], state["progress"]) == (
+        "stopped", "optimization_stopped", 5,
+    )
+    optimization = state["optimization"]
+    assert optimization["status"] == optimization["stage"] == "stopped"
+    assert optimization["progress"] == 10
+    assert optimization["current_run_id"] is None
+    assert optimization["history"][0]["status"] == "stopped"
+    assert optimization["history"][0]["stage"] == "stopped"
+    assert optimization["history"][0]["request"] == {"mode": "multi"}
+
+
+def test_recovery_keeps_live_optimization_unchanged(monkeypatch, tmp_path):
+    from mobo.api import service
+
+    _client(monkeypatch, tmp_path)
+    store.create({"id": "live_opt"})
+    store.update_section(
+        "live_opt", "optimization", status="running", stage="optimizing",
+        current_run_id="run_live",
+    )
+    monkeypatch.setattr(service.registry, "running", lambda *args: True)
+
+    assert service._recover_interrupted_optimizations() == []
+    assert store.load("live_opt")["optimization"]["status"] == "running"
+
+
 def test_optimization_control_returns_documented_failures(monkeypatch, tmp_path):
     client = _client(monkeypatch, tmp_path)
 
