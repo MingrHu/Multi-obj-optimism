@@ -1404,6 +1404,10 @@ def test_ga_and_ppo_have_separate_parameter_panels_and_payloads(monkeypatch):
     page.ga_population.setValue(80)
     page.ga_offspring.setValue(30)
     page.ga_generations.setValue(60)
+    assert page.parameter_stack.parent() is page.algorithm_parameter_dialog
+    assert page.ga_population.minimumWidth() >= 300
+    assert "已设置" in page.algorithm_parameter_button.text()
+    assert "NSGA-II" in page.algorithm_parameter_hint.text()
     page.start_optimization()
     ga_payload = captured[0]
     assert page.optimization_state == "queued"
@@ -1415,14 +1419,29 @@ def test_ga_and_ppo_have_separate_parameter_panels_and_payloads(monkeypatch):
     captured.clear()
     page.optimization_state = "not_started"
     page.mode.setCurrentIndex(page.mode.findData("reinforcement_learning"))
+    assert page.parameter_stack.currentIndex() == 1
+    assert "PPO" in page.algorithm_parameter_hint.text()
     page.ppo_timesteps.setValue(1234)
     page.ppo_episode_steps.setValue(55)
+    assert "已设置" in page.algorithm_parameter_button.text()
     page.start_optimization()
     ppo_payload = captured[0]
-    assert page.parameter_stack.currentIndex() == 1
     assert ppo_payload["algorithm"]["params"]["total_timesteps"] == 1234
     assert ppo_payload["algorithm"]["params"]["episode_steps"] == 55
     assert "pop_size" not in ppo_payload["algorithm"]["params"]
+    page._reset_current_algorithm_parameters()
+    assert page.ppo_timesteps.value() == 20000
+    assert page.ppo_learning_rate.value() == pytest.approx(0.001)
+    assert "默认" in page.algorithm_parameter_button.text()
+
+    def reject_after_edit(_dialog):
+        page.ppo_timesteps.setValue(999)
+        return module.QDialog.DialogCode.Rejected
+
+    monkeypatch.setattr(module.AlgorithmParameterDialog, "exec", reject_after_edit)
+    page.open_algorithm_parameters()
+    assert page.ppo_timesteps.value() == 20000
+    assert "默认" in page.algorithm_parameter_button.text()
     app.processEvents()
 
 

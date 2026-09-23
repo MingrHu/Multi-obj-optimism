@@ -72,6 +72,41 @@ def test_evaluate_objectives(fake_scaler_cls, fake_model_cls):
     np.testing.assert_allclose(out["F"], [25.0, 300000.0], rtol=1e-6)
 
 
+def test_batch_evaluation_deduplicates_and_caches_predictions(fake_scaler_cls):
+    class CountingModel:
+        def __init__(self):
+            self.calls = 0
+            self.batch_sizes = []
+
+        def predict(self, values):
+            self.calls += 1
+            self.batch_sizes.append(len(values))
+            return np.asarray(values)[:, 0]
+
+    model = CountingModel()
+    problem = SurrogateOptimizationProblem(
+        objectives=[ObjectiveSpec("grain", model, 0)],
+        scalers={
+            "scaler_X": fake_scaler_cls([900.0], [10.0]),
+            "scaler_y_0": fake_scaler_cls([25.0], [5.0]),
+        },
+        decision_var_indices=[0],
+        bounds=[(875.0, 965.0)],
+    )
+    candidates = np.array([[900.0], [910.0], [900.0]])
+    first = {}
+    problem._evaluate(candidates, first)
+
+    assert model.calls == 1
+    assert model.batch_sizes == [2]
+    np.testing.assert_allclose(first["F"].ravel(), [25.0, 30.0, 25.0])
+
+    second = {}
+    problem._evaluate(candidates[::-1], second)
+    assert model.calls == 1
+    np.testing.assert_allclose(second["F"].ravel(), [25.0, 30.0, 25.0])
+
+
 def test_evaluate_with_constraints(fake_scaler_cls, fake_model_cls):
     prob = _make_problem(
         fake_scaler_cls, fake_model_cls,

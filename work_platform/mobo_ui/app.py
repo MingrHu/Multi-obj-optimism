@@ -676,6 +676,46 @@ class ModelHyperparameterDialog(QDialog):
                 raise ValueError(f"{name} 必须 {operator} {spec[key]}")
 
 
+class AlgorithmParameterDialog(QDialog):
+    """Edit optimization parameters in a roomy modal instead of the main card."""
+
+    def __init__(
+        self,
+        parameter_stack: QStackedWidget,
+        reset_current: Callable[[], None],
+        parent: QWidget | None = None,
+    ):
+        super().__init__(parent)
+        self.parameter_stack = parameter_stack
+        self.setModal(True)
+        self.resize(560, 390)
+        self.setMinimumSize(500, 340)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(22, 20, 22, 18)
+        layout.setSpacing(14)
+        self.hint = QLabel(
+            "仅修改当前优化算法的运行参数。保持默认值即可使用后端推荐配置。"
+        )
+        self.hint.setObjectName("Caption")
+        self.hint.setWordWrap(True)
+        layout.addWidget(self.hint)
+        layout.addWidget(parameter_stack, 1)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        reset = buttons.addButton(
+            "恢复当前算法默认值", QDialogButtonBox.ButtonRole.ResetRole
+        )
+        reset.clicked.connect(reset_current)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def select_algorithm(self, title: str, page_index: int) -> None:
+        self.setWindowTitle(f"{title} 参数设置")
+        self.parameter_stack.setCurrentIndex(page_index)
+
+
 class NumericDelegate(QStyledItemDelegate):
     """Use a bounded floating-point editor instead of unrestricted text."""
 
@@ -2496,11 +2536,22 @@ class OptimizationPage(QWidget, AsyncMixin):
         form.addWidget(self.mode, 1, 1)
         form.addWidget(QLabel("优化算法"), 2, 0)
         form.addWidget(self.algorithm, 2, 1)
+        self.algorithm_parameter_button = QPushButton("设置参数（默认）")
+        self.algorithm_parameter_button.clicked.connect(self.open_algorithm_parameters)
+        form.addWidget(QLabel("算法参数"), 3, 0)
+        form.addWidget(self.algorithm_parameter_button, 3, 1)
         config_layout.addLayout(form)
+        self.algorithm_parameter_hint = QLabel()
+        self.algorithm_parameter_hint.setObjectName("Caption")
+        self.algorithm_parameter_hint.setWordWrap(True)
+        config_layout.addWidget(self.algorithm_parameter_hint)
         self.parameter_stack = QStackedWidget()
         ga_parameters = QWidget()
-        ga_form = QGridLayout(ga_parameters)
-        ga_form.setContentsMargins(0, 0, 0, 0)
+        ga_form = QFormLayout(ga_parameters)
+        ga_form.setContentsMargins(4, 8, 4, 8)
+        ga_form.setHorizontalSpacing(24)
+        ga_form.setVerticalSpacing(14)
+        ga_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         self.ga_population = QSpinBox()
         self.ga_population.setRange(4, 10000)
         self.ga_population.setValue(100)
@@ -2510,16 +2561,16 @@ class OptimizationPage(QWidget, AsyncMixin):
         self.ga_generations = QSpinBox()
         self.ga_generations.setRange(1, 1000000)
         self.ga_generations.setValue(200)
-        ga_form.addWidget(QLabel("种群规模"), 0, 0)
-        ga_form.addWidget(self.ga_population, 0, 1)
-        ga_form.addWidget(QLabel("子代数量"), 1, 0)
-        ga_form.addWidget(self.ga_offspring, 1, 1)
-        ga_form.addWidget(QLabel("迭代代数"), 2, 0)
-        ga_form.addWidget(self.ga_generations, 2, 1)
+        ga_form.addRow("种群规模", self.ga_population)
+        ga_form.addRow("子代数量", self.ga_offspring)
+        ga_form.addRow("迭代代数", self.ga_generations)
         self.parameter_stack.addWidget(ga_parameters)
         ppo_parameters = QWidget()
-        ppo_form = QGridLayout(ppo_parameters)
-        ppo_form.setContentsMargins(0, 0, 0, 0)
+        ppo_form = QFormLayout(ppo_parameters)
+        ppo_form.setContentsMargins(4, 8, 4, 8)
+        ppo_form.setHorizontalSpacing(24)
+        ppo_form.setVerticalSpacing(14)
+        ppo_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         self.ppo_timesteps = QSpinBox()
         self.ppo_timesteps.setRange(1, 1_000_000_000)
         self.ppo_timesteps.setValue(20000)
@@ -2537,17 +2588,33 @@ class OptimizationPage(QWidget, AsyncMixin):
         self.ppo_constraint_penalty.setDecimals(4)
         self.ppo_constraint_penalty.setRange(0.001, 1_000_000.0)
         self.ppo_constraint_penalty.setValue(5.0)
-        for row, (label, widget) in enumerate((
+        for label, widget in (
             ("训练时间步", self.ppo_timesteps),
             ("每回合步数", self.ppo_episode_steps),
             ("评估回合数", self.ppo_evaluation_episodes),
             ("学习率", self.ppo_learning_rate),
             ("约束惩罚系数", self.ppo_constraint_penalty),
-        )):
-            ppo_form.addWidget(QLabel(label), row, 0)
-            ppo_form.addWidget(widget, row, 1)
+        ):
+            ppo_form.addRow(label, widget)
         self.parameter_stack.addWidget(ppo_parameters)
-        config_layout.addWidget(self.parameter_stack)
+        parameter_editors = (
+            self.ga_population,
+            self.ga_offspring,
+            self.ga_generations,
+            self.ppo_timesteps,
+            self.ppo_episode_steps,
+            self.ppo_evaluation_episodes,
+            self.ppo_learning_rate,
+            self.ppo_constraint_penalty,
+        )
+        for editor in parameter_editors:
+            editor.setMinimumWidth(300)
+            editor.setMinimumHeight(34)
+            editor.setKeyboardTracking(False)
+            editor.valueChanged.connect(self._refresh_algorithm_parameter_summary)
+        self.algorithm_parameter_dialog = AlgorithmParameterDialog(
+            self.parameter_stack, self._reset_current_algorithm_parameters, self
+        )
         # Compatibility aliases for integrations that used the former GA widgets.
         self.population = self.ga_population
         self.generations = self.ga_generations
@@ -2555,6 +2622,7 @@ class OptimizationPage(QWidget, AsyncMixin):
         self.schema_hint.setObjectName("Caption")
         self.schema_hint.setWordWrap(True)
         config_layout.addWidget(self.schema_hint)
+        self._refresh_algorithm_parameter_summary()
         top.addWidget(config, 1)
 
         status, status_layout = card("任务状态")
@@ -2775,11 +2843,94 @@ class OptimizationPage(QWidget, AsyncMixin):
     def current_doe_id(self) -> str:
         return str(self.doe_id.currentData() or "").strip()
 
+    def _algorithm_parameter_snapshot(self) -> tuple[int | float, ...]:
+        return (
+            self.ga_population.value(),
+            self.ga_offspring.value(),
+            self.ga_generations.value(),
+            self.ppo_timesteps.value(),
+            self.ppo_episode_steps.value(),
+            self.ppo_evaluation_episodes.value(),
+            self.ppo_learning_rate.value(),
+            self.ppo_constraint_penalty.value(),
+        )
+
+    def _restore_algorithm_parameter_snapshot(
+        self, values: tuple[int | float, ...]
+    ) -> None:
+        editors = (
+            self.ga_population,
+            self.ga_offspring,
+            self.ga_generations,
+            self.ppo_timesteps,
+            self.ppo_episode_steps,
+            self.ppo_evaluation_episodes,
+            self.ppo_learning_rate,
+            self.ppo_constraint_penalty,
+        )
+        for editor, value in zip(editors, values, strict=True):
+            editor.setValue(value)
+
+    def _reset_current_algorithm_parameters(self) -> None:
+        if self.mode.currentData() == "reinforcement_learning":
+            defaults = (20000, 100, 10, 0.001, 5.0)
+            editors = (
+                self.ppo_timesteps,
+                self.ppo_episode_steps,
+                self.ppo_evaluation_episodes,
+                self.ppo_learning_rate,
+                self.ppo_constraint_penalty,
+            )
+        else:
+            defaults = (100, 50, 200)
+            editors = (self.ga_population, self.ga_offspring, self.ga_generations)
+        for editor, value in zip(editors, defaults, strict=True):
+            editor.setValue(value)
+        self._refresh_algorithm_parameter_summary()
+
+    def _refresh_algorithm_parameter_summary(self, _value=None) -> None:
+        if self.mode.currentData() == "reinforcement_learning":
+            values = (
+                self.ppo_timesteps.value(),
+                self.ppo_episode_steps.value(),
+                self.ppo_evaluation_episodes.value(),
+                self.ppo_learning_rate.value(),
+                self.ppo_constraint_penalty.value(),
+            )
+            defaults = (20000, 100, 10, 0.001, 5.0)
+            summary = (
+                f"PPO：训练时间步 {values[0]:,}，每回合 {values[1]:,} 步，"
+                f"评估 {values[2]} 回合，学习率 {values[3]:g}，约束惩罚 {values[4]:g}。"
+            )
+        else:
+            values = (
+                self.ga_population.value(),
+                self.ga_offspring.value(),
+                self.ga_generations.value(),
+            )
+            defaults = (100, 50, 200)
+            summary = (
+                f"NSGA-II：种群 {values[0]}，子代 {values[1]}，迭代 {values[2]} 代。"
+            )
+        state = "默认" if values == defaults else "已设置"
+        self.algorithm_parameter_button.setText(f"设置参数（{state}）")
+        self.algorithm_parameter_hint.setText(summary)
+
+    def open_algorithm_parameters(self) -> None:
+        reinforcement = self.mode.currentData() == "reinforcement_learning"
+        snapshot = self._algorithm_parameter_snapshot()
+        title = "PPO 强化学习" if reinforcement else "NSGA-II 遗传算法"
+        self.algorithm_parameter_dialog.select_algorithm(title, 1 if reinforcement else 0)
+        if self.algorithm_parameter_dialog.exec() != QDialog.DialogCode.Accepted:
+            self._restore_algorithm_parameter_snapshot(snapshot)
+        self._refresh_algorithm_parameter_summary()
+
     def mode_changed(self) -> None:
         rl = self.mode.currentData() == "reinforcement_learning"
         self.algorithm.clear()
         self.algorithm.addItem("PPO 强化学习", "ppo") if rl else self.algorithm.addItem("NSGA-II 遗传算法", "nsga2")
         self.parameter_stack.setCurrentIndex(1 if rl else 0)
+        self._refresh_algorithm_parameter_summary()
         self._normalize_default_weights()
         self.validate_configuration()
 

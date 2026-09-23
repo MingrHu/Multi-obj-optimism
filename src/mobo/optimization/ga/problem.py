@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
-from pymoo.core.problem import ElementwiseProblem
+from pymoo.core.problem import Problem
 
 
 @dataclass(frozen=True)
@@ -20,7 +20,7 @@ class ConstraintSpec:
     value: float
 
 
-class SurrogateOptimizationProblem(ElementwiseProblem):
+class SurrogateOptimizationProblem(Problem):
     def __init__(
         self,
         *,
@@ -46,6 +46,7 @@ class SurrogateOptimizationProblem(ElementwiseProblem):
         self.fixed_values: Dict[int, float] = dict(fixed_values or {})
         self.objective_mode = objective_mode
         self.objective_weights = list(objective_weights or [])
+        self._evaluation_cache: Dict[bytes, Tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
         if objective_mode not in {"single", "multi"}:
             raise ValueError("objective_mode 仅支持 single 或 multi")
         if objective_mode == "single" and len(self.objective_weights) != len(self.objectives):
@@ -158,62 +159,121 @@ class SurrogateOptimizationProblem(ElementwiseProblem):
 
         return x_full
 
-    @staticmethod
-    def _predict_scalar(model: Any, x_scaled_2d: np.ndarray) -> float:
-        y = model.predict(x_scaled_2d)
-        return float(np.asarray(y).reshape(-1)[0])
-
     def _evaluate(self, x, out, *args, **kwargs):
-        x_full = self._assemble_full_x(np.array(x, dtype=float))
-        x_scaled = self.scaler_X.transform(x_full.reshape(1, -1))
+        values = np.asarray(x, dtype=float)
+        single_row = values.ndim == 1
+        rows = np.ascontiguousarray(np.atleast_2d(values), dtype=float)
+        objectives, constraints, _raw = self._evaluate_rows(rows)
+        out["F"] = objectives[0] if single_row else objectives
+        if self.constraints:
+            out["G"] = constraints[0] if single_row else constraints
 
-        raw_objective_vals: List[float] = []
-        scaled_objective_vals: List[float] = []
-        raw_by_name: Dict[str, float] = {}
+    def predict_raw_objectives(self, x: np.ndarray) -> np.ndarray:
+        """Return unscaled objective values while reusing the optimization cache."""
+        rows = np.ascontiguousarray(np.atleast_2d(np.asarray(x, dtype=float)), dtype=float)
+        return self._evaluate_rows(rows)[2]
+
+    def _evaluate_rows(
+        self, rows: np.ndarray
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        if len(rows) == 0:
+            return (
+                np.empty((0, self.n_obj), dtype=float),
+                np.empty((0, len(self.constraints)), dtype=float),
+                np.empty((0, len(self.objectives)), dtype=float),
+            )
+        keys = [row.tobytes() for row in rows]
+        missing: Dict[bytes, np.ndarray] = {}
+        for key, row in zip(keys, rows, strict=True):
+            if key not in self._evaluation_cache and key not in missing:
+                missing[key] = row
+        if missing:
+            self._evaluate_missing(missing)
+
+        objective_rows = []
+        constraint_rows = []
+        raw_rows = []
+        for key in keys:
+            objectives, constraints, raw = self._evaluation_cache[key]
+            objective_rows.append(objectives)
+            constraint_rows.append(constraints)
+            raw_rows.append(raw)
+        return (
+            np.asarray(objective_rows, dtype=float),
+            np.asarray(constraint_rows, dtype=float).reshape(len(rows), len(self.constraints)),
+            np.asarray(raw_rows, dtype=float),
+        )
+
+    def _evaluate_missing(self, missing: Dict[bytes, np.ndarray]) -> None:
+        keys = list(missing)
+        decisions = np.asarray([missing[key] for key in keys], dtype=float)
+        full_x = np.repeat(self.x_base.reshape(1, -1), len(decisions), axis=0)
+        full_x[:, self.decision_var_indices] = decisions
+        for full_i, value in self.fixed_values.items():
+            if full_i < 0 or full_i >= self.full_input_dim:
+                raise ValueError(f"fixed_values index 越界：{full_i}")
+            full_x[:, full_i] = float(value)
+        scaled_x = self.scaler_X.transform(full_x)
 
         prediction_specs = [*self.objectives, *self.constraint_objectives]
-        for index, obj in enumerate(prediction_specs):
-            y_scaled = self._predict_scalar(obj.model, x_scaled)
-            scaler_y = self.scalers[f"scaler_y_{obj.y_index}"]
-            y_val = float(scaler_y.inverse_transform(np.array([[y_scaled]], dtype=float))[0, 0])
-            raw_by_name[obj.name] = y_val
-            if index < len(self.objectives):
-                raw_objective_vals.append(y_val)
-                scaled_objective_vals.append(y_scaled)
-
+        scaled_columns = []
+        raw_columns = []
+        for spec in prediction_specs:
+            scaled = np.asarray(spec.model.predict(scaled_x), dtype=float).reshape(-1)
+            if len(scaled) != len(decisions):
+                raise ValueError(f"{spec.name} 的预测结果数量与候选解数量不一致")
+            scaler_y = self.scalers[f"scaler_y_{spec.y_index}"]
+            raw = np.asarray(
+                scaler_y.inverse_transform(scaled.reshape(-1, 1)), dtype=float
+            ).reshape(-1)
+            scaled_columns.append(scaled)
+            raw_columns.append(raw)
+        scaled_values = np.column_stack(scaled_columns)
+        raw_values = np.column_stack(raw_columns)
+        objective_count = len(self.objectives)
+        objective_raw = raw_values[:, :objective_count]
+        objective_scaled = scaled_values[:, :objective_count]
+        signs = np.asarray(
+            [1.0 if objective.minimize else -1.0 for objective in self.objectives]
+        )
         if self.objective_mode == "single":
-            signed = [
-                value if obj.minimize else -value
-                for obj, value in zip(self.objectives, scaled_objective_vals, strict=True)
-            ]
-            F = [float(np.dot(self.objective_weights, signed))]
+            objective_values = (
+                objective_scaled * signs
+            ) @ np.asarray(self.objective_weights, dtype=float).reshape(-1, 1)
         else:
-            F = [
-                value if obj.minimize else -value
-                for obj, value in zip(self.objectives, raw_objective_vals, strict=True)
-            ]
+            objective_values = objective_raw * signs
 
-        out["F"] = np.array(F, dtype=float)
+        raw_by_name = {
+            spec.name: raw_values[:, index]
+            for index, spec in enumerate(prediction_specs)
+        }
+        constraint_columns = []
+        for constraint in self.constraints:
+            if constraint.kind not in ("upper", "lower"):
+                raise ValueError(f"Unsupported constraint kind: {constraint.kind}")
+            if isinstance(constraint.objective, int):
+                index = constraint.objective
+                if index < 0 or index >= objective_count:
+                    raise ValueError(f"constraint objective index 越界：{index}")
+                predicted = objective_raw[:, index]
+            else:
+                if constraint.objective not in raw_by_name:
+                    raise ValueError(
+                        f"constraint objective name 不存在：{constraint.objective}"
+                    )
+                predicted = raw_by_name[constraint.objective]
+            if constraint.kind == "upper":
+                constraint_columns.append(predicted - float(constraint.value))
+            else:
+                constraint_columns.append(float(constraint.value) - predicted)
+        constraint_values = (
+            np.column_stack(constraint_columns)
+            if constraint_columns else np.empty((len(decisions), 0), dtype=float)
+        )
 
-        if self.constraints:
-            G = []
-            for c in self.constraints:
-                if c.kind not in ("upper", "lower"):
-                    raise ValueError(f"Unsupported constraint kind: {c.kind}")
-
-                if isinstance(c.objective, int):
-                    idx = c.objective
-                    if idx < 0 or idx >= len(raw_objective_vals):
-                        raise ValueError(f"constraint objective index 越界：{idx}")
-                    v = raw_objective_vals[idx]
-                else:
-                    if c.objective not in raw_by_name:
-                        raise ValueError(f"constraint objective name 不存在：{c.objective}")
-                    v = raw_by_name[c.objective]
-
-                if c.kind == "upper":
-                    G.append(v - float(c.value))
-                else:
-                    G.append(float(c.value) - v)
-
-            out["G"] = np.array(G, dtype=float)
+        for index, key in enumerate(keys):
+            self._evaluation_cache[key] = (
+                np.asarray(objective_values[index], dtype=float),
+                np.asarray(constraint_values[index], dtype=float),
+                np.asarray(objective_raw[index], dtype=float),
+            )

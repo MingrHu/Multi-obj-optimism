@@ -77,17 +77,16 @@ def _write_solutions(
 
 
 def _predict_raw_objectives(problem, x_values, objectives) -> np.ndarray:
-    rows = []
-    for decision_values in x_values:
-        full_x = problem._assemble_full_x(decision_values)
-        scaled_x = problem.scaler_X.transform(full_x.reshape(1, -1))
-        row = []
-        for spec in objectives:
-            scaled_y = problem._predict_scalar(spec.model, scaled_x)
-            scaler_y = problem.scalers[f"scaler_y_{spec.y_index}"]
-            row.append(float(scaler_y.inverse_transform([[scaled_y]])[0, 0]))
-        rows.append(row)
-    return np.asarray(rows, dtype=float)
+    if not len(x_values):
+        return np.empty((0, len(objectives)), dtype=float)
+    return problem.predict_raw_objectives(x_values)
+
+
+def _prepare_model_for_optimization(model: Any) -> Any:
+    """Avoid parallel scheduler overhead for small per-generation RF batches."""
+    if hasattr(model, "n_jobs"):
+        model.n_jobs = 1
+    return model
 
 
 def run_parameterized_nsga2(
@@ -114,7 +113,7 @@ def run_parameterized_nsga2(
     for name in objective_names:
         objectives.append(ObjectiveSpec(
             name=name,
-            model=_load_model(model_dir, name),
+            model=_prepare_model_for_optimization(_load_model(model_dir, name)),
             y_index=output_names.index(name),
             minimize=minimize_by_name[name],
         ))
@@ -125,7 +124,8 @@ def run_parameterized_nsga2(
     ))
     constraint_objectives = [
         ObjectiveSpec(
-            name=name, model=_load_model(model_dir, name),
+            name=name,
+            model=_prepare_model_for_optimization(_load_model(model_dir, name)),
             y_index=output_names.index(name), minimize=True,
         )
         for name in constraint_names

@@ -61,7 +61,7 @@ DOE 聚合服务。路由层位于 `api.handler`，实际处理层位于 `api.se
 | `surrogate` | `service.py` | `train_surrogate`/`query_model_status`：`model_id` 主键，req/resp 落盘 |
 | `api` | `app.py` / `handler.py` / `service.py` / `readiness.py` | Flask 应用、运行依赖预加载、HTTP 路由、按字段取数及 DOE 聚合处理层 |
 | `api` | `store.py` / `runtime.py` | DOE 独立目录持久化与后台任务中止控制 |
-| `optimization/ga` | `problem.py` | `SurrogateOptimizationProblem`（pymoo 问题）|
+| `optimization/ga` | `problem.py` | `SurrogateOptimizationProblem`（pymoo 批量问题；整代代理模型预测并缓存重复候选解）|
 | `optimization/ga` | `operators.py` | `AdaptiveSBX` 自适应交叉、Pareto 结果读写 |
 | `optimization/ga` | `run.py` | `NSGA2_run` 运行入口 |
 | `optimization/rl` | `env.py` | `ForgingEnv`（Gymnasium 环境）|

@@ -7,7 +7,20 @@ import numpy as np
 from sklearn.linear_model import LinearRegression
 from sklearn.preprocessing import StandardScaler
 
-from mobo.optimization.ga.parameterized import _write_solutions, run_parameterized_nsga2
+from mobo.optimization.ga.parameterized import (
+    _prepare_model_for_optimization,
+    _write_solutions,
+    run_parameterized_nsga2,
+)
+
+
+def test_prepare_model_uses_single_worker_without_mutating_saved_artifact():
+    class ParallelModel:
+        n_jobs = -1
+
+    model = ParallelModel()
+    assert _prepare_model_for_optimization(model) is model
+    assert model.n_jobs == 1
 
 
 def test_write_solutions_restores_maximized_objective_sign(tmp_path):
