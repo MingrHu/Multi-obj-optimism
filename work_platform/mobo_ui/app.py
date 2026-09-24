@@ -1442,8 +1442,10 @@ class ModelPage(QWidget, AsyncMixin):
         self.status_loading = False
         self.pending_doe_id = ""
         self.selected_doe_id = ""
+        self.viewing_training_run_id = ""
         self.doe_refresh_in_flight = False
         self.doe_create_in_flight = False
+        self.doe_delete_in_flight = False
         self.status_request_in_flight = False
         self.status_request_id = 0
         self.dataset_request_key = ""
@@ -1485,12 +1487,26 @@ class ModelPage(QWidget, AsyncMixin):
         self.refresh_doe_button.clicked.connect(self.refresh_does)
         self.create_doe_button = QPushButton("新建 DOE")
         self.create_doe_button.clicked.connect(self.create_doe)
+        self.delete_doe_button = QPushButton("删除当前 DOE")
+        self.delete_doe_button.setObjectName("Danger")
+        self.delete_doe_button.setToolTip(
+            "永久删除当前 DOE 及其训练数据、代理模型、优化记录和结果。"
+        )
+        self.delete_doe_button.clicked.connect(self.delete_current_doe)
         doe_row = QHBoxLayout()
         doe_row.addWidget(QLabel("DOE"))
         doe_row.addWidget(self.doe_id, 1)
         doe_row.addWidget(self.create_doe_button)
+        doe_row.addWidget(self.delete_doe_button)
         doe_row.addWidget(self.refresh_doe_button)
         config_layout.addLayout(doe_row)
+        training_run_row = QHBoxLayout()
+        self.training_run = QComboBox()
+        self.training_run.setPlaceholderText("当前 / 最新训练轮次")
+        self.training_run.activated.connect(self._training_run_selected)
+        training_run_row.addWidget(QLabel("训练历史"))
+        training_run_row.addWidget(self.training_run, 1)
+        config_layout.addLayout(training_run_row)
         self.dataset = PathPicker("TXT / TSV / CSV 训练数据")
         self.dataset.changed.connect(self.load_dataset)
         config_layout.addWidget(QLabel("训练数据文件（支持 TXT / TSV / CSV）"))
@@ -1700,12 +1716,13 @@ class ModelPage(QWidget, AsyncMixin):
         self._refresh_model_parameter_buttons()
 
     def refresh_does(self) -> None:
-        if self.doe_refresh_in_flight:
+        if self.doe_refresh_in_flight or self.doe_delete_in_flight:
             return
         self.doe_refresh_in_flight = True
         self.refresh_doe_button.setEnabled(False)
         self.refresh_doe_button.setText("正在刷新…")
         self.training_record_hint.setText("正在刷新 DOE 列表…")
+        self._refresh_training_actions()
         self.run_async(
             lambda: self.client_provider().list_doe(),
             self._does_loaded,
@@ -1717,6 +1734,7 @@ class ModelPage(QWidget, AsyncMixin):
         self.refresh_doe_button.setEnabled(True)
         self.refresh_doe_button.setText("刷新 DOE")
         self.training_record_hint.setText(f"DOE 列表加载失败：{message}；请点击“刷新 DOE”重试。")
+        self._refresh_training_actions()
 
     def _doe_selected(self) -> None:
         doe_id = self.current_doe_id()
@@ -1724,6 +1742,8 @@ class ModelPage(QWidget, AsyncMixin):
             return
         if doe_id != self.selected_doe_id:
             self.selected_doe_id = doe_id
+            self.viewing_training_run_id = ""
+            self.training_run.clear()
             self._clear_dataset_context()
         self.selection_revision += 1
         self.status_request_id += 1
@@ -1742,12 +1762,13 @@ class ModelPage(QWidget, AsyncMixin):
         self.poll()
 
     def create_doe(self) -> None:
-        if self.doe_create_in_flight:
+        if self.doe_create_in_flight or self.doe_delete_in_flight:
             return
         name, accepted = QInputDialog.getText(self, "新建 DOE", "任务名称")
         if accepted and name.strip():
             self.doe_create_in_flight = True
             self.create_doe_button.setEnabled(False)
+            self._refresh_training_actions()
             self.run_async(
                 lambda: self.client_provider().add_doe({"name": name.strip()}),
                 lambda data: self._created_doe(data),
@@ -1763,6 +1784,75 @@ class ModelPage(QWidget, AsyncMixin):
     def _doe_create_failed(self, message: str) -> None:
         self.doe_create_in_flight = False
         self.create_doe_button.setEnabled(True)
+        self._refresh_training_actions()
+        self.show_error(message)
+
+    def delete_current_doe(self) -> None:
+        doe_id = self.current_doe_id()
+        if not doe_id or self.doe_delete_in_flight:
+            return
+        if self.training_state in {"queued", "running", "stopping"}:
+            QMessageBox.information(
+                self,
+                "任务正在运行",
+                "请先停止当前训练任务并等待状态变为已停止，再删除 DOE。",
+            )
+            return
+        task_name = self.doe_id.currentText().strip() or doe_id
+        answer = QMessageBox.warning(
+            self,
+            "确认永久删除 DOE",
+            f"确定删除“{task_name}”吗？\n\n"
+            "该操作会永久删除此 DOE 的训练数据、代理模型、优化记录和结果，且无法恢复。",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self.doe_delete_in_flight = True
+        self.timer.stop()
+        self.selection_revision += 1
+        self.status_request_id += 1
+        self.status_request_in_flight = False
+        self.doe_id.setEnabled(False)
+        self.create_doe_button.setEnabled(False)
+        self.refresh_doe_button.setEnabled(False)
+        self.training_record_hint.setText(f"正在删除 DOE：{task_name}…")
+        self._refresh_training_actions()
+        self.run_async(
+            lambda: self.client_provider().delete_doe(doe_id),
+            lambda _data: self._doe_deleted(doe_id, task_name),
+            lambda message: self._doe_delete_failed(doe_id, message),
+        )
+
+    def _doe_deleted(self, doe_id: str, task_name: str) -> None:
+        self.doe_delete_in_flight = False
+        self.doe_id.setEnabled(True)
+        self.create_doe_button.setEnabled(True)
+        if self.current_doe_id() == doe_id:
+            self.doe_id.setCurrentIndex(-1)
+            self.selected_doe_id = ""
+            self._clear_dataset_context()
+            self.training_state = "not_started"
+            self.status_loading = False
+            set_status(self.status_label, "not_started")
+            self.stage_label.setText("阶段：未开始")
+            self.updated_label.setText("最近更新：—")
+            self.progress.setValue(0)
+            self.best_model.setText("—")
+            self.update_score_chart([])
+        self.training_record_hint.setText(f"DOE“{task_name}”已删除。")
+        self._refresh_training_actions()
+        self.refresh_does()
+
+    def _doe_delete_failed(self, doe_id: str, message: str) -> None:
+        self.doe_delete_in_flight = False
+        self.doe_id.setEnabled(True)
+        self.create_doe_button.setEnabled(True)
+        self.refresh_doe_button.setEnabled(True)
+        if doe_id == self.current_doe_id():
+            self.training_record_hint.setText(f"DOE 删除失败：{message}")
+        self._refresh_training_actions()
         self.show_error(message)
 
     def _does_loaded(self, data: dict[str, Any]) -> None:
@@ -1931,9 +2021,30 @@ class ModelPage(QWidget, AsyncMixin):
     def _refresh_training_actions(self) -> None:
         active = self.training_state in {"queued", "running", "stopping"}
         ready = bool(self.current_doe_id() and self.rows and self.headers and self.field_roles)
-        self.save_button.setEnabled(not self.configuration_saving)
-        self.start_button.setEnabled(ready and not active and not self.status_loading)
+        management_busy = self.doe_delete_in_flight
+        if self.training_state in {"queued", "running"}:
+            self.start_button.setText("正在训练…")
+        elif self.training_state == "stopping":
+            self.start_button.setText("正在停止…")
+        elif self.status_loading:
+            self.start_button.setText("正在加载…")
+        elif self.has_completed_training:
+            self.start_button.setText("重新训练")
+        else:
+            self.start_button.setText("开始训练")
+        self.save_button.setEnabled(not self.configuration_saving and not management_busy)
+        self.start_button.setEnabled(
+            ready and not active and not self.status_loading and not management_busy
+        )
         self.stop_button.setEnabled(self.training_state in {"queued", "running"})
+        self.delete_doe_button.setEnabled(
+            bool(self.current_doe_id())
+            and not active
+            and not self.status_loading
+            and not self.doe_refresh_in_flight
+            and not self.doe_create_in_flight
+            and not self.doe_delete_in_flight
+        )
 
     def _current_schema(self) -> dict[str, Any]:
         input_indices = [index for index, role in enumerate(self.field_roles) if role == "input"]
@@ -2115,6 +2226,7 @@ class ModelPage(QWidget, AsyncMixin):
         self.start_button.setEnabled(False)
         self.start_button.setText("训练中…")
         self.has_completed_training = False
+        self.viewing_training_run_id = ""
         self.training_state = "queued"
         set_status(self.status_label, "queued")
         self._refresh_training_actions()
@@ -2165,7 +2277,13 @@ class ModelPage(QWidget, AsyncMixin):
         request_id = self.status_request_id
         revision = self.selection_revision
         self.run_async(
-            lambda: self.client_provider().training_progress(doe_id),
+            lambda: (
+                self.client_provider().training_progress(
+                    doe_id, self.viewing_training_run_id
+                )
+                if self.viewing_training_run_id
+                else self.client_provider().training_progress(doe_id)
+            ),
             lambda data: self._apply_progress(doe_id, revision, data, request_id),
             lambda message: self._progress_failed(doe_id, revision, message, request_id),
         )
@@ -2237,13 +2355,36 @@ class ModelPage(QWidget, AsyncMixin):
         self.updated_label.setToolTip(str(raw_updated_at or ""))
         self.progress.setValue(int(data.get("progress", 0)))
         models = data.get("models", [])
+        self._populate_training_history(data)
         self._restore_model_parameters(data.get("model_configs"))
         self.has_completed_training = state == "finished" and bool(models)
-        self.start_button.setText("重新训练" if self.has_completed_training else "开始训练")
         if self.has_completed_training:
             self.training_record_hint.setText(
                 "已检测到当前 DOE 的训练记录和可用模型，无需重复训练；"
                 "可直接进入优化，数据或配置变化后再重新训练。"
+            )
+        elif state == "queued":
+            self.training_record_hint.setText("训练任务已提交，正在等待后台开始执行。")
+        elif state == "running":
+            current_model = str(data.get("current_model") or "").strip()
+            current_index = data.get("current_model_index")
+            total_models = data.get("total_models")
+            model_detail = ""
+            if current_model:
+                model_detail = f"：{current_model}"
+                if current_index and total_models:
+                    model_detail += f"（{current_index}/{total_models}）"
+            if str(data.get("stage")) == "evaluating":
+                self.training_record_hint.setText(f"正在进行交叉验证{model_detail}。")
+            else:
+                self.training_record_hint.setText(f"正在训练代理模型{model_detail}。")
+        elif state == "stopping":
+            self.training_record_hint.setText("正在停止训练，请等待当前模型到达安全检查点。")
+        elif state == "stopped":
+            self.training_record_hint.setText("训练已停止，可调整模型或参数后重新开始。")
+        elif state == "failed":
+            self.training_record_hint.setText(
+                str(data.get("error") or "训练失败，请检查服务端日志后重试。")
             )
         elif data.get("dataset"):
             self.training_record_hint.setText("当前 DOE 已保存训练数据与字段定义，尚未开始训练。")
@@ -2266,6 +2407,38 @@ class ModelPage(QWidget, AsyncMixin):
         if state in {"finished", "failed", "stopped", "not_started"}:
             self.timer.stop()
         self._refresh_training_actions()
+
+    def _populate_training_history(self, data: dict[str, Any]) -> None:
+        history = list(data.get("history") or [])
+        selected = self.viewing_training_run_id or str(
+            data.get("selected_run_id") or data.get("current_run_id") or ""
+        )
+        self.training_run.blockSignals(True)
+        self.training_run.clear()
+        for run in reversed(history):
+            run_id = str(run.get("run_id") or "")
+            if not run_id:
+                continue
+            label = (
+                f"{format_timestamp(run.get('updated_at'))} · "
+                f"{status_view(run.get('status')).text} · {run_id}"
+            )
+            self.training_run.addItem(label, run_id)
+        index = self.training_run.findData(selected)
+        self.training_run.setCurrentIndex(index if index >= 0 else -1)
+        self.training_run.blockSignals(False)
+        self.training_run.setEnabled(bool(history))
+
+    def _training_run_selected(self, _index: int) -> None:
+        run_id = str(self.training_run.currentData() or "")
+        doe_id = self.current_doe_id()
+        if not doe_id or not run_id:
+            return
+        self.viewing_training_run_id = run_id
+        self.status_loading = True
+        self.training_record_hint.setText(f"正在加载训练历史 {run_id}…")
+        self._refresh_training_actions()
+        self.poll()
 
     def _restore_model_parameters(self, configs: Any) -> None:
         if not isinstance(configs, list):
@@ -2507,6 +2680,7 @@ class OptimizationPage(QWidget, AsyncMixin):
         self.optimization_state = "not_started"
         self.selection_revision = 0
         self.doe_refresh_in_flight = False
+        self.current_training_run_id = ""
         layout = QVBoxLayout(self)
         layout.setContentsMargins(28, 24, 28, 24)
         layout.setSpacing(16)
@@ -2529,17 +2703,22 @@ class OptimizationPage(QWidget, AsyncMixin):
         self.algorithm.addItem("NSGA-II 遗传算法", "nsga2")
         self.refresh_doe_button = QPushButton("刷新 DOE")
         self.refresh_doe_button.clicked.connect(self.refresh_does)
+        self.training_run = QComboBox()
+        self.training_run.setPlaceholderText("请选择已完成训练轮次")
+        self.training_run.activated.connect(self._optimization_training_run_selected)
         form.addWidget(QLabel("优化任务 / DOE"), 0, 0)
         form.addWidget(self.doe_id, 0, 1)
         form.addWidget(self.refresh_doe_button, 0, 2)
-        form.addWidget(QLabel("优化模式"), 1, 0)
-        form.addWidget(self.mode, 1, 1)
-        form.addWidget(QLabel("优化算法"), 2, 0)
-        form.addWidget(self.algorithm, 2, 1)
+        form.addWidget(QLabel("训练轮次"), 1, 0)
+        form.addWidget(self.training_run, 1, 1, 1, 2)
+        form.addWidget(QLabel("优化模式"), 2, 0)
+        form.addWidget(self.mode, 2, 1)
+        form.addWidget(QLabel("优化算法"), 3, 0)
+        form.addWidget(self.algorithm, 3, 1)
         self.algorithm_parameter_button = QPushButton("设置参数（默认）")
         self.algorithm_parameter_button.clicked.connect(self.open_algorithm_parameters)
-        form.addWidget(QLabel("算法参数"), 3, 0)
-        form.addWidget(self.algorithm_parameter_button, 3, 1)
+        form.addWidget(QLabel("算法参数"), 4, 0)
+        form.addWidget(self.algorithm_parameter_button, 4, 1)
         config_layout.addLayout(form)
         self.algorithm_parameter_hint = QLabel()
         self.algorithm_parameter_hint.setObjectName("Caption")
@@ -2784,6 +2963,8 @@ class OptimizationPage(QWidget, AsyncMixin):
         self.selection_revision += 1
         revision = self.selection_revision
         doe_id = str(self.doe_id.currentData() or "").strip()
+        self.current_training_run_id = ""
+        self.training_run.clear()
         if not doe_id:
             self.set_schema({})
             self.optimization_state = "not_started"
@@ -2805,6 +2986,19 @@ class OptimizationPage(QWidget, AsyncMixin):
         self, doe_id: str, revision: int, data: dict[str, Any]
     ) -> None:
         if revision != self.selection_revision or doe_id != self.current_doe_id():
+            return
+        self._populate_optimization_training_runs(data)
+        selected_run_id = str(data.get("selected_run_id") or "")
+        if (
+            self.current_training_run_id
+            and self.current_training_run_id != selected_run_id
+        ):
+            run_id = self.current_training_run_id
+            self.run_async(
+                lambda: self.client_provider().training_progress(doe_id, run_id),
+                lambda loaded: self._training_schema_loaded(doe_id, revision, loaded),
+                lambda message: self._training_schema_failed(doe_id, revision, message),
+            )
             return
         inputs = list(data.get("input_bounds") or [])
         input_names = list(data.get("input_names") or [])
@@ -2832,6 +3026,45 @@ class OptimizationPage(QWidget, AsyncMixin):
             detail += " 以下变量在训练数据中为常量，请手动设置有效上下界：" + "、".join(constant_names)
         self.schema_hint.setText(detail)
         self._refresh_optimization_actions()
+
+    def _populate_optimization_training_runs(self, data: dict[str, Any]) -> None:
+        history = [
+            run for run in data.get("history") or []
+            if run.get("status") == "finished" and run.get("models")
+        ]
+        selected = self.current_training_run_id or str(
+            data.get("selected_run_id") or data.get("current_run_id") or ""
+        )
+        self.training_run.blockSignals(True)
+        self.training_run.clear()
+        for run in reversed(history):
+            run_id = str(run.get("run_id") or "")
+            self.training_run.addItem(
+                f"{format_timestamp(run.get('updated_at'))} · {run_id}", run_id
+            )
+        index = self.training_run.findData(selected)
+        if index < 0 and self.training_run.count():
+            index = 0
+        self.training_run.setCurrentIndex(index)
+        self.current_training_run_id = str(self.training_run.currentData() or "")
+        self.training_run.blockSignals(False)
+        self.training_run.setEnabled(bool(history))
+
+    def _optimization_training_run_selected(self, _index: int) -> None:
+        doe_id = self.current_doe_id()
+        run_id = str(self.training_run.currentData() or "")
+        if not doe_id or not run_id:
+            return
+        self.current_training_run_id = run_id
+        revision = self.selection_revision
+        self.optimization_state = "loading"
+        self.schema_hint.setText(f"正在加载训练轮次 {run_id}…")
+        self._refresh_optimization_actions()
+        self.run_async(
+            lambda: self.client_provider().training_progress(doe_id, run_id),
+            lambda data: self._training_schema_loaded(doe_id, revision, data),
+            lambda message: self._training_schema_failed(doe_id, revision, message),
+        )
 
     def _training_schema_failed(self, doe_id: str, revision: int, message: str) -> None:
         if revision != self.selection_revision or doe_id != self.current_doe_id():
@@ -3034,6 +3267,7 @@ class OptimizationPage(QWidget, AsyncMixin):
         active = self.optimization_state in {"loading", "queued", "running", "stopping"}
         ready = bool(
             self.current_doe_id()
+            and self.current_training_run_id
             and self.schema_ready_for_optimization
             and self.configuration_valid
         )
@@ -3127,6 +3361,7 @@ class OptimizationPage(QWidget, AsyncMixin):
             }
         payload = {
             "id": doe_id,
+            "training_run_id": self.current_training_run_id or None,
             "mode": mode,
             "objectives": objectives,
             "constraints": [],

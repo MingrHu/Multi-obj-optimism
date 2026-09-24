@@ -43,7 +43,7 @@ DOE 聚合服务。路由层位于 `api.handler`，实际处理层位于 `api.se
 - **common**：最底层基础设施，被其余所有子包依赖。
 - **surrogate / optimization / extraction / automation**：业务子包。
   - `automation.config.DeformConfig` 复用 `extraction.deform_targets` 的提取函数。
-  - `optimization` 运行期从 `data/models` 加载 `surrogate` 产出的模型。
+  - HTTP 聚合流程中的 `optimization` 从同一 DOE 指定训练轮次加载模型；不同 DOE 和不同轮次不共享模型目录。
 - **cli**：仅编排各子包的入口，是唯一会调用 `logger.install_stdout_redirect()` 的层。
 
 ## 目录与模块
@@ -57,7 +57,7 @@ DOE 聚合服务。路由层位于 `api.handler`，实际处理层位于 `api.se
 | `surrogate` | `hyperparameters.py` | 五类模型的参数元数据、默认值合并、类型/范围及关联约束校验 |
 | `surrogate` | `dnn/polynomial/svr/random_forest/kriging.py` | 五种代理模型训练入口 |
 | `surrogate` | `interface.py` | `Doe_surrogateModel` 统一训练接口 |
-| `surrogate` | `evaluate.py` | `SurrogateModelEvaluator` K 折交叉验证与报告 |
+| `surrogate` | `evaluate.py` | `SurrogateModelEvaluator` K 折交叉验证与报告；模型族串行、输出目标线程池并行、单目标各折串行 |
 | `surrogate` | `service.py` | `train_surrogate`/`query_model_status`：`model_id` 主键，req/resp 落盘 |
 | `api` | `app.py` / `handler.py` / `service.py` / `readiness.py` | Flask 应用、运行依赖预加载、HTTP 路由、按字段取数及 DOE 聚合处理层 |
 | `api` | `store.py` / `runtime.py` | DOE 独立目录持久化与后台任务中止控制；服务启动时将失去运行线程的优化瞬态记录收敛为已停止 |
@@ -101,7 +101,7 @@ DOE 聚合服务。路由层位于 `api.handler`，实际处理层位于 `api.se
                                             │
                               (surrogate: 训练并保存代理模型 + scalers)
                                             ▼
-                                   data/models/<family>/*
+                    doe_tasks/<doe_id>/training/runs/<run_id>/models/*
                                             │
                     (optimization: GA / RL 加载模型做多目标寻优)
                                             ▼
@@ -217,10 +217,12 @@ TC4 碾环多工步任务由 `task_collection.TC4_RING_MULTI_TASK_1` 完整定�
   `process_info.json` 记录逐 DB 求解进度；启用增量数据集后，
   `incremental_dataset.json` 记录逐样本提取状态与数据行。`AUTO` 只保存样本、DB、KEY
   和结果数据。
-- HTTP 层以 `data/doe_tasks/<doe_id>/doe.json` 作为聚合状态入口，并在同一 DOE 目录下
-  隔离 `samples/models/training/optimization` 产物，最近推理结果写入状态中的 `inference`；
-  底层代理训练和优化仍复用
-  `data/tasks/<model_id或optimization_id>` 记录，删除 DOE 时一并清理关联记录。
+- HTTP 层以 `data/doe_tasks/<doe_id>/doe.json` 作为聚合状态入口。当前数据配置保存在
+  `dataset/`；每次训练写入 `training/runs/<training_run_id>/`，其中包含本轮数据副本、模型、
+  标准化器、内部状态、完整训练结果和最佳模型索引；每次优化写入
+  `optimization/runs/<optimization_run_id>/`，包含绑定的训练轮次、内部状态、结果表与结果元数据。
+  HTTP 聚合流程通过任务局部工作区调用底层服务，不在顶层 `data/models` 或 `data/tasks`
+  产生跨 DOE 的共享产物。桌面端选择 DOE 后还需选择具体训练轮次或优化轮次。
 
 ## 增量数据集与断点恢复
 

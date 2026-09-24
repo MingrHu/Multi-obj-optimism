@@ -88,7 +88,7 @@ MODEL_PARAMETER_SCHEMAS: dict[str, dict[str, dict[str, Any]]] = {
         "epochs": {"type": "integer", "default": 1000, "minimum": 1, "maximum": 100000,
                    "label": "最大训练轮数"},
         "batch_size": {"type": "integer", "default": 16, "minimum": 1, "label": "批大小"},
-        "verbose": {"type": "integer", "default": 1, "choices": [0, 1, 2], "label": "日志级别"},
+        "verbose": {"type": "integer", "default": 0, "choices": [0, 1, 2], "label": "日志级别"},
         "patience": {"type": "integer", "default": 50, "minimum": 1, "label": "早停耐心轮数"},
         "reduce_lr_factor": {"type": "number", "default": 0.2, "exclusive_minimum": 0,
                              "exclusive_maximum": 1, "label": "学习率衰减系数"},

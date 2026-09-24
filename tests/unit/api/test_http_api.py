@@ -238,7 +238,9 @@ def test_training_request_is_async(monkeypatch, tmp_path):
         "evaluation": {"enabled": False},
     })
     assert response.status_code == 202
-    assert response.json["data"] == {
+    result = response.json["data"]
+    assert result.pop("run_id").startswith("train_")
+    assert result == {
         "id": "train_1", "status": "queued", "stage": "queued", "progress": 0,
         "sample_count": 2, "input_names": ["x"], "target_names": ["y"],
         "models": ["RF"],
@@ -274,7 +276,10 @@ def test_training_accepts_inline_data_and_model_names(monkeypatch, tmp_path):
     assert captured == [("inline_train", "training")]
     state = store.load("inline_train")["training"]
     dataset = Path(state["dataset"]["data_file"])
-    assert dataset.parent == tmp_path / "doe_tasks" / "inline_train" / "training"
+    assert dataset.parent.parent.parent == (
+        tmp_path / "doe_tasks" / "inline_train" / "training"
+    )
+    assert dataset.parent.parent.name == "runs"
     assert dataset.read_text(encoding="utf-8").splitlines() == ["1\t2\t3", "2\t3\t5", "3\t4\t7"]
     expected = default_model_params("RF")
     expected.update({"n_estimators": 20, "n_jobs": 1})
@@ -306,6 +311,26 @@ def test_training_hyperparameter_catalog_and_validation(monkeypatch, tmp_path):
     })
     assert response.status_code == 400
     assert "n_estimators" in response.json["message"]
+
+
+@pytest.mark.parametrize("max_workers", [0, 65, True, "many"])
+def test_training_rejects_invalid_evaluation_workers(
+    monkeypatch, tmp_path, max_workers,
+):
+    client = _client(monkeypatch, tmp_path)
+    client.post("/api/v1/doe/add", json={"id": "invalid_workers"})
+    response = client.post("/api/v1/hust/doe/train/startTrain", json={
+        "id": "invalid_workers",
+        "data_source": {
+            "input_data": {"labels": ["x"], "samples": [[1], [2], [3]]},
+            "output_data": {"labels": ["y"], "samples": [[2], [4], [6]]},
+        },
+        "models": [{"name": "PRG"}],
+        "evaluation": {"n_splits": 3, "max_workers": max_workers},
+    })
+
+    assert response.status_code == 400
+    assert "max_workers" in response.json["message"]
 
 
 def test_training_rejects_mismatched_inline_rows(monkeypatch, tmp_path):
@@ -354,7 +379,9 @@ def test_training_delete_clears_files_and_records(monkeypatch, tmp_path):
     client.post("/api/v1/doe/add", json={"id": "delete_train"})
     task = store.task_dir("delete_train")
     (task / "training" / "dataset.tsv").write_text("1\t2\n", encoding="utf-8")
-    (task / "models" / "snapshot").mkdir()
+    (task / "training" / "runs" / "old" / "models" / "snapshot").mkdir(
+        parents=True
+    )
     store.update_section(
         "delete_train", "training", status="finished", stage="finished", progress=100,
         dataset={"data_file": "removed"}, request={"models": []}, models=[],
@@ -370,9 +397,10 @@ def test_training_delete_clears_files_and_records(monkeypatch, tmp_path):
     assert store.load("delete_train")["training"] == {
         "status": "not_started", "stage": "not_started",
         "progress": 0, "models": [], "error": None,
+        "current_run_id": None, "history": [],
     }
-    assert not any((task / "training").iterdir())
-    assert not any((task / "models").iterdir())
+    assert not any((task / "training" / "runs").iterdir())
+    assert not (task / "models").exists()
 
 
 def test_training_lifecycle_returns_documented_failures(monkeypatch, tmp_path):
@@ -447,7 +475,7 @@ def test_training_worker_snapshots_model(monkeypatch, tmp_path):
     (source / "y_model.pkl").write_bytes(b"model")
     (source / "y_scalers.pkl").write_bytes(b"scalers")
 
-    def fake_train(*args):
+    def fake_train(*args, **_kwargs):
         return {"code": 0, "model_id": args[-1], "data": {
             "model_dir": str(source), "model_index": 2, "model_family": "RF",
             "target_names": ["y"], "train_cost_sec": 0.1,
@@ -465,8 +493,86 @@ def test_training_worker_snapshots_model(monkeypatch, tmp_path):
     assert training["stage"] == "finished"
     assert training["progress"] == 100
     assert Path(training["models"][0]["model_dir"]).is_dir()
+    assert len(training["history"]) == 1
+    run = training["history"][0]
+    assert run["status"] == "finished"
+    run_dir = store.task_dir("worker_1") / "training" / "runs" / run["run_id"]
+    assert Path(run["models"][0]["model_dir"]).is_relative_to(run_dir)
+    assert (run_dir / "training_result.json").is_file()
+    assert (run_dir / "best_model.json").is_file()
     public_progress = service.get_training_progress("worker_1")
     assert "model_dir" not in public_progress["models"][0]
+    historical = service.get_training_progress("worker_1", run["run_id"])
+    assert historical["selected_run_id"] == run["run_id"]
+    assert historical["models"][0]["model_family"] == "RF"
+
+
+def test_real_training_is_fully_isolated_inside_doe_run(monkeypatch, tmp_path):
+    from mobo.api import service
+    from mobo.common import paths
+    from mobo.surrogate import common as surrogate_common
+
+    _client(monkeypatch, tmp_path)
+    monkeypatch.setattr(paths, "TASKS_DIR", tmp_path / "legacy_tasks")
+    monkeypatch.setattr(surrogate_common, "MODELS_DIR", tmp_path / "global_models")
+    store.create({"id": "isolated_training"})
+    dataset = tmp_path / "training.tsv"
+    dataset.write_text(
+        "\n".join(f"{value}\t{2 * value + 1}" for value in range(50)) + "\n",
+        encoding="utf-8",
+    )
+    run_id = "train_isolated"
+    request = {
+        "data_file": str(dataset), "all_var_list": ["x", "y"],
+        "input_var_count": 1, "sample_count": 50,
+        "models": [{
+            "model_index": 0,
+            "params": {"degree": 1, "include_bias": False, "fit_intercept": True},
+            "param_overrides": {"degree": 1},
+        }],
+        "evaluation": {"enabled": False},
+    }
+
+    service._run_training(
+        "isolated_training", request, threading.Event(), run_id,
+    )
+
+    run_dir = store.task_dir("isolated_training") / "training" / "runs" / run_id
+    assert (run_dir / "training_result.json").is_file()
+    assert (run_dir / "best_model.json").is_file()
+    assert list((run_dir / "models").glob("*/y_model.pkl"))
+    assert list((run_dir / "models").glob("*/y_scalers.pkl"))
+    assert list((run_dir / "internal").glob("*/state.json"))
+    assert not (tmp_path / "legacy_tasks").exists()
+    assert not (tmp_path / "global_models").exists()
+
+
+def test_training_progress_recovers_orphaned_active_state(monkeypatch, tmp_path):
+    from mobo.api import service
+
+    _client(monkeypatch, tmp_path)
+    store.create({"id": "orphaned_training"})
+    store.update_section(
+        "orphaned_training",
+        "training",
+        status="running",
+        stage="evaluating",
+        progress=95,
+        current_model="DNN",
+        current_model_index=5,
+        total_models=5,
+    )
+    monkeypatch.setattr(service.registry, "running", lambda *args: False)
+
+    progress = service.get_training_progress("orphaned_training")
+
+    assert progress["status"] == "stopped"
+    assert progress["stage"] == "stopped"
+    assert progress["progress"] == 95
+    assert progress["current_model"] is None
+    state = store.load("orphaned_training")
+    assert state["status"] == "stopped"
+    assert state["stage"] == "training_stopped"
 
 
 def test_inference_loads_best_scored_model(monkeypatch, tmp_path):
@@ -653,6 +759,54 @@ def test_reoptimization_appends_unique_run_history(monkeypatch, tmp_path):
     assert [run["run_id"] for run in history] == [
         first.json["data"]["run_id"], second.json["data"]["run_id"],
     ]
+
+
+def test_optimization_can_bind_a_specific_training_run(monkeypatch, tmp_path):
+    from mobo.api import service
+
+    client = _client(monkeypatch, tmp_path)
+    monkeypatch.setattr(service.registry, "start", lambda *args: None)
+    store.create({"id": "versioned_training"})
+    request = {
+        "all_var_list": ["x1", "y1"], "input_var_count": 1,
+        "models": [{"model_index": 2, "params": {}, "param_overrides": {}}],
+    }
+    old_model = {
+        "model_id": "old_model", "model_dir": str(tmp_path / "old"),
+        "target_names": ["y1"], "score": 0.8,
+    }
+    new_model = {
+        "model_id": "new_model", "model_dir": str(tmp_path / "new"),
+        "target_names": ["y1"], "score": 0.9,
+    }
+    store.update_section(
+        "versioned_training", "training", status="finished",
+        current_run_id="train_new", request=request, models=[new_model],
+        history=[
+            {
+                "run_id": "train_old", "status": "finished", "request": request,
+                "models": [old_model], "updated_at": "2026-09-24T10:00:00+08:00",
+            },
+            {
+                "run_id": "train_new", "status": "finished", "request": request,
+                "models": [new_model], "updated_at": "2026-09-24T11:00:00+08:00",
+            },
+        ],
+    )
+
+    response = client.post("/api/v1/hust/doe/optimize/start", json={
+        "id": "versioned_training", "training_run_id": "train_old",
+        "mode": "multi",
+        "objectives": [{"name": "y1", "direction": "min"}],
+        "decision_variables": [{"name": "x1", "lower": 0, "upper": 1}],
+        "algorithm": {"name": "nsga2", "params": {}},
+    })
+
+    assert response.status_code == 202
+    normalized = store.load("versioned_training")["optimization"]["request"]
+    assert normalized["training_run_id"] == "train_old"
+    assert normalized["model_id"] == "old_model"
+    assert normalized["model_dir"] == str(tmp_path / "old")
 
 
 def test_optimization_result_resources_are_preserved_per_run(monkeypatch, tmp_path):

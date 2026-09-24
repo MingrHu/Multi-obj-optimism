@@ -37,6 +37,9 @@ _PARAMETERIZED_NSGA2_KEYS = (
 
 
 def _resolve_model_dir(resolved: Dict[str, Any]) -> str:
+    configured = resolved.get("model_dir")
+    if configured and Path(configured).is_dir():
+        return str(Path(configured))
     model_id = resolved["model_id"]
     model_state = task_store.load(model_id)
     if model_state is None or model_state.get("kind") != "surrogate":

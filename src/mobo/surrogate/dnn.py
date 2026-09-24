@@ -1,5 +1,6 @@
 from .common import (load_and_preprocess_data, split_data_with_val,
                     build_single_output_dnn,save_model)
+from keras import backend as keras_backend
 from keras.callbacks import EarlyStopping, ReduceLROnPlateau
 from sklearn.metrics import r2_score
 from typing import Any
@@ -63,5 +64,9 @@ def dnn_run(file: str, vars_out: list[str], n_var: int,
         # 计算相关指标
         r2 = r2_score(fact, pred)
         # 保存并打印当前结果
-        save_model(f"{vars_out[idx + n_var]}",cur_model,r2,fact,pred,scalers,"DNN")    
+        save_model(f"{vars_out[idx + n_var]}",cur_model,r2,fact,pred,scalers,"DNN")
+        # 多输出任务会连续创建多个 Keras 模型；保存后立即释放当前计算图，
+        # 避免模型和线程资源随输出目标数量持续累积。
+        del cur_model
+        keras_backend.clear_session()
 

@@ -21,6 +21,7 @@ from mobo.common.logging import logger
 from mobo.common.paths import model_family_dir
 from .hyperparameters import normalize_model_params
 from .interface import Doe_surrogateModel
+from .common import model_output_dir
 
 _KIND = "surrogate"
 
@@ -47,10 +48,16 @@ def _snapshot_model_artifacts(
     model_id: str,
     family: str,
     target_names: List[str],
+    source_override: Optional[str] = None,
+    destination_override: Optional[str] = None,
 ) -> tuple[str, Dict[str, str]]:
     """把共享模型族目录中的本次训练产物复制到 model_id 专属目录。"""
-    source_dir = model_family_dir(family)
-    destination_dir = Path(task_store.state_path(model_id)).parent / "models"
+    source_dir = Path(source_override) if source_override else model_family_dir(family)
+    destination_dir = (
+        Path(destination_override)
+        if destination_override
+        else Path(task_store.state_path(model_id)).parent / "models"
+    )
     destination_dir.mkdir(parents=True, exist_ok=True)
     extension = "keras" if family == "DNN" else "pkl"
     model_paths: Dict[str, str] = {}
@@ -77,6 +84,8 @@ def train_surrogate(
     model_index: Optional[int] = None,
     biz_params: Optional[Dict[str, Any]] = None,
     model_id: Optional[str] = None,
+    artifact_dir: Optional[str] = None,
+    snapshot_dir: Optional[str] = None,
 ) -> Dict[str, Any]:
     """训练一个代理模型并把请求/响应落盘到 state.json。
 
@@ -117,15 +126,26 @@ def train_surrogate(
 
     try:
         started = time.time()
-        Doe_surrogateModel(data_file, vars_out, n_vars).train_save_model(
-            which_model, biz_params
-        )
+        if artifact_dir:
+            with model_output_dir(artifact_dir):
+                Doe_surrogateModel(data_file, vars_out, n_vars).train_save_model(
+                    which_model, biz_params
+                )
+        else:
+            Doe_surrogateModel(data_file, vars_out, n_vars).train_save_model(
+                which_model, biz_params
+            )
         cost = round(time.time() - started, 2)
 
         target_names = vars_out[n_vars:]
-        model_dir, model_paths = _snapshot_model_artifacts(
-            model_id, family, target_names
-        )
+        if artifact_dir:
+            model_dir, model_paths = _snapshot_model_artifacts(
+                model_id, family, target_names, artifact_dir, snapshot_dir
+            )
+        else:
+            model_dir, model_paths = _snapshot_model_artifacts(
+                model_id, family, target_names
+            )
 
         data = {
             "model_index": model_index, "model_family": family,

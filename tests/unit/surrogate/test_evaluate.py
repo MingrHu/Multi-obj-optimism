@@ -1,5 +1,8 @@
 """SurrogateModelEvaluator 测试（非 DNN 路径，快速）。"""
 
+import threading
+import time
+
 import pytest
 
 from mobo.surrogate.evaluate import SurrogateModelEvaluator, TargetCVSummary
@@ -25,6 +28,16 @@ def test_n_splits_validation(simulated_data_file):
         SurrogateModelEvaluator(simulated_data_file, ["a", "b", "c", "grain", "load"], 3, n_splits=1)
 
 
+def test_max_workers_validation(simulated_data_file):
+    with pytest.raises(ValueError, match="max_workers"):
+        SurrogateModelEvaluator(
+            simulated_data_file,
+            ["a", "b", "c", "grain", "load"],
+            3,
+            max_workers=0,
+        )
+
+
 def test_evaluate_prg_svr_rf(small_evaluator):
     summaries = small_evaluator.evaluate(
         models=["PRG", "SVR", "RF"],
@@ -34,6 +47,32 @@ def test_evaluate_prg_svr_rf(small_evaluator):
     assert all(isinstance(s, TargetCVSummary) for s in summaries)
     # 每个摘要都应被打分
     assert all(s.score is not None for s in summaries)
+
+
+def test_targets_run_in_parallel_and_keep_request_order(small_evaluator, monkeypatch):
+    small_evaluator.max_workers = 2
+    original = small_evaluator._evaluate_one
+    lock = threading.Lock()
+    active = 0
+    peak = 0
+
+    def tracked_evaluate_one(**kwargs):
+        nonlocal active, peak
+        with lock:
+            active += 1
+            peak = max(peak, active)
+        try:
+            time.sleep(0.05)
+            return original(**kwargs)
+        finally:
+            with lock:
+                active -= 1
+
+    monkeypatch.setattr(small_evaluator, "_evaluate_one", tracked_evaluate_one)
+    summaries = small_evaluator.evaluate(models=["PRG"], target_indices=[1, 0])
+
+    assert peak == 2
+    assert [summary.target_index for summary in summaries] == [1, 0]
 
 
 def test_evaluate_target_index_out_of_range(small_evaluator):

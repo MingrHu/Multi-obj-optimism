@@ -12,11 +12,27 @@ import numpy as np
 import joblib
 import os
 import time
+from contextlib import contextmanager
+from contextvars import ContextVar
 from keras.models import Model
 from keras.layers import Dense, Dropout, BatchNormalization, Input
 from keras.optimizers import Adam
 
 from mobo.common.paths import MODELS_DIR
+
+_MODEL_OUTPUT_DIR: ContextVar[str | None] = ContextVar(
+    "mobo_model_output_dir", default=None
+)
+
+
+@contextmanager
+def model_output_dir(path: str | os.PathLike[str]):
+    """Temporarily isolate model artifacts for one training execution."""
+    token = _MODEL_OUTPUT_DIR.set(os.fspath(path))
+    try:
+        yield
+    finally:
+        _MODEL_OUTPUT_DIR.reset(token)
 
 #####################################数据处理函数块############################################
 # 数据加载与预处理函数
@@ -181,7 +197,7 @@ def normal_max_absolute_error(y_true, y_pred):
 # 训练的模型类型 最佳模型 最佳决定系数 实际值和预测值 代理模型名称
 def save_model(model_type:str,model,r2,fact,pred,scalers,model_name:str):
     # 训练结束后，保存最佳模型
-    model_dir = os.path.join(str(MODELS_DIR), model_name)
+    model_dir = _MODEL_OUTPUT_DIR.get() or os.path.join(str(MODELS_DIR), model_name)
     os.makedirs(model_dir, exist_ok=True)
     if model is not None:
         if model_name == 'DNN':

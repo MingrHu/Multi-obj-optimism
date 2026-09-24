@@ -145,7 +145,9 @@ def get_data():
 #  @date   2026/08/25
 @doe_api.get("/api/v1/hust/doe/train/progress")
 def training_progress():
-    return _ok(service.get_training_progress(request.args.get("id", "")))
+    return _ok(service.get_training_progress(
+        request.args.get("id", ""), request.args.get("run_id") or None,
+    ))
 
 
 #  @brief  查询五类代理模型支持的超参数、默认值、类型与取值范围

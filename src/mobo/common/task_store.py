@@ -24,12 +24,31 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
 
 from mobo.common.paths import task_dir
 
 _STATE_FILE = "state.json"
+_TASK_ROOT: ContextVar[Path | None] = ContextVar("mobo_task_root", default=None)
+
+
+def _task_directory(task_id: str) -> Path:
+    root = _TASK_ROOT.get()
+    return root / task_id if root is not None else task_dir(task_id)
+
+
+@contextmanager
+def task_workspace(path: str | os.PathLike[str]):
+    """Route task states into one DOE run without changing legacy CLI callers."""
+    token = _TASK_ROOT.set(Path(path))
+    try:
+        yield
+    finally:
+        _TASK_ROOT.reset(token)
 
 
 def _now() -> str:
@@ -40,7 +59,7 @@ def state_path(task_id: str, state_name: str = _STATE_FILE) -> str:
     """返回任务状态文件的完整路径。"""
     if os.path.basename(state_name) != state_name:
         raise ValueError(f"状态文件名不能包含目录: {state_name}")
-    return os.path.join(str(task_dir(task_id)), state_name)
+    return os.path.join(str(_task_directory(task_id)), state_name)
 
 
 def exists(task_id: str, state_name: str = _STATE_FILE) -> bool:
@@ -65,7 +84,7 @@ def save(state: Dict[str, Any], state_name: str = _STATE_FILE) -> str:
     :return: 状态文件路径
     """
     task_id = state["task_id"]
-    directory = str(task_dir(task_id))
+    directory = str(_task_directory(task_id))
     os.makedirs(directory, exist_ok=True)
     state["updated_at"] = _now()
 
@@ -187,4 +206,5 @@ __all__ = [
     "init_state",
     "update",
     "resolve_req",
+    "task_workspace",
 ]

@@ -224,6 +224,9 @@ class ApiClient:
     def add_doe(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self.request("POST", "/api/v1/doe/add", payload=payload)
 
+    def delete_doe(self, doe_id: str) -> dict[str, Any]:
+        return self.request("POST", "/api/v1/doe/delete", payload={"id": doe_id})
+
     def generate_sample(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self.request("POST", "/api/v1/hust/doe/sample/generate", payload=payload)
 
@@ -240,8 +243,13 @@ class ApiClient:
     def start_training(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self.request("POST", "/api/v1/hust/doe/train/startTrain", payload=payload)
 
-    def training_progress(self, doe_id: str) -> dict[str, Any]:
-        return self.request("GET", "/api/v1/hust/doe/train/progress", params={"id": doe_id})
+    def training_progress(
+        self, doe_id: str, run_id: str | None = None,
+    ) -> dict[str, Any]:
+        params = {"id": doe_id}
+        if run_id:
+            params["run_id"] = run_id
+        return self.request("GET", "/api/v1/hust/doe/train/progress", params=params)
 
     def training_hyperparameters(self) -> dict[str, Any]:
         return self.request("GET", "/api/v1/hust/doe/train/hyperparameters")

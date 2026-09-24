@@ -3,11 +3,13 @@ from __future__ import annotations
 import json
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 from datetime import datetime
+from keras import backend as keras_backend
 from keras.callbacks import EarlyStopping, ReduceLROnPlateau
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.gaussian_process import GaussianProcessRegressor
@@ -110,6 +112,7 @@ class SurrogateModelEvaluator:
         shuffle: bool = True,
         random_state: int = 42,
         model_params: Optional[Dict[str, Dict[str, Any]]] = None,
+        max_workers: Optional[int] = None,
     ) -> None:
         self.data_file = data_file
         self.vars_out = vars_out
@@ -122,6 +125,9 @@ class SurrogateModelEvaluator:
         self.random_state = random_state
 
         self.model_params: Dict[str, Dict[str, Any]] = model_params or {}
+        if max_workers is not None and max_workers < 1:
+            raise ValueError("max_workers 必须 >= 1 或为 None")
+        self.max_workers = max_workers
 
     # @brief  评估代理模型
     # @return 目标值交叉验证摘要列表
@@ -169,16 +175,15 @@ class SurrogateModelEvaluator:
 
         summaries: List[TargetCVSummary] = []
         for model_name in models:
-            for local_i, target_idx in enumerate(target_indices):
-                summary = self._evaluate_one(
-                    X=X,
-                    y=Y[:, target_idx],
-                    kf=kf,
-                    model_name=model_name,
-                    target_index=target_idx,
-                    target_name=resolved_target_names[local_i],
-                )
-                summaries.append(summary)
+            model_summaries = self._evaluate_targets(
+                X=X,
+                Y=Y,
+                kf=kf,
+                model_name=model_name,
+                target_indices=target_indices,
+                target_names=resolved_target_names,
+            )
+            summaries.extend(model_summaries)
 
         self._attach_scores_in_place(
             summaries,
@@ -186,6 +191,71 @@ class SurrogateModelEvaluator:
         )
 
         return summaries
+
+    def _evaluate_targets(
+        self,
+        *,
+        X: np.ndarray,
+        Y: np.ndarray,
+        kf: KFold,
+        model_name: str,
+        target_indices: Sequence[int],
+        target_names: Sequence[str],
+    ) -> List[TargetCVSummary]:
+        """并行评价不同输出目标；单个目标内部的 K 折保持串行。"""
+        jobs = list(zip(target_indices, target_names, strict=True))
+        workers = self._resolve_target_workers(len(jobs))
+
+        def evaluate_target(job: tuple[int, str]) -> TargetCVSummary:
+            target_idx, target_name = job
+            # 每个目标使用独立的 KFold 实例，避免在线程间共享可迭代器状态。
+            target_kf = KFold(
+                n_splits=kf.n_splits,
+                shuffle=kf.shuffle,
+                random_state=kf.random_state,
+            )
+            return self._evaluate_one(
+                X=X,
+                y=Y[:, target_idx],
+                kf=target_kf,
+                model_name=model_name,
+                target_index=target_idx,
+                target_name=target_name,
+            )
+
+        if workers == 1:
+            results = []
+            for job in jobs:
+                results.append(evaluate_target(job))
+                if model_name == "DNN":
+                    keras_backend.clear_session()
+            return results
+
+        ordered: List[Optional[TargetCVSummary]] = [None] * len(jobs)
+        try:
+            with ThreadPoolExecutor(
+                max_workers=workers,
+                thread_name_prefix=f"cv-{model_name.lower()}",
+            ) as executor:
+                futures = {
+                    executor.submit(evaluate_target, job): index
+                    for index, job in enumerate(jobs)
+                }
+                for future in as_completed(futures):
+                    ordered[futures[future]] = future.result()
+        finally:
+            if model_name == "DNN":
+                # clear_session 是 Keras 全局操作，不能在其他目标仍训练时调用。
+                keras_backend.clear_session()
+        return [summary for summary in ordered if summary is not None]
+
+    def _resolve_target_workers(self, target_count: int) -> int:
+        if target_count <= 1:
+            return 1
+        if self.max_workers is not None:
+            return min(target_count, self.max_workers)
+        logical_cpus = os.cpu_count() or 1
+        return min(target_count, max(1, logical_cpus // 2), 8)
 
     # @brief  保存评估报告
     # @return None
@@ -324,7 +394,10 @@ class SurrogateModelEvaluator:
             train_end = time.perf_counter()
 
             pred_start = time.perf_counter()
-            y_pred_scaled = model.predict(X_test_scaled)
+            if model_name == "DNN":
+                y_pred_scaled = model.predict(X_test_scaled, verbose=0)
+            else:
+                y_pred_scaled = model.predict(X_test_scaled)
             pred_end = time.perf_counter()
 
             y_pred = scaler_y.inverse_transform(np.array(y_pred_scaled).reshape(-1, 1)).ravel()

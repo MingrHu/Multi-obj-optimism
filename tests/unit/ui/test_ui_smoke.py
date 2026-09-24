@@ -329,6 +329,32 @@ def test_completed_training_and_optimization_switch_to_restart_actions(monkeypat
     app.processEvents()
 
 
+def test_running_training_uses_active_button_and_model_hint(monkeypatch):
+    pytest.importorskip("PySide6")
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    module = importlib.import_module("work_platform.mobo_ui.app")
+    app = QApplication.instance() or QApplication([])
+    page = module.ModelPage(module.QThreadPool.globalInstance(), lambda: None)
+    page.update_progress({
+        "status": "running",
+        "stage": "evaluating",
+        "progress": 95,
+        "dataset": {"resource_id": "dataset-1"},
+        "models": [],
+        "current_model": "DNN",
+        "current_model_index": 5,
+        "total_models": 5,
+    })
+
+    assert page.start_button.text() == "正在训练…"
+    assert not page.start_button.isEnabled()
+    assert page.training_record_hint.text() == "正在进行交叉验证：DNN（5/5）。"
+    assert "尚未开始训练" not in page.training_record_hint.text()
+    app.processEvents()
+
+
 def test_doe_lists_wait_for_manual_selection_and_optimization_does_not_navigate(monkeypatch):
     pytest.importorskip("PySide6")
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
@@ -808,6 +834,56 @@ def test_repeated_doe_refresh_and_status_requests_are_coalesced(monkeypatch):
     assert len(queued) == 1
     queued.pop(0)[1]({"items": []})
     assert results_page.refresh_tasks_button.isEnabled()
+    app.processEvents()
+
+
+def test_model_page_can_delete_selected_doe_after_confirmation(monkeypatch):
+    pytest.importorskip("PySide6")
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication, QMessageBox
+
+    module = importlib.import_module("work_platform.mobo_ui.app")
+    app = QApplication.instance() or QApplication([])
+    deleted = []
+
+    class FakeClient:
+        def delete_doe(self, doe_id):
+            deleted.append(doe_id)
+            return {"value": doe_id}
+
+        def list_doe(self):
+            return {"items": [{"id": "doe-keep", "name": "保留任务"}]}
+
+    client = FakeClient()
+    page = module.ModelPage(
+        module.QThreadPool.globalInstance(), lambda: client
+    )
+    page.run_async = (
+        lambda fn, done=None, failed=None: (done or (lambda _value: None))(fn())
+    )
+    page.doe_id.addItem("待删除任务", "doe-delete")
+    page.doe_id.setCurrentIndex(0)
+    page.status_loading = False
+    page.training_state = "running"
+    page._refresh_training_actions()
+    assert not page.delete_doe_button.isEnabled()
+    page.training_state = "not_started"
+    page._refresh_training_actions()
+    assert page.delete_doe_button.isEnabled()
+    monkeypatch.setattr(
+        QMessageBox,
+        "warning",
+        lambda *_args, **_kwargs: QMessageBox.StandardButton.Yes,
+    )
+
+    page.delete_current_doe()
+
+    assert deleted == ["doe-delete"]
+    assert page.doe_id.count() == 1
+    assert page.doe_id.itemData(0) == "doe-keep"
+    assert page.doe_id.currentIndex() == -1
+    assert not page.delete_doe_button.isEnabled()
+    assert page.training_state == "not_started"
     app.processEvents()
 
 
@@ -1325,6 +1401,7 @@ def test_training_and_optimization_buttons_follow_runtime_state(monkeypatch):
     optimization_page = module.OptimizationPage(pool, lambda: None)
     optimization_page.doe_id.addItem("任务", "doe-1")
     optimization_page.doe_id.setCurrentIndex(0)
+    optimization_page.current_training_run_id = "train-1"
     optimization_page.set_schema({
         "inputs": [{"name": "temperature", "lower": 900, "upper": 1100}],
         "outputs": ["load"],
@@ -1338,6 +1415,49 @@ def test_training_and_optimization_buttons_follow_runtime_state(monkeypatch):
     assert optimization_page.stop_button.isEnabled()
     optimization_page.update_progress({"status": "queued", "progress": 0})
     assert optimization_page.start_button.text() == "正在优化…"
+    app.processEvents()
+
+
+def test_training_history_is_selectable_in_model_and_optimization_pages(monkeypatch):
+    pytest.importorskip("PySide6")
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    module = importlib.import_module("work_platform.mobo_ui.app")
+    app = QApplication.instance() or QApplication([])
+    history = [
+        {
+            "run_id": "train-old", "status": "finished",
+            "updated_at": "2026-09-24T10:00:00+08:00",
+            "models": [{"model_id": "rf-old", "model_family": "RF", "score": 0.8}],
+        },
+        {
+            "run_id": "train-new", "status": "finished",
+            "updated_at": "2026-09-24T11:00:00+08:00",
+            "models": [{"model_id": "rf-new", "model_family": "RF", "score": 0.9}],
+        },
+    ]
+    pool = module.QThreadPool.globalInstance()
+    model_page = module.ModelPage(pool, lambda: None)
+    model_page.update_progress({
+        "status": "finished", "stage": "finished", "progress": 100,
+        "current_run_id": "train-new", "selected_run_id": "train-new",
+        "history": history, "models": history[-1]["models"],
+    })
+    assert model_page.training_run.count() == 2
+    assert model_page.training_run.currentData() == "train-new"
+
+    optimization_page = module.OptimizationPage(pool, lambda: None)
+    optimization_page.doe_id.addItem("Task", "doe-1")
+    optimization_page.doe_id.setCurrentIndex(0)
+    optimization_page._training_schema_loaded("doe-1", 0, {
+        "selected_run_id": "train-new", "current_run_id": "train-new",
+        "history": history,
+        "input_names": ["x"], "target_names": ["y"],
+        "input_bounds": [{"name": "x", "lower": 0.0, "upper": 1.0}],
+    })
+    assert optimization_page.training_run.count() == 2
+    assert optimization_page.current_training_run_id == "train-new"
     app.processEvents()
 
 

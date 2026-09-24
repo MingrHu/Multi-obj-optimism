@@ -436,7 +436,8 @@ GET /api/v1/hust/doe/data/get?id=doe_sample_001&resource_id=tos-a1b2c3d4e5f60718
     "enabled": true,
     "method": "k_fold",
     "n_splits": 2,
-    "random_state": 42
+    "random_state": 42,
+    "max_workers": "auto"
   }
 }
 ```
@@ -459,7 +460,7 @@ DOE 的 `training` 目录落盘为无表头 TSV。`all_var_list`、`input_var_co
   {"name": "KM", "params": {"alpha": 0.1, "n_restarts_optimizer": 20}},
   {
     "name": "DNN",
-    "params": {"epochs": 1000, "batch_size": 16, "verbose": 1, "patience": 50}
+    "params": {"epochs": 1000, "batch_size": 16, "verbose": 0, "patience": 50}
   }
 ]
 ```
@@ -530,7 +531,7 @@ DOE 的 `training` 目录落盘为无表头 TSV。`all_var_list`、`input_var_co
 | `learning_rate` | `0.001` | 正数 |
 | `epochs` | `1000` | 1～100000 的整数 |
 | `batch_size` | `16` | 正整数 |
-| `verbose` | `1` | `0` / `1` / `2` |
+| `verbose` | `0` | `0` / `1` / `2`；默认关闭逐轮控制台输出，避免容器日志被大量训练轮次淹没 |
 | `patience` | `50` | 正整数 |
 | `reduce_lr_factor` | `0.2` | (0,1) 数值 |
 | `reduce_lr_patience` | `5` | 正整数 |
@@ -559,6 +560,12 @@ DOE 的 `training` 目录落盘为无表头 TSV。`all_var_list`、`input_var_co
 | `evaluation.method` | string | 否 | 当前仅支持 `k_fold`，默认 `k_fold` |
 | `evaluation.n_splits` | integer | 否 | 折数，范围为2到样本总数，默认5 |
 | `evaluation.random_state` | integer | 否 | 评价随机种子，默认42 |
+| `evaluation.max_workers` | integer or string | 否 | 不同输出目标的并发线程数，可取1～64或`auto`，默认`auto` |
+
+交叉验证按模型族依次执行，避免多个模型同时争抢 CPU 和内存；同一模型的不同输出目标由线程池并行，
+但单个输出目标内部的 K 折仍保持串行。`max_workers=auto` 时取输出目标数、逻辑 CPU 数一半和8三者
+的最小值（至少1）。如模型自身还启用了内部并行（例如 RF 的 `n_jobs=-1`），可显式传
+`max_workers=1` 避免嵌套并行。
 
 **成功响应字段说明**：
 
@@ -574,7 +581,7 @@ DOE 的 `training` 目录落盘为无表头 TSV。`all_var_list`、`input_var_co
     "status": "queued",
     "stage": "queued",
     "progress": 0,
-    "run_id": "run_1a2b3c4d5e6f",
+    "run_id": "train_1a2b3c4d5e6f",
     "sample_count": 4,
     "input_names": ["X1", "X2", "X3", "X4", "X5", "X6", "X7"],
     "target_names": ["Y1", "Y2", "Y3", "Y4", "Y5", "Y6", "Y7", "Y8"],
@@ -591,6 +598,7 @@ DOE 的 `training` 目录落盘为无表头 TSV。`all_var_list`、`input_var_co
 | `data.status` | string | 初始训练状态，固定为 `queued` |
 | `data.stage` | string | 初始训练阶段，固定为 `queued` |
 | `data.progress` | integer | 初始训练进度，固定为0，完整范围为0到100 |
+| `data.run_id` | string | 本次独立训练轮次标识，前缀为 `train_` |
 | `data.sample_count` | integer | 本次训练样本总数 |
 | `data.input_names` | string array | 输入变量名称 |
 | `data.target_names` | string array | 输出目标名称 |
@@ -813,12 +821,13 @@ DOE 不存在返回 HTTP 404；缺少或使用非法 `id` 返回 HTTP 400，响�
 **请求字段说明**：
 
 ```http
-GET /api/v1/hust/doe/train/progress?id=doe_20260622_001
+GET /api/v1/hust/doe/train/progress?id=doe_20260622_001&run_id=train_1a2b3c4d5e6f
 ```
 
 | 请求字段 | 位置 | 类型 | 必填 | 说明 |
 |---|---|---|---:|---|
 | `id` | query | string | 是 | 需要查询训练进度的 DOE 唯一标识 |
+| `run_id` | query | string | 否 | 指定训练历史轮次；不传时返回当前或最新训练状态 |
 
 **成功响应字段说明**：
 
@@ -833,6 +842,11 @@ GET /api/v1/hust/doe/train/progress?id=doe_20260622_001
     "status": "running",
     "stage": "training",
     "progress": 40,
+    "current_run_id": "train_1a2b3c4d5e6f",
+    "selected_run_id": "train_1a2b3c4d5e6f",
+    "current_model": "DNN",
+    "current_model_index": 5,
+    "total_models": 5,
     "input_names": ["workpiece_temperature", "die_temperature"],
     "target_names": ["load", "grain_size", "roundness"],
     "input_bounds": [
@@ -961,6 +975,12 @@ GET /api/v1/hust/doe/train/progress?id=doe_20260622_001
 | `data.status` | string | `not_started`、`queued`、`running`、`stopping`、`stopped`、`finished` 或 `failed` |
 | `data.stage` | string | 当前训练阶段 |
 | `data.progress` | integer | 当前训练进度，范围为0到100 |
+| `data.current_run_id` | string or null | 当前 DOE 最近提交的训练轮次 |
+| `data.selected_run_id` | string or null | 本次响应展示的训练轮次 |
+| `data.history` | object array | 全部训练轮次摘要，包含状态、数据集、模型、最佳模型和时间戳 |
+| `data.current_model` | string or null | 当前正在训练或交叉验证的模型族；终态为空 |
+| `data.current_model_index` | integer or null | 当前模型在本次所选模型中的从1开始序号；终态为空 |
+| `data.total_models` | integer or null | 本次所选模型总数；尚未提交训练时为空 |
 | `data.input_names` | string array | 本次训练定义的输入参数名称；未提交训练时为空数组 |
 | `data.target_names` | string array | 本次训练定义的输出目标名称；未提交训练时为空数组 |
 | `data.input_bounds` | object array | 各输入参数在训练数据中的最小值和最大值；优化界面可据此恢复默认设计边界 |
@@ -1013,6 +1033,13 @@ MSE，可根据 `rmse_mean` 平方得到近似展示值，但该结果不等于�
 
 训练线程启动后发生错误时，本接口返回 HTTP 200，并通过 `status=failed` 和通用
 `error` 提示报告后台任务结果，不向端上暴露内部路径或异常细节。
+如果服务进程重启或后台训练线程异常退出，但落盘状态仍为 `queued`、`running` 或
+`stopping`，查询接口会将该记录收敛为 `stopped`，避免客户端无限显示运行中。
+
+DNN 对每个输出目标分别训练模型；启用 K 折评价后，还会针对每个目标额外训练 K 次。
+例如8个输出、3折评价会额外训练24个 DNN。调用方可根据 `current_model` 和序号展示
+当前阶段；DNN 默认 `verbose=0`。每个正式输出模型结束后会释放 Keras 计算图；并行交叉验证
+会在该模型的全部输出目标结束后统一释放，避免训练中的线程被全局会话清理干扰。
 
 **失败响应字段说明**：
 
@@ -1285,6 +1312,7 @@ PPO 的观测是当前设计变量，动作是相对于变量范围的增量。�
 | 请求字段 | 类型 | 必填 | 说明 |
 |---|---|---:|---|
 | `id` | string | 是 | 已完成代理模型训练的 DOE 唯一标识 |
+| `training_run_id` | string | 否 | 指定训练轮次；建议始终传递以固定模型与字段来源 |
 | `model_id` | string | 否 | 指定当前 DOE 下的模型，不传时自动选择评分最高模型 |
 | `mode` | string | 是 | `single`、`multi` 或 `reinforcement_learning` |
 | `objectives` | object array | 是 | 优化目标配置，名称必须是所选模型的输出字段 |
@@ -1618,10 +1646,22 @@ DOE 不存在时返回 HTTP 404：
 data/doe_tasks/<id>/
 ├── doe.json
 ├── samples/
-├── models/<model_id>/
-├── training/
-└── optimization/
+├── dataset/
+│   └── training_dataset.tsv
+├── training/runs/<training_run_id>/
+│   ├── dataset.tsv
+│   ├── models/<model_id>/
+│   │   ├── <target>_model.pkl|keras
+│   │   └── <target>_scalers.pkl
+│   ├── internal/
+│   ├── best_model.json
+│   └── training_result.json
+└── optimization/runs/<optimization_run_id>/
+    ├── pareto_solutions.tsv|rl_solutions.tsv
+    ├── internal/
+    └── optimization_result.json
 ```
 
-`doe.json` 是任务元数据、进度和产物索引的唯一入口；算法生成的最终结果会复制到该
-DOE 的对应目录中。
+`doe.json` 是任务元数据、进度和产物索引入口。每个训练和优化轮次都拥有独立目录；
+HTTP 聚合流程不会再把模型或运行状态写入顶层 `data/models`、`data/tasks`。旧目录不参与
+新协议读取，既有旧任务需要重新训练或重新优化。

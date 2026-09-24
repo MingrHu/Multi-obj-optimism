@@ -81,7 +81,8 @@ def create(payload: dict[str, Any]) -> dict[str, Any]:
             "inference": {}, "resources": {},
             "training": {
                 "status": "not_started", "stage": "not_started",
-                "progress": 0, "models": [],
+                "progress": 0, "models": [], "current_run_id": None,
+                "history": [],
             },
             "optimization": {
                 "status": "not_started", "stage": "not_started", "progress": 0,
@@ -91,8 +92,10 @@ def create(payload: dict[str, Any]) -> dict[str, Any]:
         }
         _write(state)
         # 创建固定子目录使同一 DOE 的样本 模型和优化结果互不混放
-        for name in ("samples", "models", "training", "optimization"):
+        for name in ("samples", "dataset", "training", "optimization"):
             (task_dir(doe_id) / name).mkdir(exist_ok=True)
+        (task_dir(doe_id) / "training" / "runs").mkdir(exist_ok=True)
+        (task_dir(doe_id) / "optimization" / "runs").mkdir(exist_ok=True)
         return state
 
 
@@ -181,31 +184,41 @@ def delete(doe_id: str) -> None:
 def reset_training(doe_id: str) -> None:
     with _LOCK:
         state = load(doe_id)
-        # 模型快照和旧训练任务同时删除 采样文件及优化记录保持不变
-        for model in state.get("training", {}).get("models", []):
+        # 删除所有训练轮次及其兼容任务记录，采样文件及优化记录保持不变。
+        training = state.get("training", {})
+        models = list(training.get("models", []))
+        for run in training.get("history", []):
+            models.extend(run.get("models", []))
+        for model in models:
             _remove_legacy_task(model.get("model_id"))
         directory = task_dir(doe_id)
-        for name in ("models", "training"):
+        for name in ("models", "training", "dataset"):
             target = directory / name
             if target.exists():
                 shutil.rmtree(target)
-            target.mkdir(parents=True)
+        (directory / "training" / "runs").mkdir(parents=True)
+        (directory / "dataset").mkdir(parents=True)
         resources = {
             key: value for key, value in (state.get("resources") or {}).items()
-            if value.get("kind") != "dataset"
+            if value.get("kind") not in {"dataset", "training_dataset"}
         }
         update(
             doe_id,
             training={
                 "status": "not_started", "stage": "not_started",
                 "progress": 0, "models": [], "error": None,
+                "current_run_id": None, "history": [],
             },
             resources=resources,
         )
 
 
 def _delete_legacy_artifacts(state: dict[str, Any]) -> None:
-    for model in state.get("training", {}).get("models", []):
+    training = state.get("training", {})
+    models = list(training.get("models", []))
+    for run in training.get("history", []):
+        models.extend(run.get("models", []))
+    for model in models:
         _remove_legacy_task(model.get("model_id"))
     result = state.get("optimization", {}).get("result") or {}
     _remove_legacy_task(result.get("optimization_id"))

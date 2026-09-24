@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import shutil
 import threading
 import uuid
@@ -11,15 +12,17 @@ from pathlib import Path
 from typing import Any
 
 from mobo.common.logging import logger
+from mobo.common.task_store import task_workspace
 from mobo.surrogate.hyperparameters import normalize_model_params, parameter_catalog
 
 from . import store
-from .errors import ApiError, ConflictError
+from .errors import ApiError, ConflictError, NotFoundError
 from .runtime import registry
 
 MODEL_FAMILIES = {0: "PRG", 1: "SVR", 2: "RF", 3: "KM", 4: "DNN"}
 MODEL_INDICES = {name: index for index, name in MODEL_FAMILIES.items()}
 _TRANSIENT_OPTIMIZATION_STATUSES = {"queued", "running", "stopping"}
+_TRANSIENT_TRAINING_STATUSES = {"queued", "running", "stopping"}
 
 
 def get_training_hyperparameters() -> dict[str, Any]:
@@ -64,6 +67,46 @@ def _recover_interrupted_optimizations() -> list[str]:
         recovered.append(doe_id)
         logger.warning(f"已将服务重启遗留的优化任务标记为停止：{doe_id}")
     return recovered
+
+
+def _recover_interrupted_training(doe_id: str) -> bool:
+    """将没有存活后台线程的训练瞬态记录收敛为已停止。"""
+    state = store.load(doe_id)
+    training = dict(state.get("training") or {})
+    if (
+        training.get("status") not in _TRANSIENT_TRAINING_STATUSES
+        or registry.running(doe_id, "training")
+    ):
+        return False
+    training.update(
+        status="stopped",
+        stage="stopped",
+        current_model=None,
+        current_model_index=None,
+    )
+    current_run_id = training.get("current_run_id")
+    if current_run_id:
+        _update_training_run(
+            doe_id, current_run_id, status="stopped", stage="stopped",
+            current_model=None, current_model_index=None,
+        )
+    store.update(
+        doe_id,
+        status="stopped",
+        stage="training_stopped",
+        training=training,
+    )
+    logger.warning(f"已将无存活线程的训练任务标记为停止：{doe_id}")
+    return True
+
+
+def _recover_interrupted_trainings() -> list[str]:
+    """收敛服务重启或训练线程异常退出后遗留的训练记录。"""
+    return [
+        state["id"]
+        for state in store.list_all()
+        if _recover_interrupted_training(state["id"])
+    ]
 
 
 # 所有需要 DOE 标识的 POST 请求先经过同一入口校验
@@ -258,16 +301,26 @@ def _normalize_ranges(value: Any) -> dict[str, tuple[float, float]]:
     return result
 
 
-def get_training_progress(doe_id: str) -> dict[str, Any]:
-    state = store.load(store.validate_id(doe_id))
+def get_training_progress(doe_id: str, run_id: str | None = None) -> dict[str, Any]:
+    doe_id = store.validate_id(doe_id)
+    _recover_interrupted_training(doe_id)
+    state = store.load(doe_id)
     training = state.get("training") or {}
-    request = training.get("request") or {}
-    dataset = training.get("dataset") or {}
+    selected = training
+    if run_id:
+        selected = next(
+            (item for item in training.get("history", []) if item.get("run_id") == run_id),
+            None,
+        )
+        if selected is None:
+            raise NotFoundError(f"训练轮次不存在：{run_id}")
+    request = selected.get("request") or {}
+    dataset = selected.get("dataset") or training.get("dataset") or {}
     all_var_list = list(request.get("all_var_list") or dataset.get("all_var_list") or [])
     input_var_count = int(request.get("input_var_count") or dataset.get("input_var_count") or 0)
     models = [
         {key: value for key, value in model.items() if key != "model_dir"}
-        for model in training.get("models", [])
+        for model in selected.get("models", [])
     ]
     model_configs = [
         {
@@ -280,9 +333,12 @@ def get_training_progress(doe_id: str) -> dict[str, Any]:
     ]
     return {
         "id": doe_id,
-        "status": training.get("status", "not_started"),
-        "stage": training.get("stage", "not_started"),
-        "progress": training.get("progress", 0),
+        "status": selected.get("status", "not_started"),
+        "stage": selected.get("stage", "not_started"),
+        "progress": selected.get("progress", 0),
+        "current_run_id": training.get("current_run_id"),
+        "selected_run_id": selected.get("run_id") or training.get("current_run_id"),
+        "history": [_public_training_run(item) for item in training.get("history", [])],
         "input_names": all_var_list[:input_var_count],
         "target_names": all_var_list[input_var_count:],
         "input_bounds": list(request.get("input_bounds") or dataset.get("input_bounds") or []),
@@ -293,9 +349,12 @@ def get_training_progress(doe_id: str) -> dict[str, Any]:
         },
         "models": models,
         "model_configs": model_configs,
+        "current_model": selected.get("current_model"),
+        "current_model_index": selected.get("current_model_index"),
+        "total_models": selected.get("total_models"),
         "error": (
             "代理模型训练失败，内部异常详情由服务端维护"
-            if training.get("error") else None
+            if selected.get("error") else None
         ),
         "updated_at": state["updated_at"],
     }
@@ -356,16 +415,31 @@ def start_training(payload: dict[str, Any]) -> dict[str, Any]:
     if registry.running(doe_id, "training"):
         raise ConflictError("training 已在运行")
     # 参数在启动线程前完成校验 防止无效请求进入后台后才暴露错误
-    request = _normalize_training(doe_id, payload)
+    run_id = f"train_{uuid.uuid4().hex[:12]}"
+    request = _normalize_training(doe_id, payload, run_id)
+    now = _history_timestamp()
+    training = store.load(doe_id).get("training") or {}
+    history = list(training.get("history") or [])
+    history.append({
+        "run_id": run_id, "status": "queued", "stage": "queued", "progress": 0,
+        "request": request, "dataset": request.get("dataset"), "models": [],
+        "best_model": None, "error": None, "created_at": now, "updated_at": now,
+    })
     store.update(doe_id, status="running", stage="training", progress=15)
     store.update_section(
         doe_id, "training", status="queued", stage="queued", progress=0,
-        models=[], request=request, error=None,
+        models=[], request=request, dataset=request.get("dataset"), error=None,
+        current_run_id=run_id, history=history,
     )
+    _update_training_run(doe_id, run_id)
     # HTTP 请求立即返回 后台线程负责训练 评价和持续更新进度
-    registry.start(doe_id, "training", lambda cancel: _run_training(doe_id, request, cancel))
+    registry.start(
+        doe_id, "training",
+        lambda cancel: _run_training(doe_id, request, cancel, run_id),
+    )
     return {
-        "id": doe_id, "status": "queued", "stage": "queued", "progress": 0,
+        "id": doe_id, "run_id": run_id,
+        "status": "queued", "stage": "queued", "progress": 0,
         "sample_count": request["sample_count"],
         "input_names": request["all_var_list"][:request["input_var_count"]],
         "target_names": request["all_var_list"][request["input_var_count"]:],
@@ -373,20 +447,35 @@ def start_training(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _normalize_training(doe_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+def _normalize_training(
+    doe_id: str, payload: dict[str, Any], run_id: str,
+) -> dict[str, Any]:
     models = _normalize_training_models(payload.get("models"))
     dataset = _normalize_inline_dataset(doe_id, payload.get("data_source"))
     if dataset is None:
         dataset = _normalize_file_dataset(payload)
     evaluation = _normalize_evaluation(payload.get("evaluation"), dataset["sample_count"])
+    run_dir = _training_run_dir(doe_id, run_id)
+    run_dir.mkdir(parents=True, exist_ok=True)
+    run_dataset_path = run_dir / "dataset.tsv"
+    shutil.copy2(dataset["data_file"], run_dataset_path)
+    run_resource = store.register_resource(
+        doe_id, "training_dataset", dataset["all_var_list"],
+        path=str(run_dataset_path), replace_existing=False,
+    )
+    run_dataset = {
+        **{key: value for key, value in dataset.items() if key != "data_file"},
+        "data_file": str(run_dataset_path), **run_resource,
+    }
     return {
-        "data_file": dataset["data_file"],
+        "data_file": str(run_dataset_path),
         "all_var_list": dataset["all_var_list"],
         "input_var_count": dataset["input_var_count"],
         "input_bounds": _training_input_bounds(dataset),
         "sample_count": dataset["sample_count"],
         "models": models,
         "evaluation": evaluation,
+        "dataset": run_dataset,
     }
 
 
@@ -436,7 +525,8 @@ def _normalize_inline_dataset(doe_id: str, value: Any) -> dict[str, Any] | None:
         raise ApiError("输入样本数量与输出样本数量必须一致")
     import numpy as np
 
-    output = store.task_dir(doe_id) / "training" / "training_dataset.tsv"
+    output = store.task_dir(doe_id) / "dataset" / "training_dataset.tsv"
+    output.parent.mkdir(parents=True, exist_ok=True)
     np.savetxt(output, np.asarray([
         [*input_row, *output_row] for input_row, output_row in zip(inputs, targets, strict=True)
     ]), delimiter="\t", fmt="%.8g")
@@ -517,7 +607,13 @@ def _normalize_training_models(value: Any) -> list[dict[str, Any]]:
 
 
 def _normalize_evaluation(value: Any, sample_count: int) -> dict[str, Any]:
-    config = {"enabled": True, "method": "k_fold", "n_splits": 5, "random_state": 42}
+    config = {
+        "enabled": True,
+        "method": "k_fold",
+        "n_splits": 5,
+        "random_state": 42,
+        "max_workers": "auto",
+    }
     if value is not None:
         if not isinstance(value, dict):
             raise ApiError("evaluation 必须是 JSON 对象")
@@ -532,33 +628,152 @@ def _normalize_evaluation(value: Any, sample_count: int) -> dict[str, Any]:
             raise ApiError("evaluation.n_splits 必须是2到样本总数之间的整数")
     if not isinstance(config.get("random_state"), int) or isinstance(config["random_state"], bool):
         raise ApiError("evaluation.random_state 必须是整数")
+    max_workers = config.get("max_workers")
+    if max_workers != "auto" and (
+        not isinstance(max_workers, int)
+        or isinstance(max_workers, bool)
+        or not 1 <= max_workers <= 64
+    ):
+        raise ApiError("evaluation.max_workers 必须是 auto 或1到64之间的整数")
     return config
 
 
-def _run_training(doe_id: str, request: dict[str, Any], cancel: threading.Event) -> None:
+def _training_run_dir(doe_id: str, run_id: str) -> Path:
+    return store.task_dir(doe_id) / "training" / "runs" / run_id
+
+
+def _write_json(path: Path, value: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(
+        json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    temporary.replace(path)
+
+
+def _public_training_run(run: dict[str, Any]) -> dict[str, Any]:
+    public = {
+        key: value for key, value in run.items()
+        if key not in {"request", "dataset", "models"}
+    }
+    dataset = run.get("dataset") or {}
+    public["dataset"] = {
+        key: dataset.get(key)
+        for key in ("resource_id", "columns", "sample_count", "source_name")
+        if dataset.get(key) is not None
+    }
+    public["models"] = [
+        {
+            key: model.get(key)
+            for key in (
+                "model_id", "model_index", "model_family", "target_names",
+                "train_cost_sec", "score",
+            )
+        }
+        for model in run.get("models", [])
+    ]
+    request = run.get("request") or {}
+    public["model_configs"] = [
+        {
+            "name": MODEL_FAMILIES[item["model_index"]],
+            "params": dict(item.get("params") or {}),
+            "param_overrides": dict(item.get("param_overrides") or {}),
+        }
+        for item in request.get("models", [])
+        if item.get("model_index") in MODEL_FAMILIES
+    ]
+    return public
+
+
+def _update_training_run(doe_id: str, run_id: str, **fields: Any) -> None:
+    state = store.load(doe_id)
+    training = state.get("training") or {}
+    history = list(training.get("history") or [])
+    updated_run = None
+    for index, run in enumerate(history):
+        if run.get("run_id") == run_id:
+            updated_run = dict(run)
+            updated_run.update(fields)
+            updated_run["updated_at"] = _history_timestamp()
+            history[index] = updated_run
+            break
+    if updated_run is None:
+        return
+    store.update_section(doe_id, "training", history=history)
+    _write_json(_training_run_dir(doe_id, run_id) / "training_result.json", updated_run)
+
+
+def _run_training(
+    doe_id: str,
+    request: dict[str, Any],
+    cancel: threading.Event,
+    run_id: str | None = None,
+) -> None:
+    run_id = run_id or f"train_{uuid.uuid4().hex[:12]}"
+    training = store.load(doe_id).get("training") or {}
+    if not any(item.get("run_id") == run_id for item in training.get("history", [])):
+        now = _history_timestamp()
+        history = list(training.get("history") or [])
+        history.append({
+            "run_id": run_id, "status": "running", "stage": "training",
+            "progress": 0, "request": request, "dataset": request.get("dataset"),
+            "models": [], "best_model": None, "error": None,
+            "created_at": now, "updated_at": now,
+        })
+        store.update_section(
+            doe_id, "training", current_run_id=run_id, history=history,
+            request=request, dataset=request.get("dataset"),
+        )
     try:
         # 先生成可推理的模型快照 再执行交叉验证并写入综合评分
-        records = _train_models(doe_id, request, cancel)
+        records = _train_models(doe_id, request, cancel, run_id)
         if cancel.is_set():
-            _mark_cancelled(doe_id, "training")
+            _mark_cancelled(doe_id, "training", run_id)
             return
-        records = _evaluate_models(doe_id, request, records, cancel)
+        records = _evaluate_models(doe_id, request, records, cancel, run_id)
+        best_model = max(
+            records,
+            key=lambda item: item.get("score") if item.get("score") is not None else -1e99,
+            default=None,
+        )
         store.update_section(
             doe_id, "training", status="finished", stage="finished",
-            progress=100, models=records,
+            progress=100, models=records, current_model=None,
+            current_model_index=None,
         )
+        _update_training_run(
+            doe_id, run_id, status="finished", stage="finished", progress=100,
+            models=records, best_model=(best_model or {}).get("model_id"),
+            current_model=None, current_model_index=None,
+        )
+        if best_model:
+            _write_json(
+                _training_run_dir(doe_id, run_id) / "best_model.json",
+                {
+                    "run_id": run_id,
+                    "model_id": best_model["model_id"],
+                    "model_family": best_model["model_family"],
+                    "score": best_model.get("score"),
+                },
+            )
         store.update(doe_id, status="finished", stage="training_finished", progress=100)
     except Exception as exc:
         if cancel.is_set():
-            _mark_cancelled(doe_id, "training")
+            _mark_cancelled(doe_id, "training", run_id)
         else:
             store.update_section(
-                doe_id, "training", status="failed", stage="failed", error=str(exc)
+                doe_id, "training", status="failed", stage="failed", error=str(exc),
+                current_model=None, current_model_index=None,
+            )
+            _update_training_run(
+                doe_id, run_id, status="failed", stage="failed",
+                error="代理模型训练失败，内部异常详情由服务端维护",
+                current_model=None, current_model_index=None,
             )
             store.update(doe_id, status="failed", stage="training_failed")
 
 
-def _train_models(doe_id, request, cancel) -> list[dict[str, Any]]:
+def _train_models(doe_id, request, cancel, run_id) -> list[dict[str, Any]]:
     # 复用已有代理模型服务 保持底层模型训练逻辑和历史产物格式不变
     from mobo.surrogate.service import train_surrogate
 
@@ -568,29 +783,59 @@ def _train_models(doe_id, request, cancel) -> list[dict[str, Any]]:
         if cancel.is_set():
             break
         index = config["model_index"]
+        family = MODEL_FAMILIES[index]
+        store.update_section(
+            doe_id,
+            "training",
+            status="running",
+            stage="training",
+            current_model=family,
+            current_model_index=position + 1,
+            total_models=len(models),
+        )
+        _update_training_run(
+            doe_id, run_id, status="running", stage="training",
+            current_model=family, current_model_index=position + 1,
+            total_models=len(models),
+        )
         # 模型标识包含 DOE 和模型类型 末尾随机段防止重复训练覆盖旧任务
         model_id = f"tr_{doe_id}_{index}_{uuid.uuid4().hex[:6]}"
-        response = train_surrogate(
-            request["data_file"], request["all_var_list"], request["input_var_count"],
-            index, config.get("params", {}), model_id,
-        )
+        staging_dir = _training_run_dir(doe_id, run_id) / ".staging" / model_id
+        snapshot_dir = _training_run_dir(doe_id, run_id) / "models" / model_id
+        with task_workspace(_training_run_dir(doe_id, run_id) / "internal"):
+            response = train_surrogate(
+                request["data_file"], request["all_var_list"],
+                request["input_var_count"], index, config.get("params", {}),
+                model_id, artifact_dir=str(staging_dir),
+                snapshot_dir=str(snapshot_dir),
+            )
         if response["code"] != 0:
             raise RuntimeError(response["msg"])
-        records.append(_snapshot_model(doe_id, response))
+        records.append(_snapshot_model(doe_id, run_id, response))
+        shutil.rmtree(staging_dir, ignore_errors=True)
         training_progress = round(75 * (position + 1) / len(models))
         store.update(doe_id, progress=15 + round(60 * (position + 1) / len(models)))
         store.update_section(
             doe_id, "training", status="running", stage="training",
-            progress=training_progress, models=records,
+            progress=training_progress, models=records, current_model=family,
+            current_model_index=position + 1, total_models=len(models),
+        )
+        _update_training_run(
+            doe_id, run_id, status="running", stage="training",
+            progress=training_progress, models=records, current_model=family,
+            current_model_index=position + 1, total_models=len(models),
         )
     return records
 
 
-def _snapshot_model(doe_id: str, response: dict[str, Any]) -> dict[str, Any]:
+def _snapshot_model(
+    doe_id: str, run_id: str, response: dict[str, Any],
+) -> dict[str, Any]:
     data = response["data"]
-    destination = store.task_dir(doe_id) / "models" / response["model_id"]
-    # 底层先写共享模型目录 此处复制到 DOE 专属目录形成稳定快照
-    shutil.copytree(data["model_dir"], destination, dirs_exist_ok=True)
+    destination = _training_run_dir(doe_id, run_id) / "models" / response["model_id"]
+    # API 训练直接写入轮次目录；保留复制分支供独立服务调用结果接入。
+    if Path(data["model_dir"]).resolve() != destination.resolve():
+        shutil.copytree(data["model_dir"], destination, dirs_exist_ok=True)
     return {
         "model_id": response["model_id"], "model_index": data["model_index"],
         "model_family": data["model_family"], "model_dir": str(destination),
@@ -599,7 +844,7 @@ def _snapshot_model(doe_id: str, response: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _evaluate_models(doe_id, request, records, cancel):
+def _evaluate_models(doe_id, request, records, cancel, run_id):
     config = request.get("evaluation") or {}
     if not config.get("enabled", True) or cancel.is_set():
         return records
@@ -607,9 +852,17 @@ def _evaluate_models(doe_id, request, records, cancel):
 
     # 每个模型族独立交叉验证 目标评分取平均后用于自动选择最佳模型
     store.update_section(doe_id, "training", status="running", stage="evaluating", progress=75)
+    _update_training_run(
+        doe_id, run_id, status="running", stage="evaluating", progress=75,
+        models=records,
+    )
     evaluator = SurrogateModelEvaluator(
         request["data_file"], request["all_var_list"], request["input_var_count"],
         n_splits=config.get("n_splits", 5), random_state=config.get("random_state", 42),
+        max_workers=(
+            None if config.get("max_workers", "auto") == "auto"
+            else config["max_workers"]
+        ),
         model_params={
             MODEL_FAMILIES[item["model_index"]]: item["params"]
             for item in request["models"]
@@ -618,6 +871,20 @@ def _evaluate_models(doe_id, request, records, cancel):
     for position, record in enumerate(records):
         if cancel.is_set():
             break
+        store.update_section(
+            doe_id,
+            "training",
+            stage="evaluating",
+            current_model=record["model_family"],
+            current_model_index=position + 1,
+            total_models=len(records),
+        )
+        _update_training_run(
+            doe_id, run_id, status="running", stage="evaluating",
+            progress=75 + round(25 * (position + 1) / len(records)),
+            models=records, current_model=record["model_family"],
+            current_model_index=position + 1, total_models=len(records),
+        )
         summaries = evaluator.evaluate(models=[record["model_family"]])
         serialized = [asdict(item) for item in summaries]
         scores = [item["score"] for item in serialized if item["score"] is not None]
@@ -627,12 +894,28 @@ def _evaluate_models(doe_id, request, records, cancel):
         store.update_section(
             doe_id, "training", stage="evaluating",
             progress=75 + round(25 * (position + 1) / len(records)), models=records,
+            current_model=record["model_family"], current_model_index=position + 1,
+            total_models=len(records),
         )
     return records
 
 
-def _mark_cancelled(doe_id: str, section: str) -> None:
-    store.update_section(doe_id, section, status="stopped", stage="stopped")
+def _mark_cancelled(
+    doe_id: str, section: str, run_id: str | None = None,
+) -> None:
+    store.update_section(
+        doe_id,
+        section,
+        status="stopped",
+        stage="stopped",
+        current_model=None,
+        current_model_index=None,
+    )
+    if section == "training" and run_id:
+        _update_training_run(
+            doe_id, run_id, status="stopped", stage="stopped",
+            current_model=None, current_model_index=None,
+        )
     store.update(doe_id, status="stopped", stage=f"{section}_stopped")
 
 
@@ -778,8 +1061,25 @@ def _parse_cell(value: str) -> Any:
         return value
 
 
-def _select_model(state: dict[str, Any], model_id: str | None) -> dict[str, Any]:
-    models = state.get("training", {}).get("models", [])
+def _select_training_run(
+    state: dict[str, Any], run_id: str | None,
+) -> dict[str, Any]:
+    training = state.get("training", {})
+    if not run_id:
+        return training
+    for run in training.get("history", []):
+        if run.get("run_id") == run_id:
+            if run.get("status") != "finished":
+                raise ConflictError("所选训练轮次尚未完成")
+            return run
+    raise NotFoundError(f"训练轮次不存在：{run_id}")
+
+
+def _select_model(
+    state: dict[str, Any], model_id: str | None,
+    training_run_id: str | None = None,
+) -> dict[str, Any]:
+    models = _select_training_run(state, training_run_id).get("models", [])
     if model_id:
         models = [item for item in models if item["model_id"] == model_id]
     if not models:
@@ -815,6 +1115,7 @@ def start_optimization(payload: dict[str, Any]) -> dict[str, Any]:
         doe_id, "optimization", status="queued", stage="queued", progress=0,
         request=request, result=None, error=None, current_run_id=run_id, history=history,
     )
+    _update_optimization_run(doe_id, run_id)
     registry.start(
         doe_id,
         "optimization",
@@ -831,27 +1132,37 @@ def _update_optimization_run(doe_id: str, run_id: str, **fields: Any) -> None:
     state = store.load(doe_id)
     optimization = state.get("optimization") or {}
     history = list(optimization.get("history") or [])
+    updated_run = None
     for index, run in enumerate(history):
         if run.get("run_id") == run_id:
-            updated = dict(run)
-            updated.update(fields)
-            updated["updated_at"] = _history_timestamp()
-            history[index] = updated
+            updated_run = dict(run)
+            updated_run.update(fields)
+            updated_run["updated_at"] = _history_timestamp()
+            history[index] = updated_run
             break
     store.update_section(doe_id, "optimization", history=history)
+    if updated_run is not None:
+        _write_json(
+            store.task_dir(doe_id) / "optimization" / "runs" / run_id
+            / "optimization_result.json",
+            updated_run,
+        )
 
 
 def _normalize_optimization(payload, state) -> dict[str, Any]:
     mode = payload.get("mode")
     if mode not in {"single", "multi", "reinforcement_learning"}:
         raise ApiError("mode 仅支持 single、multi、reinforcement_learning")
-    training = state.get("training") or {}
+    training_run_id = payload.get("training_run_id")
+    if training_run_id is not None and not isinstance(training_run_id, str):
+        raise ApiError("training_run_id 必须是字符串")
+    training = _select_training_run(state, training_run_id)
     training_request = training.get("request") or {}
     all_names = training_request.get("all_var_list") or []
     input_count = training_request.get("input_var_count", 0)
     if not all_names or not isinstance(input_count, int) or not 0 < input_count < len(all_names):
         raise ConflictError("DOE 未记录可用于优化的训练字段")
-    model = _select_model(state, payload.get("model_id"))
+    model = _select_model(state, payload.get("model_id"), training_run_id)
     input_names, output_names = all_names[:input_count], all_names[input_count:]
     objective_names, objective_config = _normalize_optimization_objectives(
         payload.get("objectives"), output_names, mode
@@ -868,7 +1179,9 @@ def _normalize_optimization(payload, state) -> dict[str, Any]:
     if not required_targets <= set(model.get("target_names") or []):
         raise ApiError("目标或约束字段不在所选代理模型的输出字段中")
     return {
-        "model_id": model["model_id"], "mode": "single" if mode != "multi" else "multi",
+        "model_id": model["model_id"], "model_dir": model.get("model_dir"),
+        "training_run_id": training.get("run_id") or state.get("training", {}).get("current_run_id"),
+        "mode": "single" if mode != "multi" else "multi",
         "objective_names": objective_names, "objective_config": objective_config,
         "objective_normalization": normalization,
         "constraints": constraints, "all_var_list": all_names,
@@ -1008,8 +1321,16 @@ def _run_optimization(
             doe_id, run_id, status="running", stage="optimizing", progress=10,
         )
         optimizer = request.pop("optimizer")
+        run_dir = store.task_dir(doe_id) / "optimization" / "runs" / run_id
+        run_dir.mkdir(parents=True, exist_ok=True)
+        output_name = "pareto_solutions.tsv" if optimizer == "nsga2" else "rl_solutions.tsv"
+        request["output_config"] = {
+            **dict(request.get("output_config") or {}),
+            "pareto_txt_path": str(run_dir / output_name),
+        }
         task_id = f"opt_{doe_id}_{uuid.uuid4().hex[:6]}"
-        response = run_optimization(request, optimizer=optimizer, task_id=task_id)
+        with task_workspace(run_dir / "internal"):
+            response = run_optimization(request, optimizer=optimizer, task_id=task_id)
         if cancel.is_set():
             _update_optimization_run(
                 doe_id, run_id, status="stopped", stage="stopped",
@@ -1048,14 +1369,15 @@ def _run_optimization(
 def _collect_optimization_result(doe_id, response, run_id) -> dict[str, Any]:
     data = response["data"]
     resources = dict(data.get("file_resource") or {})
-    output_dir = store.task_dir(doe_id) / "optimization" / run_id
+    output_dir = store.task_dir(doe_id) / "optimization" / "runs" / run_id
     output_dir.mkdir(parents=True, exist_ok=True)
     # 将算法输出文件复制到 DOE 专属目录 返回路径不再依赖共享输出位置
     for key, source in list(resources.items()):
         path = Path(source)
         if path.is_file():
             destination = output_dir / path.name
-            shutil.copy2(path, destination)
+            if path.resolve() != destination.resolve():
+                shutil.copy2(path, destination)
             resources[key] = str(destination)
     columns = (data.get("task_info") or {}).get("result_columns") or []
     resource = store.register_resource(
@@ -1063,10 +1385,12 @@ def _collect_optimization_result(doe_id, response, run_id) -> dict[str, Any]:
         path=resources.get("solution_txt_path", ""),
         replace_existing=False,
     )
-    return {
+    result = {
         "optimization_id": response["task_id"], **data,
         "file_resource": resources, **resource,
     }
+    _write_json(output_dir / "optimization_result.json", result)
+    return result
 
 
 def stop_optimization(payload: dict[str, Any]) -> dict[str, Any]:
@@ -1105,12 +1429,22 @@ def get_optimization(doe_id: str) -> dict[str, Any]:
                 key: value for key, value in run_result.items() if key != "file_resource"
             }
         history.append(public_run)
+    raw_request = optimization.get("request")
+    request = None if raw_request is None else dict(raw_request)
+    if request is not None:
+        request.pop("model_dir", None)
+    for run in history:
+        if isinstance(run.get("request"), dict):
+            run["request"] = {
+                key: value for key, value in run["request"].items()
+                if key != "model_dir"
+            }
     return {
         "id": doe_id,
         "status": optimization.get("status", "not_started"),
         "stage": optimization.get("stage", "not_started"),
         "progress": optimization.get("progress", 0),
-        "request": optimization.get("request"),
+        "request": request,
         "result": result,
         "current_run_id": optimization.get("current_run_id"),
         "history": history,

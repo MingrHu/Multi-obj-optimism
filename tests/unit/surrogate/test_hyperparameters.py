@@ -15,6 +15,7 @@ def test_defaults_cover_all_five_model_families():
     assert default_model_params("PRG")["degree"] == 2
     assert default_model_params("RF")["n_estimators"] == 300
     assert default_model_params("DNN")["epochs"] == 1000
+    assert default_model_params("DNN")["verbose"] == 0
 
 
 def test_overrides_are_merged_without_dropping_defaults():

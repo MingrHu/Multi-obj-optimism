@@ -103,6 +103,23 @@ def test_api_client_saves_training_dataset_definition(monkeypatch):
     assert result["sample_count"] == 2
 
 
+def test_api_client_deletes_doe(monkeypatch):
+    captured = {}
+
+    def fake_urlopen(request, timeout):
+        captured["url"] = request.full_url
+        captured["body"] = json.loads(request.data.decode("utf-8"))
+        return _Response({"code": 0, "message": "ok", "data": "doe-1"})
+
+    monkeypatch.setattr(core, "urlopen", fake_urlopen)
+
+    result = core.ApiClient().delete_doe("doe-1")
+
+    assert captured["url"].endswith("/api/v1/doe/delete")
+    assert captured["body"] == {"id": "doe-1"}
+    assert result == {"value": "doe-1"}
+
+
 def test_status_view_has_safe_fallback():
     assert core.status_view("finished").tone == "success"
     assert core.status_view("future_state").text == "future_state"
