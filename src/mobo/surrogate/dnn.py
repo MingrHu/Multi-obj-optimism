@@ -7,8 +7,9 @@ from typing import Any
 
 from .hyperparameters import normalize_model_params
 
-def dnn_run(file: str, vars_out: list[str], n_var: int,
-            model_par: dict[str, Any] | None = None):
+def _train_outputs(file: str, vars_out: list[str], n_var: int,
+                   model_par: dict[str, Any] | None = None,
+                   target_indices: list[int] | None = None):
     # 1. 加载数据
     X, Y = load_and_preprocess_data(file,vars_out,n_var)
 
@@ -18,7 +19,8 @@ def dnn_run(file: str, vars_out: list[str], n_var: int,
     scalers)= split_data_with_val(X, Y)            
 
     params = normalize_model_params("DNN", model_par)
-    for idx in range(len(Y_train_scaled_list)):
+    indices = target_indices if target_indices is not None else range(len(Y_train_scaled_list))
+    for idx in indices:
         # 简单三层感知机
         cur_model = build_single_output_dnn(
             X_train_scaled.shape[1],
@@ -69,4 +71,12 @@ def dnn_run(file: str, vars_out: list[str], n_var: int,
         # 避免模型和线程资源随输出目标数量持续累积。
         del cur_model
         keras_backend.clear_session()
+
+
+def dnn_run(file: str, vars_out: list[str], n_var: int,
+            model_par: dict[str, Any] | None = None):
+    # 各输出在独立进程训练 保持全量数据划分与目标标准化器索引一致
+    from .dnn_process import train_parallel
+
+    train_parallel(file, vars_out, n_var, normalize_model_params("DNN", model_par))
 

@@ -56,6 +56,7 @@ DOE 聚合服务。路由层位于 `api.handler`，实际处理层位于 `api.se
 | `surrogate` | `common.py` | 数据加载/划分/标准化、指标、`save_model`、`Time`、DNN 构建 |
 | `surrogate` | `hyperparameters.py` | 五类模型的参数元数据、默认值合并、类型/范围及关联约束校验 |
 | `surrogate` | `dnn/polynomial/svr/random_forest/kriging.py` | 五种代理模型训练入口 |
+| `surrogate` | `dnn_process.py` | DNN 输出目标独立子进程调度；单进程单计算线程，取消或失败时终止并回收子进程 |
 | `surrogate` | `interface.py` | `Doe_surrogateModel` 统一训练接口 |
 | `surrogate` | `evaluate.py` | `SurrogateModelEvaluator` K 折交叉验证与报告；模型族串行、输出目标线程池并行、单目标各折串行 |
 | `surrogate` | `service.py` | `train_surrogate`/`query_model_status`：`model_id` 主键，req/resp 落盘 |
@@ -109,6 +110,12 @@ DOE 聚合服务。路由层位于 `api.handler`，实际处理层位于 `api.se
 ```
 
 ## HTTP 聚合与结果协议
+
+DNN 正式训练按输出目标启动独立 Python 子进程，默认并发数为输出数、可用逻辑 CPU 数一半和8的
+最小值，至少为1。服务端环境变量 `MOBO_DNN_MAX_WORKERS` 可设置正整数并发上限；每个子进程
+的 TensorFlow、OpenMP 和 BLAS 计算线程固定为1。完整数据划分、超参数和 `scaler_y_<index>`
+索引保持一致，模型仍保存到调用方指定的轮次目录。HTTP 中止信号由父线程读取并终止所有当前
+训练子进程；目标失败同样清理其他子进程并将训练标记为失败。K 折评价仍由现有评价器负责。
 
 外部系统通过 `mobo.api` 访问 DOE 聚合服务，不直接读取 CLI 输出或底层任务目录。一个
 `data/doe_tasks/<doe_id>/doe.json` 聚合样本、训练、模型、推理和优化状态；训练与优化在

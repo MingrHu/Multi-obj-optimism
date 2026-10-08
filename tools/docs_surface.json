@@ -83,6 +83,7 @@
     "MOBO_DATA_DIR",
     "MOBO_DEF_ARM_CTL",
     "MOBO_DEF_PRE_64",
+    "MOBO_DNN_MAX_WORKERS",
     "MOBO_PROJECT_DIR"
   ],
   "modules": [
@@ -145,6 +146,7 @@
     "surrogate/__init__.py",
     "surrogate/common.py",
     "surrogate/dnn.py",
+    "surrogate/dnn_process.py",
     "surrogate/evaluate.py",
     "surrogate/hyperparameters.py",
     "surrogate/interface.py",

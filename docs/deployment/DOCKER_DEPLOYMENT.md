@@ -78,6 +78,16 @@ Docker 构建上下文。若采用已经导出的镜像 tar 包，则服务器�
 | 网络 | 在线构建需访问 GitHub、Docker Hub、PyPI 和 PyTorch CPU wheel 源 |
 | 端口 | 默认使用宿主机 TCP 5050 |
 
+DNN 正式训练默认最多8个独立进程，每个进程使用1个计算线程；实际并发还受输出数和可用
+逻辑 CPU 数一半限制。内存紧张或多个 DOE 同时训练时可设置服务端并发上限，例如：
+
+```bash
+MOBO_DNN_MAX_WORKERS=2 docker compose up -d
+```
+
+`MOBO_DNN_MAX_WORKERS` 必须为正整数；未设置时自动计算。该设置只影响正式 DNN 训练，
+不改变模型超参数或交叉验证并发配置。代码更新后仍需按第10节重新构建镜像。
+
 仓库提供只读检查脚本，不会安装软件、修改用户组或开放端口：
 
 ```bash

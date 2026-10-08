@@ -776,6 +776,7 @@ def _run_training(
 def _train_models(doe_id, request, cancel, run_id) -> list[dict[str, Any]]:
     # 复用已有代理模型服务 保持底层模型训练逻辑和历史产物格式不变
     from mobo.surrogate.service import train_surrogate
+    from mobo.surrogate.dnn_process import training_control
 
     records = []
     models = request["models"]
@@ -802,7 +803,7 @@ def _train_models(doe_id, request, cancel, run_id) -> list[dict[str, Any]]:
         model_id = f"tr_{doe_id}_{index}_{uuid.uuid4().hex[:6]}"
         staging_dir = _training_run_dir(doe_id, run_id) / ".staging" / model_id
         snapshot_dir = _training_run_dir(doe_id, run_id) / "models" / model_id
-        with task_workspace(_training_run_dir(doe_id, run_id) / "internal"):
+        with task_workspace(_training_run_dir(doe_id, run_id) / "internal"), training_control(cancel):
             response = train_surrogate(
                 request["data_file"], request["all_var_list"],
                 request["input_var_count"], index, config.get("params", {}),
