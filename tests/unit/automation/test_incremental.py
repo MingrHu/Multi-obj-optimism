@@ -2,6 +2,11 @@ import json
 from concurrent.futures import ThreadPoolExecutor
 
 from mobo.automation.incremental import IncrementalDataset
+from mobo.automation.dataset_format import format_dataset_row
+
+
+def _line(values):
+    return "\t".join(format_dataset_row(values))
 
 
 def test_incremental_dataset_is_ordered_and_idempotent(tmp_path):
@@ -18,7 +23,7 @@ def test_incremental_dataset_is_ordered_and_idempotent(tmp_path):
     dataset.commit(1, ["p1", "updated"])
 
     assert output_file.read_text(encoding="utf-8").splitlines() == [
-        "p0\ty0", "p1\tupdated", "p2\ty2",
+        _line(["p0", "y0"]), _line(["p1", "updated"]), _line(["p2", "y2"]),
     ]
     assert dataset.is_completed(1)
     state = json.loads(state_file.read_text(encoding="utf-8"))
@@ -46,7 +51,7 @@ def test_incremental_dataset_failed_sample_can_resume(tmp_path):
     resumed = IncrementalDataset(state_file, output_file)
     resumed.commit(4, ["x", "y"])
     assert resumed.is_completed(4)
-    assert (tmp_path / "result.txt").read_text(encoding="utf-8") == "x\ty\n"
+    assert (tmp_path / "result.txt").read_text(encoding="utf-8") == _line(["x", "y"]) + "\n"
 
 
 def test_missing_output_is_rebuilt_from_state(tmp_path):
@@ -59,14 +64,17 @@ def test_missing_output_is_rebuilt_from_state(tmp_path):
 
     IncrementalDataset(state_file, str(output))
 
-    assert output.read_text(encoding="utf-8") == "p0\ty0\np2\ty2\n"
+    assert output.read_text(encoding="utf-8") == _line(["p0", "y0"]) + "\n" + _line(["p2", "y2"]) + "\n"
 
 
-def test_incremental_dataset_saves_numeric_values_with_two_decimals(tmp_path):
+def test_incremental_dataset_saves_fixed_width_six_decimals(tmp_path):
     state_file = str(tmp_path / "incremental.json")
     output = tmp_path / "result.txt"
     dataset = IncrementalDataset(state_file, str(output))
 
     dataset.commit(0, [5, "1.239", "nan"])
 
-    assert output.read_text(encoding="utf-8") == "5.00\t1.23\tnan\n"
+    text = output.read_text(encoding="utf-8")
+    assert text == _line([5, "1.239", "nan"]) + "\n"
+    assert [cell.strip() for cell in text.rstrip("\n").split("\t")] == ["5.000000", "1.239000", "nan"]
+    assert all(len(cell) == 20 for cell in text.rstrip("\n").split("\t"))

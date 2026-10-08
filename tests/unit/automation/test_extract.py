@@ -81,7 +81,8 @@ def test_extract_dataset_writes_result(monkeypatch, tmp_path):
     # 工艺参数 + 目标值（无行号列）
     assert "900.00" in content and "30.00" in content and "42.00" in content
     # 不再写行号列：首行应直接以参数值开头
-    assert content.splitlines()[0].split("\t")[0] == "900.00"
+    assert content.splitlines()[0].split("\t")[0].strip() == "900.000000"
+    assert all(len(cell) == 20 for cell in content.splitlines()[0].split("\t"))
     # 提取函数应收到对象 ID（"1"）与 select_component（3）
     assert received == [("1", [["frame"]], 3)]
 

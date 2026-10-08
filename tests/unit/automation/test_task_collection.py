@@ -233,9 +233,12 @@ def test_multi_operation_dataset_has_no_header(monkeypatch, tmp_path):
         state={"samples": {"0": {"status": "completed", "operations": operations}}},
     )
     output = TC4_RING_MULTI_TASK_1.extract_dataset(task, result_dir=tmp_path)
-    assert Path(output).read_text(encoding="utf-8") == (
-        "800.00\t200.00\t0.10\t900.00\t300.00\t1.00\t12.30\t50.10\n"
-    )
+    text = Path(output).read_text(encoding="utf-8")
+    assert [cell.strip() for cell in text.rstrip("\n").split("\t")] == [
+        "800.000000", "200.000000", "0.100000", "900.000000",
+        "300.000000", "1.000000", "12.300000", "50.100000",
+    ]
+    assert all(len(cell) == 20 for cell in text.rstrip("\n").split("\t"))
 
 
 def test_multi_operation_progress_targets_export_checkpoint_saved_steps(
