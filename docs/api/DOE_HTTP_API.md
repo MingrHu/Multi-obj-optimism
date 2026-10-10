@@ -35,18 +35,51 @@ Docker 环境可执行 `docker compose up --build -d`，容器会自动使用 Gu
 | `POST /api/v1/hust/doe/dataset/save` | `id`, `data_source` | 保存训练数据及输入/输出字段定义，不启动训练 |
 | `GET /api/v1/hust/doe/data/get` | `id`, `resource_id`, `fields` | 按资源索引和字段获取样本、数据集、优化或推理结果 |
 | **`GET /api/v1/hust/doe/train/hyperparameters`** | - | **查询五类代理模型支持的超参数、默认值和约束** |
-| **`GET /api/v1/hust/doe/train/progress`** | **`id`** | **查询代理模型训练状态、阶段、进度及已训练模型** |
+| **`GET /api/v1/hust/doe/train/progress`** | **`id`, `run_id?`** | **查询当前或指定训练轮次的进度及模型评价** |
 | **`POST /api/v1/hust/doe/train/delete`** | **`id`** | **删除训练记录和代理模型** |
 | **`POST /api/v1/hust/doe/train/stop`** | **`id`** | **发出训练中止请求** |
 | **`POST /api/v1/hust/doe/train/startTrain`** | **见下文** | **后台训练并交叉验证** |
 | **`POST /api/v1/hust/doe/inference/startInference`** | **`id`, `inputs`, `fields?`, `model_id?`** | **代理模型批量推理并按目标字段返回** |
-| **`POST /api/v1/hust/doe/optimize/start`** | **见下文** | **后台提交 NSGA-II、单目标或 RL 优化** |
+| **`POST /api/v1/hust/doe/optimize/start`** | **`id`, `training_run_id?`, `model_id?` 等，见第9节** | **提交优化并返回新的优化 `run_id`** |
 | **`POST /api/v1/hust/doe/optimize/stop`** | **`id`** | **发出优化中止请求** |
-| **`GET /api/v1/hust/doe/optimize/getById`** | **`id`** | **查询优化状态、参数与结果文件** |
+| **`GET /api/v1/hust/doe/optimize/getById`** | **`id`** | **查询当前优化状态及全部历史轮次的参数与结果索引** |
 | **`GET /api/v1/hust/doe/optimize/process`** | **`id`、可选 `run_id`** | **查询单目标、多目标或强化学习的优化过程曲线** |
 
 除健康检查外，成功响应统一使用 `code/message/data`。GET 参数通过 query string 传递，
 POST 参数使用 JSON 对象；GET 接口不读取请求体
+
+## 标识与轮次规则
+
+字段名区分大小写，使用下划线形式，不使用 `runid`、`TrainId` 或 `ModelId`。
+同一个 DOE 可以多次训练和优化，每次提交产生新的轮次，不使用任务名称定位历史结果。
+
+| 标识 | 来源 | 用途与范围 |
+|---|---|---|
+| `id` | 创建 DOE 的 `data.id` | DOE 唯一标识，所有任务操作使用它，名称允许重复 |
+| 训练 `run_id` | 训练提交的 `data.run_id`，例如 `train_1a2b3c4d5e6f` | 传给训练进度查询的 `run_id`，或优化提交的 `training_run_id` |
+| 优化 `run_id` | 优化提交的 `data.run_id`，例如 `run_1a2b3c4d5e6f` | 传给优化过程查询的 `run_id`，也用于在优化查询的 `history` 中定位一轮结果 |
+| `current_run_id` | 训练进度或优化查询响应 | 对应模块最近提交的轮次，不一定仍在运行；优化重启恢复时可为 `null` |
+| `selected_run_id` | 训练进度查询响应 | 本次实际展示的训练轮次，查询历史时可以不同于 `current_run_id` |
+| `training_run_id` | 优化请求字段，以及优化查询的 `request.training_run_id` | 优化所使用的训练轮次，不能传优化 `run_id` |
+| `model_id` | 训练进度的 `models[].model_id` | 某轮训练中生成的模型标识，模型族名称 `RF` 等不能替代它 |
+| `optimization_id` | 优化结果的 `result.optimization_id` | 底层算法执行标识，不是轮次查询参数，不用于查询收敛曲线 |
+| `resource_id` | 业务响应或历史结果中的 `tos-...` | 传给数据获取接口，不是路径，必须与所属 DOE 的 `id` 一起使用 |
+
+| 接口 | 是否支持轮次选择 | 不传轮次时的行为 |
+|---|---|---|
+| 训练提交 | 不接收客户端指定的 `run_id` | 每次成功提交生成新的训练轮次 |
+| 训练进度 | query `run_id`，必须是训练轮次 | 返回当前训练聚合状态，并返回全部轮次摘要 |
+| 训练中止 / 删除 | 仅使用 `id`，不支持按轮次操作 | 中止当前训练；删除该 DOE 全部训练记录与模型 |
+| 推理 | 仅 `model_id`，不支持 `training_run_id` | 在当前训练聚合记录的模型中选择；指定历史模型不会自动查找历史轮次 |
+| 优化提交 | JSON `training_run_id`，必须是训练轮次 | 使用当前训练聚合记录；在所选范围内按 `model_id` 或最高评分选模型 |
+| 优化中止 | 仅使用 `id`，不支持 `run_id` | 请求中止当前优化 |
+| 优化查询 | 仅 query `id`，不支持 query `run_id` | 返回当前状态及全部 `history`，客户端按 `history[].run_id` 选历史结果 |
+| 优化过程 | query `run_id`，必须是优化轮次 | 使用 `current_run_id`；为空时回退到最后一条历史轮次 |
+
+建议客户端保存两个独立字段 `training_run_id` 和 `optimization_run_id`，分别保存两类
+提交响应的 `data.run_id`。不要用一个变量覆盖两种轮次，也不要把 `resource_id` 当作轮次。
+查询或提交时，轮次与模型必须属于请求的 DOE；历史训练轮次用于优化时必须已经 `finished`。
+未声明支持的参数不会因为出现在 JSON 或查询字符串中就生效。
 
 服务会在 Flask/Gunicorn worker 启动阶段预加载 NumPy、Pandas、PyDOE、Joblib、
 采样、代理模型训练与评价、推理、遗传优化和强化学习模块。任一运行依赖加载失败时
@@ -76,6 +109,24 @@ worker 启动失败，不接受业务请求。依赖全部就绪时健康检查�
   }
 }
 ```
+
+上面的版本号仅为示例，以实际部署的响应为准。健康接口不需要参数。
+
+| 健康响应字段 | 类型 | 说明 |
+|---|---|---|
+| `code/message` | integer / string | 就绪时为 `0/ok`，未就绪时为 `1/service not ready` |
+| `data.service` | string | 固定为 `mobo-doe` |
+| `data.dependencies.ready` | boolean | 全部预加载依赖是否就绪，不代表某个 DOE 训练完成 |
+| `data.dependencies.components` | object | NumPy、Pandas、PyDOE 实际版本及各运行组件就绪状态 |
+| `data.dependencies.error` | string或null | 就绪时为null；状态异常时记录预加载错误 |
+
+未就绪返回 HTTP 503，结构示例：
+
+```json
+{"code": 1, "message": "service not ready", "data": {"service": "mobo-doe", "dependencies": {"ready": false, "components": {}, "error": null}}}
+```
+
+正常启动阶段导入失败会直接阻止 worker 启动，可能无法访问健康接口，而不是必然收到503。
 
 DOE 的 `id` 是任务唯一标识，展示名称 `name` 允许重复。显式名称会去除首尾空白，未传
 `name` 时使用唯一 `id` 作为名称。未传 `id` 时服务端自动生成并通过创建响应的 `data.id`
@@ -290,7 +341,10 @@ GET /api/v1/hust/doe/data/get?id=doe_sample_001&resource_id=tos-a1b2c3d4e5f60718
 
 `resource_id` 不是服务器路径或下载 URL，只能与其所属 DOE 的 `id` 配合使用。服务端
 当前支持 `sample`、`dataset`、`inference` 和 `optimization` 四类资源。相同 DOE
-重新生成同类资源后，旧索引失效，端上应保存最新业务接口响应中的索引。
+资源有效期按业务区分：重新生成样本或推理会替换同类旧索引；每次训练的独立数据集快照与
+每次优化结果使用独立索引，新轮次不会覆盖历史结果。保存或生成新的 DOE 数据集会替换已有
+`dataset` 类型资源索引，端上应刷新该索引；历史训练快照属于 `training_dataset` 类型，不受这次替换影响。
+删除 DOE 后所有索引失效，删除训练后训练数据集和模型记录被清理；不存在或失效的索引返回404。
 
 **成功响应字段说明**：
 
@@ -304,7 +358,7 @@ GET /api/v1/hust/doe/data/get?id=doe_sample_001&resource_id=tos-a1b2c3d4e5f60718
     "id": "doe_sample_001",
     "resource_id": "tos-a1b2c3d4e5f60718293a",
     "resource_type": "sample",
-    "row_count": 12,
+    "row_count": 4,
     "values": {
       "X1": [0.25, 0.42, 0.18, 0.35],
       "X3": [1120.0, 1185.0, 1090.0, 1210.0]
@@ -319,7 +373,7 @@ GET /api/v1/hust/doe/data/get?id=doe_sample_001&resource_id=tos-a1b2c3d4e5f60718
 | `message` | string | 成功为 `数据获取完成` |
 | `data.id` | string | DOE 唯一标识 |
 | `data.resource_id` | string | 本次读取的资源索引 |
-| `data.resource_type` | string | `sample`、`dataset`、`inference` 或 `optimization` |
+| `data.resource_type` | string | `sample`、`dataset`、`training_dataset`、`inference` 或 `optimization`，training_dataset表示某轮训练的独立数据快照 |
 | `data.row_count` | integer | 该资源的总数据行数，不受本次字段数量影响 |
 | `data.values` | object | 字段名称到数据数组的映射，键顺序与请求的 `fields` 顺序一致 |
 
@@ -370,7 +424,7 @@ GET /api/v1/hust/doe/data/get?id=doe_sample_001&resource_id=tos-a1b2c3d4e5f60718
 该接口用于在不启动训练的情况下，显式保存当前 DOE 的训练数据、字段名称及输入/输出角色。
 `data_source` 的结构和校验规则与训练提交接口相同；可选的 `source_name` 仅保存客户端文件名，
 不保存或暴露客户端绝对路径。后端将数据按“输入字段在前、输出字段在后”写入 DOE 自身的
-`training` 目录，并保存字段顺序、输入列数、输入边界、样本数和数据资源索引。
+`dataset` 目录，并保存字段顺序、输入列数、输入边界、样本数和数据资源索引。
 
 ```json
 {
@@ -392,6 +446,67 @@ GET /api/v1/hust/doe/data/get?id=doe_sample_001&resource_id=tos-a1b2c3d4e5f60718
 成功响应返回 `id`、`resource_id`、`columns`、`input_names`、`target_names`、
 `input_bounds` 和 `sample_count`。训练或优化正在运行时修改配置返回 HTTP 409。
 后续训练仍会校验并保存本次训练实际使用的数据；仅保存配置不会启动后台任务。
+
+| 请求字段 | 类型 | 必填 | 说明 |
+|---|---|---:|---|
+| `id` | string | 是 | 已创建的DOE唯一标识 |
+| `data_source` | object | 是 | 数据对象，字段与第4节训练请求一致 |
+| `data_source.source_name` | string | 否 | 来源文件名，不用于读取客户端文件 |
+| `data_source.input_data.labels` | string array | 是 | 非空、不重复的输入字段名称 |
+| `data_source.input_data.samples` | number二维数组 | 是 | 输入数值矩阵，每行宽度与输入标签数一致 |
+| `data_source.output_data.labels` | string array | 是 | 非空、不重复且不与输入重名的输出字段名称 |
+| `data_source.output_data.samples` | number二维数组 | 是 | 输出数值矩阵，行数须与输入一致 |
+
+成功返回 HTTP 200：
+
+```json
+{
+  "code": 0,
+  "message": "DOE 配置与训练数据已保存",
+  "data": {
+    "id": "doe_20260622_001",
+    "resource_id": "tos-a1b2c3d4e5f60718293",
+    "columns": ["工件温度", "压下速度", "载荷", "晶粒尺寸"],
+    "input_names": ["工件温度", "压下速度"],
+    "target_names": ["载荷", "晶粒尺寸"],
+    "input_bounds": [
+      {"name": "工件温度", "lower": 900, "upper": 1100},
+      {"name": "压下速度", "lower": 10, "upper": 50}
+    ],
+    "sample_count": 2
+  }
+}
+```
+
+| 响应字段 | 类型 | 说明 |
+|---|---|---|
+| `code/message` | integer / string | 成功码和保存提示 |
+| `data.id` | string | DOE唯一标识 |
+| `data.resource_id` | string | 数据集索引，按第2节读取；本响应不包含resource_type |
+| `data.columns` | string array | 无表头TSV列顺序，先输入后输出 |
+| `data.input_names/target_names` | string array | 输入和输出名称 |
+| `data.input_bounds` | object array | 输入范围摘要，每项含name、lower、upper，取数据最小值与最大值 |
+| `data.sample_count` | integer | 样本行数，不是输入或输出字段数 |
+
+输入输出行数不一致返回 HTTP 400：
+
+```json
+{"code": 1, "message": "输入样本数量与输出样本数量必须一致", "data": {}}
+```
+
+后台任务运行时返回 HTTP 409：
+
+```json
+{"code": 409, "message": "任务正在运行，无法修改 DOE 配置", "data": {}}
+```
+
+| 失败响应字段 | 类型 | 说明 |
+|---|---|---|
+| `code` | integer | 参数错误为1，DOE不存在为404，运行冲突为409 |
+| `message/data` | string / object | 错误原因和空对象 |
+
+本接口不创建训练轮次，不返回run_id。随后训练仍需按第4节提交data_source或服务端兼容文件参数，
+不能只传本接口的resource_id或id就默认启动已保存数据的训练。
 
 
 ## 4 代理模型训练提交/开始
@@ -604,6 +719,10 @@ DOE 的 `training` 目录落盘为无表头 TSV。`all_var_list`、`input_var_co
 | `data.input_names` | string array | 输入变量名称 |
 | `data.target_names` | string array | 输出目标名称 |
 | `data.models` | string array | 本次提交的模型名称 |
+
+保存 `data.run_id` 后，可使用第7节的 `run_id` 查询本轮进度和评价结果；本轮完成后，
+把同一值作为第9节优化提交的 `training_run_id`，固定优化使用的模型与训练字段来源。
+重新训练会生成新的轮次，不覆盖历史模型；提交响应不包含最终模型 `model_id`，需查询训练进度获取。
 
 **失败响应字段说明**：
 
@@ -833,7 +952,8 @@ GET /api/v1/hust/doe/train/progress?id=doe_20260622_001&run_id=train_1a2b3c4d5e6
 
 **成功响应字段说明**：
 
-训练进行中查询成功返回 HTTP 200：
+训练进行中查询成功返回 HTTP 200。以下两个训练响应示例省略了较长的 `history` 数组，
+该字段实际始终返回；历史条目结构详见下方字段表。完成示例仅展示一个目标的评价条目：
 
 ```json
 {
@@ -846,9 +966,9 @@ GET /api/v1/hust/doe/train/progress?id=doe_20260622_001&run_id=train_1a2b3c4d5e6
     "progress": 40,
     "current_run_id": "train_1a2b3c4d5e6f",
     "selected_run_id": "train_1a2b3c4d5e6f",
-    "current_model": "DNN",
-    "current_model_index": 5,
-    "total_models": 5,
+    "current_model": "RF",
+    "current_model_index": 1,
+    "total_models": 1,
     "input_names": ["workpiece_temperature", "die_temperature"],
     "target_names": ["load", "grain_size", "roundness"],
     "input_bounds": [
@@ -897,6 +1017,11 @@ GET /api/v1/hust/doe/train/progress?id=doe_20260622_001&run_id=train_1a2b3c4d5e6
     "status": "finished",
     "stage": "finished",
     "progress": 100,
+    "current_run_id": "train_1a2b3c4d5e6f",
+    "selected_run_id": "train_1a2b3c4d5e6f",
+    "current_model": null,
+    "current_model_index": null,
+    "total_models": 1,
     "input_names": ["workpiece_temperature", "die_temperature"],
     "target_names": ["load", "grain_size", "roundness"],
     "input_bounds": [
@@ -932,6 +1057,11 @@ GET /api/v1/hust/doe/train/progress?id=doe_20260622_001&run_id=train_1a2b3c4d5e6
         "model_id": "tr_doe_20260622_001_2_a1b2c3",
         "model_index": 2,
         "model_family": "RF",
+        "hyper_params": {
+          "n_estimators": 500, "criterion": "squared_error", "max_depth": null,
+          "min_samples_split": 2, "min_samples_leaf": 1, "max_features": 1.0,
+          "bootstrap": true, "max_samples": null, "random_state": 42, "n_jobs": -1
+        },
         "target_names": ["load", "grain_size", "roundness"],
         "train_cost_sec": 0.52,
         "score": 0.91,
@@ -979,7 +1109,15 @@ GET /api/v1/hust/doe/train/progress?id=doe_20260622_001&run_id=train_1a2b3c4d5e6
 | `data.progress` | integer | 当前训练进度，范围为0到100 |
 | `data.current_run_id` | string or null | 当前 DOE 最近提交的训练轮次 |
 | `data.selected_run_id` | string or null | 本次响应展示的训练轮次 |
-| `data.history` | object array | 全部训练轮次摘要，包含状态、数据集、模型、最佳模型和时间戳 |
+| `data.history` | object array | 按提交顺序排列的全部训练轮次摘要，不是当前轮次的详细评价结果 |
+| `data.history[].run_id` | string | 训练轮次，可作为本接口的 query `run_id` 或优化提交的 `training_run_id` |
+| `data.history[].status/stage/progress` | string / string / number | 该历史轮次的状态、阶段和进度 |
+| `data.history[].dataset` | object | 该轮数据集的资源索引、列顺序、样本数和来源名称，字段可能按实际记录省略 |
+| `data.history[].models` | object array | 模型摘要，包含 `model_id/model_index/model_family/target_names/train_cost_sec/score`，不包含完整评价指标 |
+| `data.history[].model_configs` | object array | 该轮模型参数，结构同顶层 `model_configs` |
+| `data.history[].best_model` | string或null | 最佳模型的 `model_id`；尚未评选时为null |
+| `data.history[].error` | string或null | 历史记录的错误信息；可能保留历史内部异常，不等同于顶层通用失败提示 |
+| `data.history[].created_at/updated_at` | string | 该轮提交和更新时间，ISO 8601 格式 |
 | `data.current_model` | string or null | 当前正在训练或交叉验证的模型族；终态为空 |
 | `data.current_model_index` | integer or null | 当前模型在本次所选模型中的从1开始序号；终态为空 |
 | `data.total_models` | integer or null | 本次所选模型总数；尚未提交训练时为空 |
@@ -1077,6 +1215,17 @@ DOE 不存在返回 HTTP 404：
 
 
 
+指定历史训练轮次时，顶层 `models/model_configs/dataset/input_names/target_names/status`
+对应所选轮次，`current_run_id` 仍表示 DOE 最近提交轮次，`history` 仍返回全部轮次。
+要读取历史模型的完整 `r2/mae/mse/rmse`，请用该训练轮次的 `run_id` 再查询本接口，
+不要从仅含模型摘要的 `history[].models` 中寻找完整指标。
+
+训练轮次不存在或不属于当前 DOE 时返回 HTTP 404：
+
+```json
+{"code": 404, "message": "训练轮次不存在：train_missing", "data": {}}
+```
+
 ## 8 代理模型推理
 
 **POST /api/v1/hust/doe/inference/startInference**
@@ -1114,13 +1263,17 @@ DOE 不存在返回 HTTP 404：
 }
 ```
 
-不指定 `model_id` 时，自动选择当前 DOE 下平均评价分最高的模型；不传 `fields`
+不指定 `model_id` 时，自动选择当前训练聚合记录中平均评价分最高的模型；不传 `fields`
 时返回该模型的全部输出目标。`inputs` 还支持二维数组形式，用于一次提交多个样本。
+
+本接口当前不读取 `training_run_id` 或 `run_id`，无法指定历史训练轮次。`model_id` 也只在
+当前训练记录中匹配；若重新训练清空了当前模型列表，旧模型不能仅凭历史 `model_id` 在本接口中加载。
+输入字段顺序取当前训练请求的 `input_names`，获取它们及模型标识使用第7节训练进度接口。
 
 | 请求字段 | 类型 | 必填 | 说明 |
 |---|---|---:|---|
 | `id` | string | 是 | 已完成代理模型训练的 DOE 唯一标识 |
-| `model_id` | string | 否 | 指定当前 DOE 下的代理模型，不传时自动选择评分最高模型 |
+| `model_id` | string | 否 | 指定当前训练记录中的代理模型，不传时在该范围内选择评分最高模型 |
 | `inputs` | `number[]`、`number[][]` 或 object | 是 | 单样本、批量样本或按输入字段组织的批量数据 |
 | `fields` | string array | 否 | 需要返回的输出目标，默认返回全部目标 |
 
@@ -1208,7 +1361,9 @@ DOE 尚无可用模型或指定的 `model_id` 不属于当前 DOE 时返回 HTTP
 
 接口支持标准化加权单目标、Pareto 多目标和 PPO 强化学习三种模式。调用方只提交
 目标、约束和设计变量，后端从 DOE 训练记录推导完整字段顺序和变量下标。
-不指定 `model_id` 时自动选择平均评价分最高的代理模型。
+不指定 `model_id` 时，在所选训练轮次的模型中自动选择平均评价分最高的模型。
+下列示例显式指定 `training_run_id`，其值来自第4节训练提交响应的 `data.run_id`；
+省略时使用当前训练聚合记录，不会自动在全部历史轮次中搜索模型。
 
 **请求字段说明**：
 
@@ -1218,6 +1373,7 @@ DOE 尚无可用模型或指定的 `model_id` 不属于当前 DOE 时返回 HTTP
 {
   "id": "doe_20260622_001",
   "mode": "single",
+  "training_run_id": "train_1a2b3c4d5e6f",
   "objectives": [
     {"name": "Y1", "direction": "min", "weight": 0.7},
     {"name": "Y2", "direction": "max", "weight": 0.3}
@@ -1253,6 +1409,7 @@ Pareto 多目标使用 NSGA-II，各目标不传 `weight`：
 {
   "id": "doe_20260622_001",
   "mode": "multi",
+  "training_run_id": "train_1a2b3c4d5e6f",
   "objectives": [
     {"name": "Y1", "direction": "min"},
     {"name": "Y2", "direction": "min"},
@@ -1284,6 +1441,7 @@ Pareto 多目标使用 NSGA-II，各目标不传 `weight`：
 {
   "id": "doe_20260622_001",
   "mode": "reinforcement_learning",
+  "training_run_id": "train_1a2b3c4d5e6f",
   "objectives": [
     {"name": "Y1", "direction": "min", "weight": 0.6},
     {"name": "Y6", "direction": "max", "weight": 0.4}
@@ -1318,8 +1476,8 @@ PPO 的观测是当前设计变量，动作是相对于变量范围的增量。�
 | 请求字段 | 类型 | 必填 | 说明 |
 |---|---|---:|---|
 | `id` | string | 是 | 已完成代理模型训练的 DOE 唯一标识 |
-| `training_run_id` | string | 否 | 指定训练轮次；建议始终传递以固定模型与字段来源 |
-| `model_id` | string | 否 | 指定当前 DOE 下的模型，不传时自动选择评分最高模型 |
+| `training_run_id` | string | 否 | 指定本 DOE 下已经完成的训练轮次；不传或空字符串使用当前训练聚合记录；建议显式固定来源 |
+| `model_id` | string | 否 | 指定所选训练轮次内的模型；省略时在该范围内选择评分最高模型，不在全部历史轮次中搜索 |
 | `mode` | string | 是 | `single`、`multi` 或 `reinforcement_learning` |
 | `objectives` | object array | 是 | 优化目标配置，名称必须是所选模型的输出字段 |
 | `objectives[].name` | string | 是 | 输出目标名称 |
@@ -1340,6 +1498,25 @@ PPO 的观测是当前设计变量，动作是相对于变量范围的增量。�
 
 当前不支持 GA、PSO 和 DE。传入这些名称会返回 HTTP 400，不会自动替换成其他算法。
 
+| `algorithm.params` 字段 | 适用算法 | 默认值 | 约束与含义 |
+|---|---|---|---|
+| `pop_size` | nsga2 | 100 | 正整数，种群规模 |
+| `n_offsprings` | nsga2 | 100 | 正整数，每代子代数量 |
+| `n_gen` | nsga2 | 200 | 正整数，迭代代数 |
+| `eliminate_duplicates` | nsga2 | true | boolean，是否去除重复个体 |
+| `seed` | 两种算法 | 42 | 非负整数，随机种子 |
+| `total_timesteps` | ppo | 20000 | 正整数，请求的训练步数，不是回合数 |
+| `episode_steps` | ppo | 100 | 正整数，每个训练回合最大步数 |
+| `learning_rate` | ppo | 0.001 | 正数，学习率 |
+| `constraint_penalty` | ppo | 5.0 | 正数，约束惩罚系数 |
+| `evaluation_episodes` | ppo | 10 | 正整数，训练后评价回合数，不写入训练收敛曲线 |
+| `action_step_ratio` | ppo | 0.05 | 大于0且不超过1，动作相对变量范围的步长比例 |
+| `max_solutions` | ppo | 100 | 正整数，最多保留的结果数量 |
+
+无约束时省略 `constraints` 或传 `[]`；也可只传需要约束的部分目标。
+`lower=0, upper=0` 表示要求该目标等于0，不表示未设置约束。
+设计变量可只包含部分输入，其余输入由算法按所选训练数据确定基准值。
+
 **成功响应字段说明**：
 
 优化在后台执行，任务成功提交返回 HTTP 202：
@@ -1350,6 +1527,7 @@ PPO 的观测是当前设计变量，动作是相对于变量范围的增量。�
   "message": "优化任务已提交",
   "data": {
     "id": "doe_20260622_001",
+    "run_id": "run_1a2b3c4d5e6f",
     "status": "queued",
     "stage": "queued",
     "progress": 0,
@@ -1366,6 +1544,7 @@ PPO 的观测是当前设计变量，动作是相对于变量范围的增量。�
 | `code` | integer | 成功固定为0 |
 | `message` | string | 成功为 `优化任务已提交` |
 | `data.id` | string | DOE 唯一标识 |
+| `data.run_id` | string | 本次新建的优化轮次，前缀为 `run_`，保存后用于第12节收敛曲线查询与第11节历史结果定位 |
 | `data.status` | string | 初始状态，固定为 `queued` |
 | `data.stage` | string | 初始阶段，固定为 `queued` |
 | `data.progress` | integer | 初始进度，固定为0 |
@@ -1375,6 +1554,8 @@ PPO 的观测是当前设计变量，动作是相对于变量范围的增量。�
 | `data.objectives` | string array | 本次优化目标名称 |
 
 HTTP 202 只表示任务已接受。算法完成、失败或中止状态通过优化查询接口获取。
+每次重新优化返回新的 `data.run_id`。客户端应在提交成功后更新所展示的优化轮次，
+轮询第11节状态并使用第12节 `run_id` 查询同一轮曲线，不能继续展示上一轮的曲线。
 NSGA-II 和 PPO 的结果均保存为无表头 TSV，字段顺序为设计变量、目标变量、`feasible`。
 NSGA-II 会在单次运行内缓存已经评估的设计变量；同批候选解先去重，未缓存候选解按代批量送入
 代理模型。该处理只减少重复推理和并行调度开销，不改变目标方向、约束或选择、交叉、变异语义。
@@ -1413,9 +1594,21 @@ DOE 没有可用代理模型或优化已在运行时返回 HTTP 409：
 
 | 失败响应字段 | 类型 | 说明 |
 |---|---|---|
-| `code` | integer | 参数错误为1，DOE 不存在为404，状态冲突为409 |
+| `code` | integer | 参数错误为1，DOE或指定训练轮次不存在为404，状态冲突为409 |
 | `message` | string | 具体错误原因 |
 | `data` | object | 失败时为空对象 |
+
+指定不存在或不属于本DOE的训练轮次返回 HTTP 404：
+
+```json
+{"code": 404, "message": "训练轮次不存在：train_missing", "data": {}}
+```
+
+指定尚未完成的历史训练轮次返回 HTTP 409：
+
+```json
+{"code": 409, "message": "所选训练轮次尚未完成", "data": {}}
+```
 
 
 ## 10 中止优化任务
@@ -1523,6 +1716,8 @@ DOE 不存在时返回 HTTP 404：
 
 接口根据 DOE 唯一标识查询该 DOE 下最近一次优化的状态、提交参数和执行结果。GET 请求
 不使用 JSON 请求体，`id` 通过查询参数传递。
+本接口不读取 query `run_id`，不能通过它改变顶层 `request/result` 的轮次。
+历史查询方式是在 `data.history` 中按 `run_id` 选择记录，再读取该记录的 `result`。
 
 **请求字段说明**：
 
@@ -1593,8 +1788,14 @@ GET /api/v1/hust/doe/optimize/getById?id=doe_20260622_001
 | `data.progress` | integer | 当前优化进度，范围0到100 |
 | `data.request` | object或null | 后端归一化后的本次优化请求，尚未提交时为 `null` |
 | `data.result` | object或null | 优化完成后的结果索引，未完成或失败时为 `null` |
-| `data.current_run_id` | string或null | 最近一次提交的优化运行版本标识 |
-| `data.history` | object array | 按提交顺序保存的全部优化运行；每项包含 `run_id/status/stage/progress/request/result/created_at/updated_at` |
+| `data.current_run_id` | string或null | 最近一次提交的优化轮次，来自提交响应的 `data.run_id`；服务重启收敛中断状态后可为空，不表示历史被清空 |
+| `data.history` | object array | 按提交顺序保存的全部优化轮次，尚未提交时为空数组 |
+| `data.history[].run_id` | string | 优化轮次，用于定位该条记录及查询第12节曲线 |
+| `data.history[].status/stage/progress` | string / string / number | 该轮状态、阶段、进度，不一定与顶层当前状态一致 |
+| `data.history[].request` | object | 该轮归一化请求，结构与顶层 `request` 一致，不包含模型文件路径 |
+| `data.history[].result` | object或null | 该轮结果，结构与顶层 `result` 一致，未产出结果时为null |
+| `data.history[].error` | string或null | 该轮记录的错误信息，历史记录可能保留内部异常，不等同于顶层通用失败提示 |
+| `data.history[].created_at/updated_at` | string | 该轮提交及更新时间，ISO 8601 格式 |
 | `data.result.optimization_id` | string | 后端生成的底层优化执行标识 |
 | `data.result.task_info` | object | 模型、算法、模式、字段顺序、规模和耗时信息 |
 | `data.result.task_info.result_columns` | string array | 无表头结果 TSV 的列顺序 |
@@ -1609,6 +1810,84 @@ GET /api/v1/hust/doe/optimize/getById?id=doe_20260622_001
 的数据获取接口。历史版本使用 `data.history[].result.resource_id` 读取。每次优化运行使用独立
 结果目录和资源索引，新运行不会覆盖旧版本。优化结果文件路径仅由服务端维护，不出现在 HTTP 响应中。查询接口
 返回 HTTP 200 且 `status=failed` 表示后台优化执行失败，`error` 只返回通用失败提示。
+
+`request` 是归一化执行配置，不是请求原文，字段如下。历史记录的 `request` 使用同一结构。
+
+| `request` 字段 | 类型 | 含义 |
+|---|---|---|
+| `training_run_id` | string或null | 实际绑定的训练轮次，历史兼容记录可能为空 |
+| `model_id` | string | 实际选用的模型标识 |
+| `requested_mode` | string | 客户端请求的 `single/multi/reinforcement_learning`，界面应使用它恢复模式 |
+| `mode` | string | 内部目标组合方式，仅为 `single/multi`；强化学习此字段为 `single` |
+| `optimizer` | string | 内部算法名 `nsga2/rl`，其中 `rl` 对应提交接口的 `ppo` |
+| `objective_names` | string array | 参与优化的输出目标顺序 |
+| `objective_config` | object array | 每项包含 `name/minimize/weight`；`minimize=true` 对应请求的 `direction=min`，多目标的weight可为空 |
+| `objective_normalization` | string | 目标标准化设置 |
+| `constraints` | object array | 每项含 `target_obj/constraint_kind/limit_value`，其中 `constraint_kind` 为 `lower/upper`；双边约束拆为两项 |
+| `all_var_list` | string array | 所选训练轮次的全部字段，先输入后输出 |
+| `input_var_count` | integer | 输入字段数量 |
+| `decision_var_names` | string array | 实际参与优化的输入变量顺序 |
+| `decision_var_indices` | integer array | 各设计变量在输入字段中的从0开始下标 |
+| `decision_bounds` | object array | 与设计变量对应的 `lower/upper` |
+| `optimizer_config` | object | 合并默认值后的算法参数 |
+| `output_config` | object | 内部输出配置，当前提交接口默认空对象 |
+
+例如，历史轮次摘要可能如下（仅展示 `data.history` 的一条记录）：
+
+```json
+{
+  "run_id": "run_1a2b3c4d5e6f",
+  "status": "finished",
+  "stage": "finished",
+  "progress": 100,
+  "request": {
+    "training_run_id": "train_1a2b3c4d5e6f",
+    "model_id": "tr_doe_20260622_001_2_a1b2c3",
+    "requested_mode": "multi",
+    "mode": "multi",
+    "objective_names": ["Y1", "Y2"],
+    "objective_config": [
+      {"name": "Y1", "minimize": true, "weight": null},
+      {"name": "Y2", "minimize": true, "weight": null}
+    ],
+    "objective_normalization": "standard",
+    "constraints": [],
+    "all_var_list": ["X1", "X2", "Y1", "Y2"],
+    "input_var_count": 2,
+    "decision_var_names": ["X1", "X2"],
+    "decision_var_indices": [0, 1],
+    "decision_bounds": [{"lower": 0, "upper": 1}, {"lower": 10, "upper": 15}],
+    "optimizer_config": {"pop_size": 100, "n_offsprings": 100, "eliminate_duplicates": true, "n_gen": 200, "seed": 42},
+    "output_config": {},
+    "optimizer": "nsga2"
+  },
+  "result": {
+    "optimization_id": "opt_doe_20260622_001_a1b2c3",
+    "task_info": {
+      "model_id": "tr_doe_20260622_001_2_a1b2c3",
+      "optimizer": "nsga2",
+      "mode": "multi",
+      "decision_var_names": ["X1", "X2"],
+      "objective_names": ["Y1", "Y2"],
+      "result_columns": ["X1", "X2", "Y1", "Y2", "feasible"],
+      "total_generation": 200,
+      "pop_size": 100,
+      "run_time_sec": 12.5
+    },
+    "resource_id": "tos-d4e5f60718293a4b5c6d",
+    "resource_type": "optimization",
+    "columns": ["X1", "X2", "Y1", "Y2", "feasible"],
+    "constraint_check": {"all_solution_feasible": true, "solution_count": 20}
+  },
+  "error": null,
+  "created_at": "2026-10-10T10:00:00+08:00",
+  "updated_at": "2026-10-10T10:00:13+08:00"
+}
+```
+
+取本轮工艺参数和目标值：使用同一条记录的 `result.resource_id` 调用第2节数据获取接口。
+取本轮收敛曲线：使用同一条记录的 `run_id` 调用第12节优化过程接口。
+两者是不同标识；结果尚未产出时，可能已有过程数据，但 `result` 仍为null。
 
 **失败响应字段说明**：
 
@@ -1802,6 +2081,267 @@ DOE 不存在返回 HTTP 404：
 | `code` | integer | 参数错误为1，DOE或轮次不存在为404，内部错误为500 |
 | `message` | string | 错误说明，内部错误仅返回 `服务内部错误` |
 | `data` | object | 失败时为空对象 |
+
+## 13 创建 DOE 任务
+
+**POST /api/v1/doe/add**
+
+请求和成功响应示例见本文开头的同名任务示例。请求也可使用空对象 `{}`，由服务端生成
+`id`，并将它用作默认名称。成功返回 HTTP 201，`data` 是任务摘要，不包含后台轮次标识。
+
+| 请求字段 | 类型 | 必填 | 说明 |
+|---|---|---:|---|
+| `id` | string | 否 | 唯一标识，未传时自动生成；仅字母、数字、下划线和短横线，长度1～128 |
+| `name` | string | 否 | 展示名称，允许重复，去首尾空白后须非空且不超过128字符；默认id |
+| `description` | string | 否 | 任务描述，默认空字符串 |
+| `metadata` | object | 否 | 扩展信息，默认空对象 |
+
+| 成功响应 `data` 字段 | 类型 | 说明 |
+|---|---|---|
+| `id/name/description/metadata` | string / string / string / object | 任务标识、名称、描述和扩展信息 |
+| `status/stage/progress` | string / string / number | 新建时分别为 `created/created/0`，列表查询时为任务聚合状态 |
+| `created_at/updated_at` | string | 创建和最近更新时间，ISO 8601 格式 |
+| `optimization_run_count` | integer | 优化历史轮次数量，新建时为0 |
+| `has_optimization_result` | boolean | 当前或任意历史轮次是否有优化结果，新建时为false |
+
+同id重复创建返回 HTTP 409：
+
+```json
+{"code": 409, "message": "DOE 任务已存在：doe_20260622_001", "data": {}}
+```
+
+名称为空返回 HTTP 400：
+
+```json
+{"code": 1, "message": "DOE 任务名称不能为空", "data": {}}
+```
+
+| 失败响应字段 | 类型 | 说明 |
+|---|---|---|
+| `code` | integer | 参数错误为1，id冲突为409 |
+| `message` | string | 具体错误原因 |
+| `data` | object | 失败时为空对象 |
+
+## 14 查询 DOE 列表
+
+**GET /api/v1/doe/list**
+
+```http
+GET /api/v1/doe/list
+```
+
+本接口无请求字段，不读取 JSON 请求体，也没有分页、排序或名称过滤参数。
+成功返回 HTTP 200，示例展示一个刚创建的任务：
+
+```json
+{
+  "code": 0,
+  "message": "ok",
+  "data": {
+    "items": [{
+      "id": "doe_20260622_001",
+      "name": "环件优化",
+      "description": "",
+      "metadata": {},
+      "status": "created",
+      "stage": "created",
+      "progress": 0,
+      "created_at": "2026-10-10T10:00:00+08:00",
+      "updated_at": "2026-10-10T10:00:00+08:00",
+      "optimization_run_count": 0,
+      "has_optimization_result": false
+    }],
+    "total": 1
+  }
+}
+```
+
+| 响应字段 | 类型 | 说明 |
+|---|---|---|
+| `code/message` | integer / string | 成功为 `0/ok` |
+| `data.items` | object array | 任务摘要列表，每项字段同第13节创建响应；无任务时为空数组 |
+| `data.total` | integer | 任务数量，与items长度一致 |
+
+内部错误返回 HTTP 500：
+
+```json
+{"code": 500, "message": "服务内部错误", "data": {}}
+```
+
+失败的 `code/message/data` 分别为错误码、错误说明和空对象。
+
+## 15 删除 DOE 任务
+
+**POST /api/v1/doe/delete**
+
+```json
+{"id": "doe_20260622_001"}
+```
+
+| 请求字段 | 类型 | 必填 | 说明 |
+|---|---|---:|---|
+| `id` | string | 是 | DOE唯一标识，不接受name或run_id替代 |
+
+成功返回 HTTP 200。注意本接口的 `data` 是被删除id的字符串，不是 `{ "id": ... }` 对象：
+
+```json
+{"code": 0, "message": "DOE 任务及相关文件已删除", "data": "doe_20260622_001"}
+```
+
+| 响应字段 | 类型 | 说明 |
+|---|---|---|
+| `code/message` | integer / string | 成功码及删除提示 |
+| `data` | string | 被删除的DOE唯一标识 |
+
+删除包含全部样本、数据集、训练轮次、模型和优化轮次，相关资源索引失效。
+训练或优化仍在运行时返回 HTTP 409，需先中止并等待后台退出：
+
+```json
+{"code": 409, "message": "任务正在运行，请先中止", "data": {}}
+```
+
+DOE不存在返回 HTTP 404：
+
+```json
+{"code": 404, "message": "DOE 任务不存在：doe_missing", "data": {}}
+```
+
+| 失败响应字段 | 类型 | 说明 |
+|---|---|---|
+| `code` | integer | 参数错误为1，不存在为404，运行冲突为409 |
+| `message/data` | string / object | 错误原因和空对象 |
+
+## 16 生成演示训练数据集
+
+**POST /api/v1/hust/doe/dataset/generate**
+
+仅用于联调或 Demo，不执行仿真，不应作为真实工艺评价数据。
+
+```json
+{
+  "id": "doe_20260622_001",
+  "param_ranges": {"X1": [0, 1], "X2": [10, 15]},
+  "input_names": ["X1", "X2"],
+  "target_names": ["Y1", "Y2"],
+  "n_samples": 100,
+  "seed": 42,
+  "noise_ratio": 0
+}
+```
+
+| 请求字段 | 类型 | 必填 | 说明 |
+|---|---|---:|---|
+| `id` | string | 是 | 已创建的DOE唯一标识 |
+| `param_ranges` | object | 是 | 输入名称到 `[lower, upper]` 的映射，须lower小于upper |
+| `input_names` | string array | 否 | 输入列顺序，与param_ranges包含相同名称且不重复，默认其键顺序 |
+| `target_names` | string array | 是 | 非空目标名称数组，名称不能与输入重复 |
+| `n_samples` | integer | 否 | 至少10，默认100 |
+| `seed` | integer | 否 | 随机种子，默认42 |
+| `noise_ratio` | number | 否 | 非负噪声比例，默认0 |
+
+成功返回 HTTP 200。当前响应不包含 `id`，端上保留请求中的DOE标识：
+
+```json
+{
+  "code": 0,
+  "message": "训练数据集生成完成",
+  "data": {
+    "all_var_list": ["X1", "X2", "Y1", "Y2"],
+    "input_var_count": 2,
+    "sample_count": 100,
+    "input_names": ["X1", "X2"],
+    "target_names": ["Y1", "Y2"],
+    "source_name": "demo_training_dataset.tsv",
+    "resource_id": "tos-a1b2c3d4e5f60718293",
+    "resource_type": "dataset",
+    "columns": ["X1", "X2", "Y1", "Y2"]
+  }
+}
+```
+
+| 响应字段 | 类型 | 说明 |
+|---|---|---|
+| `code/message` | integer / string | 成功码和生成提示 |
+| `data.all_var_list/columns` | string array | 无表头TSV列顺序，先输入后输出 |
+| `data.input_var_count/sample_count` | integer | 输入列数和样本行数 |
+| `data.input_names/target_names` | string array | 输入和输出名称 |
+| `data.source_name` | string | 数据来源名称，不是服务器路径 |
+| `data.resource_id/resource_type` | string | 数据资源索引，类型为dataset |
+
+使用第2节获取数据，将输入与输出按 `data_source` 结构组织后提交第4节训练接口。
+生成数据集不会自动创建训练轮次，也不会返回训练 `run_id`。
+
+样本数量不足返回 HTTP 400：
+
+```json
+{"code": 1, "message": "n_samples 必须是大于等于10的整数", "data": {}}
+```
+
+| 失败响应字段 | 类型 | 说明 |
+|---|---|---|
+| `code` | integer | 参数错误为1，DOE不存在为404 |
+| `message/data` | string / object | 错误原因和空对象 |
+
+## 17 查询模型超参数元数据
+
+**GET /api/v1/hust/doe/train/hyperparameters**
+
+```http
+GET /api/v1/hust/doe/train/hyperparameters
+```
+
+无请求参数，不需要DOE标识。成功返回 HTTP 200，下例仅展示 `data.models` 的PRG部分，
+实际响应同时包含PRG、SVR、RF、KM、DNN全部模型字段，完整参数见第4节：
+
+```json
+{
+  "code": 0,
+  "message": "ok",
+  "data": {
+    "models": {
+      "PRG": {
+        "degree": {"type": "integer", "default": 2, "minimum": 1, "maximum": 10, "label": "多项式阶数"},
+        "include_bias": {"type": "boolean", "default": false, "label": "包含偏置特征"},
+        "fit_intercept": {"type": "boolean", "default": true, "label": "拟合截距"}
+      }
+    }
+  }
+}
+```
+
+| 响应字段 | 类型 | 说明 |
+|---|---|---|
+| `code/message` | integer / string | 成功为0/ok |
+| `data.models` | object | 模型族名称到参数定义的映射，不是数组 |
+| `data.models.<模型>.<参数>.type` | string | 参数类型，例如integer、number、string、boolean或number_or_string |
+| `data.models.<模型>.<参数>.default` | 任意JSON值 | 默认值，具体类型由参数决定 |
+| `data.models.<模型>.<参数>.label` | string | 参数展示名称 |
+| `choices` | array | 支持的枚举值，适用时才返回 |
+| `minimum/maximum` | number | 含边界的下限/上限，适用时才返回 |
+| `exclusive_minimum/exclusive_maximum` | number | 不含边界的下限/上限，适用时才返回 |
+| `nullable` | boolean | 是否允许null，适用时才返回 |
+
+内部错误返回 HTTP 500：
+
+```json
+{"code": 500, "message": "服务内部错误", "data": {}}
+```
+
+失败的 `code/message/data` 分别为错误码、错误说明和空对象。
+
+## 18 客户端轮次调用顺序
+
+1. 创建DOE，保存 `data.id`
+2. 保存真实数据集或生成演示数据集，保存 `resource_id` 和字段顺序
+3. 提交训练，保存 `data.run_id` 为客户端的 `training_run_id`
+4. 使用 `GET /api/v1/hust/doe/train/progress?id=<id>&run_id=<training_run_id>` 轮询，完成后读取模型及评价
+5. 提交优化时传 `training_run_id`，可选 `model_id`，保存响应的 `data.run_id` 为客户端的 `optimization_run_id`
+6. 使用 `GET /api/v1/hust/doe/optimize/getById?id=<id>` 查询状态，在history中匹配 `optimization_run_id`
+7. 使用 `GET /api/v1/hust/doe/optimize/process?id=<id>&run_id=<optimization_run_id>` 查询该轮单条x/y曲线
+8. 完成后取该轮 `result.resource_id`，按第2节获取工艺参数、目标值和feasible，不能用run_id替代resource_id
+
+重新训练或优化时更新相应的客户端轮次变量，历史页面则保留选中的历史轮次。
+中止接口只有DOE的 `id`，作用于当前后台任务，不作用于历史页面选中的轮次。
 
 ## 落盘结构
 
