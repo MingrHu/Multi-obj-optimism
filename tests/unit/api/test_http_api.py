@@ -44,6 +44,43 @@ def test_add_list_progress_and_delete(monkeypatch, tmp_path):
     assert not (tmp_path / "doe_tasks" / "doe_1").exists()
 
 
+def test_optimization_process_queries_latest_historical_and_legacy_runs(monkeypatch, tmp_path):
+    from mobo.optimization.convergence import record_convergence, ga_callback
+    from types import SimpleNamespace
+    import numpy as np
+
+    client = _client(monkeypatch, tmp_path)
+    client.post("/api/v1/doe/add", json={"id": "curve"})
+    url = "/api/v1/hust/doe/optimize/process"
+    empty = client.get(url, query_string={"id": "curve"}).json["data"]
+    assert empty["run_id"] is None and empty["x"] == [] and not empty["available"]
+    assert empty["status"] == "not_started"
+    history = [
+        {"run_id": "old", "status": "finished", "request": {"requested_mode": "single"}},
+        {"run_id": "new", "status": "running", "request": {"requested_mode": "single"}},
+    ]
+    store.update_section("curve", "optimization", current_run_id="new", history=history)
+    path = store.task_dir("curve") / "optimization" / "runs" / "new" / "convergence.json"
+    with record_convergence(path, "single", []):
+        values = {"F": np.array([[2.5]]), "FEAS": np.array([[True]])}
+        ga_callback({})(SimpleNamespace(n_gen=1, pop=SimpleNamespace(get=values.get)))
+        data = client.get(url, query_string={"id": "curve"}).json["data"]
+        assert data["run_id"] == "new" and data["status"] == "running"
+        assert data["x"] == [1] and data["y"] == [2.5]
+        assert data["direction"] == "min" and "directions" not in data
+        assert data["point_count"] == 1 and data["available"]
+        assert "path" not in str(data) and "file_resource" not in data
+    old = client.get(url, query_string={"id": "curve", "run_id": "old"})
+    assert old.status_code == 200 and not old.json["data"]["available"]
+    assert old.json["data"]["y"] == []
+    assert client.get(url).status_code == 400
+    assert client.get(url, query_string={"id": "missing"}).status_code == 404
+    assert client.get(url, query_string={"id": "curve", "run_id": "missing"}).status_code == 404
+    assert client.get(url, query_string={"id": "curve", "run_id": "../bad"}).status_code == 400
+    store.update_section("curve", "optimization", current_run_id=None)
+    assert client.get(url, query_string={"id": "curve"}).json["data"]["run_id"] == "new"
+
+
 def test_add_allows_duplicate_names_but_rejects_duplicate_id(monkeypatch, tmp_path):
     client = _client(monkeypatch, tmp_path)
     client.post("/api/v1/doe/add", json={"id": "same", "name": "Unique Task"})

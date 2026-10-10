@@ -81,3 +81,30 @@ def test_parameterized_rl_writes_headerless_tsv(monkeypatch, tmp_path):
     first_line = output.read_text(encoding="utf-8").splitlines()[0]
     assert len(first_line.split("\t")) == 3
     assert not first_line.startswith("x\t")
+
+
+def test_real_ppo_process_callback_keeps_results_unchanged(monkeypatch, tmp_path):
+    import json
+    import stable_baselines3
+    from mobo.optimization.convergence import record_convergence
+
+    original = stable_baselines3.PPO
+
+    def small_ppo(*args, **kwargs):
+        return original(*args, n_steps=8, batch_size=4, n_epochs=1, **kwargs)
+
+    monkeypatch.setattr(stable_baselines3, "PPO", small_ppo)
+    request = _request()
+    request["optimizer_config"]["total_timesteps"] = 16
+    model_dir = str(_artifacts(tmp_path))
+    plain, recorded = tmp_path / "plain.tsv", tmp_path / "recorded.tsv"
+    run_parameterized_rl(request, model_dir=model_dir, output_path=str(plain))
+    path = tmp_path / "convergence.json"
+    with record_convergence(path, "reinforcement_learning", request["objective_config"]):
+        run_parameterized_rl(request, model_dir=model_dir, output_path=str(recorded))
+    assert plain.read_bytes() == recorded.read_bytes()
+    curve = json.loads(path.read_text())
+    assert curve["x"] == [1, 2, 3, 4, 5]
+    assert len(curve["y"]) == 5
+    assert np.isfinite(curve["y"]).all()
+    assert curve["x_label"] == "episode" and curve["direction"] == "max"

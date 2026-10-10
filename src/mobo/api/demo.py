@@ -182,7 +182,14 @@ def main() -> None:
     if not optimization["data"].get("history"):
         raise RuntimeError("优化接口未返回运行历史")
 
-    # 14 按字段获取优化结果 文件本身无表头
+    # 14 查询本轮优化过程 三种模式均返回一条x与y等长的曲线
+    curve = call("GET", "/api/v1/hust/doe/optimize/process", params={
+        "id": doe_id, "run_id": optimization["data"]["current_run_id"],
+    })["data"]
+    if not curve["available"] or not isinstance(curve["y"], list) or len(curve["y"]) != len(curve["x"]):
+        raise RuntimeError(f"优化过程曲线异常 {curve}")
+
+    # 15 按字段获取优化结果 文件本身无表头
     call("GET", "/api/v1/hust/doe/data/get", params=[
         ("id", doe_id),
         ("resource_id", optimization["data"]["result"]["resource_id"]),

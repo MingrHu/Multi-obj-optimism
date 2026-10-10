@@ -13,6 +13,7 @@ import numpy as np
 from gymnasium import spaces
 
 from mobo.optimization.ga.run import _load_model
+from mobo.optimization.convergence import rl_callback
 
 
 class SurrogatePPOEnv(gym.Env):
@@ -126,7 +127,9 @@ def run_parameterized_rl(request: dict[str, Any], *, model_dir: str, output_path
         learning_rate=float(config.get("learning_rate", 0.001)),
         seed=int(config.get("seed", 42)),
     )
-    model.learn(total_timesteps=int(config.get("total_timesteps", 20000)))
+    callback = rl_callback()
+    learn_options = {} if callback is None else {"callback": callback}
+    model.learn(total_timesteps=int(config.get("total_timesteps", 20000)), **learn_options)
     records = []
     for episode in range(int(config.get("evaluation_episodes", 10))):
         observation, _ = env.reset(seed=int(config.get("seed", 42)) + episode)

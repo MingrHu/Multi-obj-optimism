@@ -68,6 +68,7 @@ DOE 聚合服务。路由层位于 `api.handler`，实际处理层位于 `api.se
 | `optimization/rl` | `env.py` | `ForgingEnv`（Gymnasium 环境）|
 | `optimization/rl` | `run.py` | `train_and_optimize`（PPO）|
 | `optimization` | `service.py` | `run_optimization`/`query_optimization_status`：`opt_` 主键，参数化 NSGA-II 与结果落盘 |
+| `optimization` | `convergence.py` | 任务局部过程观测上下文，记录最佳加权目标、固定尺度参考点的HV和PPO回合奖励，原子保存轮次单条曲线，不改变优化计算 |
 | `optimization/ga` | `parameterized.py` | 由协议装配 NSGA-II，输出任务级 TSV 解集；历史 `NSGA2_run` 保持不变 |
 | `extraction` | `base.py` / `registry.py` | 原子能力层类型与注册/分派 |
 | `extraction` | `deform_targets.py` | DEFORM 目标提取原子函数（`_extract*`）|
@@ -134,6 +135,11 @@ Flask/Gunicorn worker 在接受请求前通过 `api.readiness` 一次性加载�
   `resource_id` 是服务端维护的 `tos-xxxxx` 不透明索引，端上无需访问或解析服务端文件路径。
 - HTTP 唯一协议入口是 [`DOE_HTTP_API.md`](api/DOE_HTTP_API.md)；Python 内部任务接口记录在
   [`interface_protocol.md`](api/interface_protocol.md)。
+- `GET /api/v1/hust/doe/optimize/process` 按 DOE 的 `id` 与可选 `run_id` 查询
+  `optimization/runs/<run_id>/convergence.json` 中的一维数组 `x` 和 `y`，三种模式均为单条曲线；
+  运行中原子更新，完成、中止或失败后保留，路径不暴露给客户端。单目标记录最佳可行
+  加权目标，多目标记录当前可行前沿的HV，采用训练目标标准化尺度及第一代确定的固定参考点；
+  PPO按已完成训练回合数记录最近100回合的平均累计奖励，方向由 `direction` 指明。
 
 ## 质量与安全流水线
 

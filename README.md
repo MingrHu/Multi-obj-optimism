@@ -200,6 +200,10 @@ python -m mobo.api.demo
 GET /api/v1/hust/doe/data/get?id=<doe_id>&resource_id=<tos-resource-id>&fields=temperature
 ```
 
+优化过程曲线使用 `GET /api/v1/hust/doe/optimize/process?id=<DOE标识>&run_id=<优化轮次>`
+查询，`run_id` 可省略。三种优化模式均只返回一条曲线，`x`、`y` 都是一维数组；支持运行中
+轮询及历史轮次查询，字段定义见 [DOE_HTTP_API.md](docs/api/DOE_HTTP_API.md) 第12节。
+
 ### 1. 训练 / 评估代理模型
 
 ```python

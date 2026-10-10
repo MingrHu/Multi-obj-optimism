@@ -716,6 +716,126 @@ class AlgorithmParameterDialog(QDialog):
         self.parameter_stack.setCurrentIndex(page_index)
 
 
+class ConvergenceDialog(QDialog):
+    """Theme-aware optimization convergence chart shown outside the main form."""
+
+    refresh_requested = Signal()
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent, Qt.WindowType.Window)
+        self.setWindowTitle("优化收敛曲线")
+        self.resize(920, 620)
+        self.curve_data: dict[str, Any] = {}
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(12)
+        self.summary = QLabel("正在读取优化过程数据…")
+        self.summary.setObjectName("Subtitle")
+        self.summary.setWordWrap(True)
+        layout.addWidget(self.summary)
+
+        self.chart_view = ZoomableChartView()
+        self.chart_view.setRenderHint(QPainter.RenderHint.Antialiasing)
+        self.chart_view.setMinimumSize(760, 440)
+        self.chart_view.double_clicked.connect(self.reset_view)
+        layout.addWidget(self.chart_view, 1)
+
+        self.hint = QLabel("滚轮或框选可缩放，双击图表可重置视图。")
+        self.hint.setObjectName("Caption")
+        self.hint.setWordWrap(True)
+        layout.addWidget(self.hint)
+
+        buttons = QDialogButtonBox()
+        refresh = buttons.addButton("刷新曲线", QDialogButtonBox.ButtonRole.ActionRole)
+        reset = buttons.addButton("重置视图", QDialogButtonBox.ButtonRole.ActionRole)
+        close = buttons.addButton(QDialogButtonBox.StandardButton.Close)
+        refresh.clicked.connect(self.refresh_requested.emit)
+        reset.clicked.connect(self.reset_view)
+        close.clicked.connect(self.close)
+        layout.addWidget(buttons)
+
+    def set_curve(self, data: dict[str, Any]) -> None:
+        self.curve_data = dict(data)
+        chart = QChart()
+        run_id = str(data.get("run_id") or "尚未创建轮次")
+        chart.setTitle(f"优化收敛曲线 · {run_id}")
+        x_values = list(data.get("x") or [])
+        curves = data.get("y") if isinstance(data.get("y"), dict) else {}
+        directions = data.get("directions") if isinstance(data.get("directions"), dict) else {}
+        if isinstance(data.get("y"), list):
+            names = {"hypervolume": "HV超体积", "episode_reward_mean_100": "回合奖励均值",
+                     "best_feasible_weighted_objective": "加权目标函数"}
+            name = names.get(data.get("metric"), "收敛指标")
+            curves, directions = {name: data["y"]}, {name: data.get("direction")}
+        numeric_x = [finite_float(value) for value in x_values]
+        plotted_x: list[float] = []
+        plotted_y: list[float] = []
+
+        for name, values in curves.items():
+            series = QLineSeries()
+            direction = "越小越好" if directions.get(name) == "min" else "越大越好"
+            series.setName(f"{name}（{direction}）")
+            for x_value, y_value in zip(numeric_x, list(values or []), strict=False):
+                number = finite_float(y_value)
+                if x_value is None or number is None:
+                    continue
+                series.append(x_value, number)
+                plotted_x.append(x_value)
+                plotted_y.append(number)
+            chart.addSeries(series)
+
+        axis_x = QValueAxis()
+        axis_x.setTitleText(
+            {"generation": "迭代代数", "episode": "训练回合数"}.get(
+                data.get("x_label"), "训练时间步"
+            )
+        )
+        axis_x.setLabelFormat("%.0f")
+        axis_y = QValueAxis()
+        axis_y.setTitleText(
+            {"episode_reward_mean_100": "回合奖励均值", "hypervolume": "HV超体积"}.get(
+                data.get("metric"), "目标函数值"
+            )
+        )
+        chart.addAxis(axis_x, Qt.AlignmentFlag.AlignBottom)
+        chart.addAxis(axis_y, Qt.AlignmentFlag.AlignLeft)
+        for series in chart.series():
+            series.attachAxis(axis_x)
+            series.attachAxis(axis_y)
+        self._set_axis_range(axis_x, plotted_x, fallback=(0.0, 1.0))
+        self._set_axis_range(axis_y, plotted_y, fallback=(0.0, 1.0))
+        chart.legend().setVisible(bool(curves))
+        chart.legend().setAlignment(Qt.AlignmentFlag.AlignBottom)
+        style_chart(chart, hide_legend=not bool(curves))
+        self.chart_view.setChart(chart)
+
+        status = status_view(str(data.get("status") or "not_started")).text
+        point_count = int(data.get("point_count") or len(x_values))
+        if data.get("available"):
+            self.summary.setText(f"运行版本：{run_id}　状态：{status}　记录点：{point_count}")
+            self.hint.setText("曲线运行中会自动刷新；滚轮或框选可缩放，双击可重置视图。")
+        else:
+            self.summary.setText(f"运行版本：{run_id}　状态：{status}")
+            self.hint.setText("当前轮次尚无收敛数据；优化开始产生迭代记录后可刷新查看。")
+
+    @staticmethod
+    def _set_axis_range(axis: QValueAxis, values: list[float], fallback: tuple[float, float]) -> None:
+        if not values:
+            axis.setRange(*fallback)
+            return
+        lower, upper = min(values), max(values)
+        padding = (upper - lower) * 0.06 if upper != lower else max(abs(lower) * 0.06, 1.0)
+        axis.setRange(lower - padding, upper + padding)
+
+    def reset_view(self) -> None:
+        self.chart_view.chart().zoomReset()
+
+    def apply_display_mode(self) -> None:
+        if self.curve_data:
+            self.set_curve(self.curve_data)
+
+
 class NumericDelegate(QStyledItemDelegate):
     """Use a bounded floating-point editor instead of unrestricted text."""
 
@@ -2681,6 +2801,10 @@ class OptimizationPage(QWidget, AsyncMixin):
         self.selection_revision = 0
         self.doe_refresh_in_flight = False
         self.current_training_run_id = ""
+        self.current_model_id = ""
+        self.current_optimization_run_id = ""
+        self.convergence_request_in_flight = False
+        self.convergence_dialog: ConvergenceDialog | None = None
         layout = QVBoxLayout(self)
         layout.setContentsMargins(28, 24, 28, 24)
         layout.setSpacing(16)
@@ -2706,19 +2830,25 @@ class OptimizationPage(QWidget, AsyncMixin):
         self.training_run = QComboBox()
         self.training_run.setPlaceholderText("请选择已完成训练轮次")
         self.training_run.activated.connect(self._optimization_training_run_selected)
+        self.model_selector = QComboBox()
+        self.model_selector.setPlaceholderText("请先选择训练轮次")
+        self.model_selector.setEnabled(False)
+        self.model_selector.activated.connect(self._optimization_model_selected)
         form.addWidget(QLabel("优化任务 / DOE"), 0, 0)
         form.addWidget(self.doe_id, 0, 1)
         form.addWidget(self.refresh_doe_button, 0, 2)
         form.addWidget(QLabel("训练轮次"), 1, 0)
         form.addWidget(self.training_run, 1, 1, 1, 2)
-        form.addWidget(QLabel("优化模式"), 2, 0)
-        form.addWidget(self.mode, 2, 1)
-        form.addWidget(QLabel("优化算法"), 3, 0)
-        form.addWidget(self.algorithm, 3, 1)
+        form.addWidget(QLabel("代理模型"), 2, 0)
+        form.addWidget(self.model_selector, 2, 1, 1, 2)
+        form.addWidget(QLabel("优化模式"), 3, 0)
+        form.addWidget(self.mode, 3, 1)
+        form.addWidget(QLabel("优化算法"), 4, 0)
+        form.addWidget(self.algorithm, 4, 1)
         self.algorithm_parameter_button = QPushButton("设置参数（默认）")
         self.algorithm_parameter_button.clicked.connect(self.open_algorithm_parameters)
-        form.addWidget(QLabel("算法参数"), 4, 0)
-        form.addWidget(self.algorithm_parameter_button, 4, 1)
+        form.addWidget(QLabel("算法参数"), 5, 0)
+        form.addWidget(self.algorithm_parameter_button, 5, 1)
         config_layout.addLayout(form)
         self.algorithm_parameter_hint = QLabel()
         self.algorithm_parameter_hint.setObjectName("Caption")
@@ -2824,8 +2954,11 @@ class OptimizationPage(QWidget, AsyncMixin):
         self.stop_button.setObjectName("Danger")
         self.stop_button.clicked.connect(self.stop_optimization)
         self.stop_button.setEnabled(False)
+        self.convergence_button = QPushButton("查看收敛曲线")
+        self.convergence_button.clicked.connect(self.show_convergence)
         buttons.addWidget(self.start_button)
         buttons.addWidget(self.stop_button)
+        buttons.addWidget(self.convergence_button)
         buttons.addStretch()
         status_layout.addLayout(buttons)
         status_layout.addStretch()
@@ -2964,7 +3097,15 @@ class OptimizationPage(QWidget, AsyncMixin):
         revision = self.selection_revision
         doe_id = str(self.doe_id.currentData() or "").strip()
         self.current_training_run_id = ""
+        self.current_model_id = ""
+        self.current_optimization_run_id = ""
+        self.convergence_request_in_flight = False
+        self.convergence_button.setText("查看收敛曲线")
         self.training_run.clear()
+        self.model_selector.clear()
+        self.model_selector.setEnabled(False)
+        if self.convergence_dialog is not None:
+            self.convergence_dialog.close()
         if not doe_id:
             self.set_schema({})
             self.optimization_state = "not_started"
@@ -3000,6 +3141,7 @@ class OptimizationPage(QWidget, AsyncMixin):
                 lambda message: self._training_schema_failed(doe_id, revision, message),
             )
             return
+        self._populate_optimization_models(data)
         inputs = list(data.get("input_bounds") or [])
         input_names = list(data.get("input_names") or [])
         targets = list(data.get("target_names") or [])
@@ -3050,12 +3192,53 @@ class OptimizationPage(QWidget, AsyncMixin):
         self.training_run.blockSignals(False)
         self.training_run.setEnabled(bool(history))
 
+    def _populate_optimization_models(self, data: dict[str, Any]) -> None:
+        models = [item for item in data.get("models") or [] if item.get("model_id")]
+        selected = self.current_model_id
+        scored = [item for item in models if item.get("score") is not None]
+        best = max(scored, key=lambda item: float(item["score"])) if scored else None
+        automatic = "自动选择最高分"
+        if best is not None:
+            automatic += (
+                f"（{best.get('model_family', '模型')} · {float(best['score']):.3f}）"
+            )
+        self.model_selector.blockSignals(True)
+        self.model_selector.clear()
+        self.model_selector.addItem(automatic, "")
+        self.model_selector.setItemData(
+            0, "不指定 model_id，由后端选择当前训练轮次中平均评分最高的模型",
+            Qt.ItemDataRole.ToolTipRole,
+        )
+        for model in models:
+            model_id = str(model["model_id"])
+            family = str(model.get("model_family") or "模型")
+            score = model.get("score")
+            score_text = f"综合评分 {float(score):.3f}" if score is not None else "尚无评分"
+            self.model_selector.addItem(f"{family} · {score_text} · {model_id}", model_id)
+            self.model_selector.setItemData(
+                self.model_selector.count() - 1,
+                f"模型 ID：{model_id}",
+                Qt.ItemDataRole.ToolTipRole,
+            )
+        index = self.model_selector.findData(selected)
+        self.model_selector.setCurrentIndex(index if index >= 0 else 0)
+        self.current_model_id = str(self.model_selector.currentData() or "")
+        self.model_selector.blockSignals(False)
+        self.model_selector.setEnabled(bool(models))
+
+    def _optimization_model_selected(self, _index: int) -> None:
+        self.current_model_id = str(self.model_selector.currentData() or "")
+        self.validate_configuration()
+
     def _optimization_training_run_selected(self, _index: int) -> None:
         doe_id = self.current_doe_id()
         run_id = str(self.training_run.currentData() or "")
         if not doe_id or not run_id:
             return
         self.current_training_run_id = run_id
+        self.current_model_id = ""
+        self.model_selector.clear()
+        self.model_selector.setEnabled(False)
         revision = self.selection_revision
         self.optimization_state = "loading"
         self.schema_hint.setText(f"正在加载训练轮次 {run_id}…")
@@ -3283,6 +3466,9 @@ class OptimizationPage(QWidget, AsyncMixin):
             self.start_button.setText("启动优化")
         self.start_button.setEnabled(ready and not active)
         self.stop_button.setEnabled(self.optimization_state in {"queued", "running"})
+        self.convergence_button.setEnabled(
+            bool(self.current_doe_id()) and not self.convergence_request_in_flight
+        )
 
     def _cell_rows(self, table: DataTable) -> list[list[str]]:
         rows = [[cell.strip() for cell in row] for row in table.rows()]
@@ -3368,6 +3554,8 @@ class OptimizationPage(QWidget, AsyncMixin):
             "decision_variables": variables,
             "algorithm": {"name": self.algorithm.currentData(), "params": params},
         }
+        if self.current_model_id:
+            payload["model_id"] = self.current_model_id
         self.start_button.setEnabled(False)
         self.has_completed_optimization = False
         self.optimization_state = "queued"
@@ -3380,9 +3568,10 @@ class OptimizationPage(QWidget, AsyncMixin):
             lambda message: self._failed(doe_id, revision, message),
         )
 
-    def _started(self, doe_id: str, revision: int, _data: dict[str, Any]) -> None:
+    def _started(self, doe_id: str, revision: int, data: dict[str, Any]) -> None:
         if doe_id != self.current_doe_id() or revision != self.selection_revision:
             return
+        self.current_optimization_run_id = str(data.get("run_id") or "")
         self.timer.start()
         self.poll()
 
@@ -3425,6 +3614,12 @@ class OptimizationPage(QWidget, AsyncMixin):
     def update_progress(self, data: dict[str, Any]) -> None:
         state = str(data.get("status", "not_started"))
         self.optimization_state = state
+        history = list(data.get("history") or [])
+        self.current_optimization_run_id = str(
+            data.get("current_run_id")
+            or (history[-1].get("run_id") if history else "")
+            or self.current_optimization_run_id
+        )
         self.has_completed_optimization = state == "finished" and bool(data.get("result"))
         set_status(self.status_label, state)
         raw_updated_at = data.get("updated_at")
@@ -3436,8 +3631,73 @@ class OptimizationPage(QWidget, AsyncMixin):
             self.timer.stop()
         self._refresh_optimization_actions()
 
+        if self.convergence_dialog is not None and self.convergence_dialog.isVisible():
+            self._request_convergence(show_dialog=False)
+
+    def show_convergence(self) -> None:
+        if not self.current_doe_id():
+            self.show_error("请先选择 DOE")
+            return
+        self._request_convergence(show_dialog=True)
+
+    def _request_convergence(self, *, show_dialog: bool) -> None:
+        doe_id = self.current_doe_id()
+        if not doe_id or self.convergence_request_in_flight:
+            return
+        revision = self.selection_revision
+        run_id = self.current_optimization_run_id or None
+        self.convergence_request_in_flight = True
+        self.convergence_button.setText("正在读取曲线…")
+        self._refresh_optimization_actions()
+        self.run_async(
+            lambda: self.client_provider().optimization_process(doe_id, run_id),
+            lambda data: self._convergence_loaded(
+                doe_id, revision, data, show_dialog=show_dialog
+            ),
+            lambda message: self._convergence_failed(
+                doe_id, revision, message, show_dialog=show_dialog
+            ),
+        )
+
+    def _convergence_loaded(
+        self, doe_id: str, revision: int, data: dict[str, Any], *, show_dialog: bool
+    ) -> None:
+        if doe_id != self.current_doe_id() or revision != self.selection_revision:
+            return
+        self.convergence_request_in_flight = False
+        self.convergence_button.setText("查看收敛曲线")
+        self.current_optimization_run_id = str(
+            data.get("run_id") or self.current_optimization_run_id
+        )
+        if self.convergence_dialog is None:
+            self.convergence_dialog = ConvergenceDialog(self)
+            self.convergence_dialog.refresh_requested.connect(
+                lambda: self._request_convergence(show_dialog=False)
+            )
+        self.convergence_dialog.set_curve(data)
+        if show_dialog or not self.convergence_dialog.isVisible():
+            self.convergence_dialog.show()
+        self.convergence_dialog.raise_()
+        self.convergence_dialog.activateWindow()
+        self._refresh_optimization_actions()
+
+    def _convergence_failed(
+        self, doe_id: str, revision: int, message: str, *, show_dialog: bool
+    ) -> None:
+        if doe_id != self.current_doe_id() or revision != self.selection_revision:
+            return
+        self.convergence_request_in_flight = False
+        self.convergence_button.setText("查看收敛曲线")
+        self._refresh_optimization_actions()
+        if self.convergence_dialog is not None and self.convergence_dialog.isVisible():
+            self.convergence_dialog.hint.setText(f"收敛曲线读取失败：{message}")
+        elif show_dialog:
+            self.show_error(f"收敛曲线读取失败：{message}")
+
     def apply_display_mode(self) -> None:
         self.validate_configuration()
+        if self.convergence_dialog is not None:
+            self.convergence_dialog.apply_display_mode()
 
 
 class ResultsPage(QWidget, AsyncMixin):

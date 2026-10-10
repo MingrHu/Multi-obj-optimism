@@ -14,6 +14,10 @@
     },
     {
       "method": "GET",
+      "path": "/api/v1/hust/doe/optimize/process"
+    },
+    {
+      "method": "GET",
       "path": "/api/v1/hust/doe/train/hyperparameters"
     },
     {
@@ -129,6 +133,7 @@
     "extraction/registry.py",
     "extraction/ring_roundness.py",
     "optimization/__init__.py",
+    "optimization/convergence.py",
     "optimization/ga/__init__.py",
     "optimization/ga/operators.py",
     "optimization/ga/parameterized.py",

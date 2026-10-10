@@ -17,6 +17,7 @@ from pymoo.algorithms.moo.nsga2 import NSGA2
 from pymoo.operators.mutation.pm import PM
 from pymoo.operators.sampling.rnd import FloatRandomSampling
 from pymoo.optimize import minimize
+from mobo.optimization.convergence import ga_callback
 
 from .operators import AdaptiveSBX
 from .problem import ConstraintSpec, ObjectiveSpec, SurrogateOptimizationProblem
@@ -167,6 +168,7 @@ def run_parameterized_nsga2(
         seed=config["seed"],
         verbose=False,
         save_history=False,
+        callback=ga_callback(request),
     )
 
     x_values = np.empty((0, len(request["decision_var_names"])), dtype=float)

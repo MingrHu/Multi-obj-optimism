@@ -263,5 +263,13 @@ class ApiClient:
     def optimization_progress(self, doe_id: str) -> dict[str, Any]:
         return self.request("GET", "/api/v1/hust/doe/optimize/getById", params={"id": doe_id})
 
+    def optimization_process(
+        self, doe_id: str, run_id: str | None = None,
+    ) -> dict[str, Any]:
+        params = {"id": doe_id}
+        if run_id:
+            params["run_id"] = run_id
+        return self.request("GET", "/api/v1/hust/doe/optimize/process", params=params)
+
     def stop_optimization(self, doe_id: str) -> dict[str, Any]:
         return self.request("POST", "/api/v1/hust/doe/optimize/stop", payload={"id": doe_id})

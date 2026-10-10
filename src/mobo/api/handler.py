@@ -249,6 +249,19 @@ def get_optimization():
     return _ok(service.get_optimization(request.args.get("id", "")))
 
 
+#  @brief  查询指定优化轮次的收敛曲线数据
+#  @return jsonify格式化信息 包含轮次 状态 一维数组x和y 指标与方向说明
+#  @param  id DOE唯一标识 GET查询参数 必填
+#  @param  run_id 优化轮次标识 GET查询参数 可选 默认最近一次提交的轮次
+#  @author Hu Mingrui
+#  @date   2026/10/10
+@doe_api.get("/api/v1/hust/doe/optimize/process")
+def get_optimization_process():
+    return _ok(service.get_optimization_process(
+        request.args.get("id", ""), request.args.get("run_id"),
+    ))
+
+
 #  @brief  注册API统一异常处理函数
 #  @return None
 #  @param  app Flask应用实例

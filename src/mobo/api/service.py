@@ -13,6 +13,7 @@ from typing import Any
 
 from mobo.common.logging import logger
 from mobo.common.task_store import task_workspace
+from mobo.optimization.convergence import empty_curve, read_curve, record_convergence
 from mobo.surrogate.hyperparameters import normalize_model_params, parameter_catalog
 
 from . import store
@@ -1330,7 +1331,9 @@ def _run_optimization(
             "pareto_txt_path": str(run_dir / output_name),
         }
         task_id = f"opt_{doe_id}_{uuid.uuid4().hex[:6]}"
-        with task_workspace(run_dir / "internal"):
+        with task_workspace(run_dir / "internal"), record_convergence(
+            run_dir / "convergence.json", request["requested_mode"], request["objective_config"],
+        ):
             response = run_optimization(request, optimizer=optimizer, task_id=task_id)
         if cancel.is_set():
             _update_optimization_run(
@@ -1415,6 +1418,33 @@ def stop_optimization(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def get_optimization_process(doe_id: str, run_id: str | None = None) -> dict[str, Any]:
+    # 轮次必须属于当前DOE 不接受客户端传入文件路径
+    state = store.load(store.validate_id(doe_id))
+    optimization = state.get("optimization") or {}
+    if run_id is not None:
+        store.validate_id(run_id)
+    history = optimization.get("history") or []
+    latest_id = optimization.get("current_run_id") or (history[-1]["run_id"] if history else None)
+    selected_id = run_id if run_id is not None else latest_id
+    run = next((item for item in history
+                if item.get("run_id") == selected_id), None)
+    if selected_id is not None and run is None:
+        raise NotFoundError(f"优化轮次不存在：{selected_id}")
+    request = (run or {}).get("request") or {}
+    mode = request.get("requested_mode", request.get("mode"))
+    curve = empty_curve(mode, request.get("objective_config", []))
+    if run is not None:
+        path = store.task_dir(doe_id) / "optimization" / "runs" / selected_id / "convergence.json"
+        if path.is_file():
+            curve = read_curve(path, mode, request.get("objective_config", []))
+    return {
+        "id": doe_id, "run_id": selected_id,
+        "status": (run or {}).get("status", "not_started"),
+        "available": bool(curve["x"]), "point_count": len(curve["x"]), **curve,
+    }
+
+
 def get_optimization(doe_id: str) -> dict[str, Any]:
     state = store.load(store.validate_id(doe_id))
     optimization = state.get("optimization") or {}
@@ -1460,7 +1490,7 @@ def get_optimization(doe_id: str) -> dict[str, Any]:
 __all__ = [
     "add_doe", "delete_doe", "delete_training", "generate_sample",
     "generate_training_dataset", "get_data", "get_optimization", "get_training_progress", "list_doe",
-    "save_training_dataset",
+    "save_training_dataset", "get_optimization_process",
     "start_inference", "start_optimization", "start_training",
     "stop_optimization", "stop_training",
 ]

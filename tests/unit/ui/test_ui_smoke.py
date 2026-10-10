@@ -1418,6 +1418,77 @@ def test_training_and_optimization_buttons_follow_runtime_state(monkeypatch):
     app.processEvents()
 
 
+def test_optimization_convergence_button_opens_theme_aware_chart(monkeypatch):
+    pytest.importorskip("PySide6")
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    module = importlib.import_module("work_platform.mobo_ui.app")
+    app = QApplication.instance() or QApplication([])
+    calls = []
+
+    class FakeClient:
+        def optimization_process(self, doe_id, run_id=None):
+            calls.append((doe_id, run_id))
+            return {
+                "id": doe_id,
+                "run_id": run_id,
+                "status": "running",
+                "available": True,
+                "point_count": 3,
+                "mode": "multi",
+                "metric": "hypervolume",
+                "x_label": "generation",
+                "x": [1, 2, 3],
+                "y": [0, 0.5, 0.8],
+                "direction": "max",
+            }
+
+    page = module.OptimizationPage(module.QThreadPool.globalInstance(), FakeClient)
+    page.run_async = lambda fn, done=None, failed=None: (done or (lambda _value: None))(fn())
+    page.doe_id.addItem("任务", "doe-1")
+    page.doe_id.setCurrentIndex(0)
+    page.current_optimization_run_id = "run-1"
+
+    page.show_convergence()
+
+    assert calls == [("doe-1", "run-1")]
+    assert page.convergence_dialog is not None
+    assert page.convergence_dialog.isVisible()
+    assert "记录点：3" in page.convergence_dialog.summary.text()
+    series = page.convergence_dialog.chart_view.chart().series()
+    assert [item.name() for item in series] == ["HV超体积（越大越好）"]
+    assert [item.count() for item in series] == [3]
+    page.convergence_dialog.close()
+    app.processEvents()
+
+
+@pytest.mark.parametrize("metric,x_label,direction,name", [
+    ("best_feasible_weighted_objective", "generation", "min", "加权目标函数"),
+    ("hypervolume", "generation", "max", "HV超体积"),
+    ("episode_reward_mean_100", "episode", "max", "回合奖励均值"),
+])
+def test_convergence_dialog_uses_one_curve_and_correct_axes(monkeypatch, metric, x_label, direction, name):
+    pytest.importorskip("PySide6")
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    from PySide6.QtCore import Qt
+
+    module = importlib.import_module("work_platform.mobo_ui.app")
+    app = QApplication.instance() or QApplication([])
+    dialog = module.ConvergenceDialog()
+    dialog.set_curve({"x": [1, 2], "y": [1, 2], "metric": metric,
+                      "x_label": x_label, "direction": direction, "available": True})
+    chart = dialog.chart_view.chart()
+    assert len(chart.series()) == 1
+    assert chart.series()[0].name().startswith(name)
+    assert chart.axes(Qt.Orientation.Horizontal)[0].titleText() == (
+        "训练回合数" if x_label == "episode" else "迭代代数"
+    )
+    dialog.close()
+    app.processEvents()
+
+
 def test_training_history_is_selectable_in_model_and_optimization_pages(monkeypatch):
     pytest.importorskip("PySide6")
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
@@ -1453,11 +1524,15 @@ def test_training_history_is_selectable_in_model_and_optimization_pages(monkeypa
     optimization_page._training_schema_loaded("doe-1", 0, {
         "selected_run_id": "train-new", "current_run_id": "train-new",
         "history": history,
+        "models": history[-1]["models"],
         "input_names": ["x"], "target_names": ["y"],
         "input_bounds": [{"name": "x", "lower": 0.0, "upper": 1.0}],
     })
     assert optimization_page.training_run.count() == 2
     assert optimization_page.current_training_run_id == "train-new"
+    assert optimization_page.model_selector.count() == 2
+    assert optimization_page.model_selector.currentData() == ""
+    assert "RF" in optimization_page.model_selector.itemText(1)
     app.processEvents()
 
 
@@ -1517,6 +1592,13 @@ def test_ga_and_ppo_have_separate_parameter_panels_and_payloads(monkeypatch):
     page.run_async = lambda fn, done=None, failed=None: captured.append(fn())
     page.doe_id.addItem("任务", "doe-1")
     page.doe_id.setCurrentIndex(0)
+    page.current_training_run_id = "train-1"
+    page._populate_optimization_models({"models": [
+        {"model_id": "model-rf", "model_family": "RF", "score": 0.91},
+        {"model_id": "model-svr", "model_family": "SVR", "score": 0.85},
+    ]})
+    page.model_selector.setCurrentIndex(page.model_selector.findData("model-svr"))
+    page._optimization_model_selected(page.model_selector.currentIndex())
     page.set_schema({
         "inputs": [{"name": "temperature", "lower": 900, "upper": 1100}],
         "outputs": ["load"],
@@ -1533,6 +1615,8 @@ def test_ga_and_ppo_have_separate_parameter_panels_and_payloads(monkeypatch):
     assert page.optimization_state == "queued"
     assert page.start_button.text() == "正在优化…"
     assert not page.start_button.isEnabled()
+    assert ga_payload["training_run_id"] == "train-1"
+    assert ga_payload["model_id"] == "model-svr"
     assert ga_payload["algorithm"]["params"]["pop_size"] == 80
     assert ga_payload["algorithm"]["params"]["n_offsprings"] == 30
 

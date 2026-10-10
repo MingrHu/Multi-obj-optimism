@@ -87,6 +87,24 @@ def test_api_client_generates_training_dataset(monkeypatch):
     assert result["resource_id"] == "tos-demo"
 
 
+def test_api_client_queries_optimization_process_with_optional_run(monkeypatch):
+    captured = []
+
+    def fake_urlopen(request, timeout):
+        captured.append(request.full_url)
+        return _Response({"code": 0, "message": "ok", "data": {"x": [1]}})
+
+    monkeypatch.setattr(core, "urlopen", fake_urlopen)
+    client = core.ApiClient("http://localhost:5000")
+
+    assert client.optimization_process("doe-1") == {"x": [1]}
+    assert client.optimization_process("doe-1", "run-2") == {"x": [1]}
+    assert captured[0].endswith("/api/v1/hust/doe/optimize/process?id=doe-1")
+    assert captured[1].endswith(
+        "/api/v1/hust/doe/optimize/process?id=doe-1&run_id=run-2"
+    )
+
+
 def test_api_client_saves_training_dataset_definition(monkeypatch):
     captured = {}
 

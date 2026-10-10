@@ -90,6 +90,20 @@ def test_run_parameterized_nsga2_end_to_end(tmp_path):
     assert summary["columns"] == ["x", "result", "feasible"]
     assert not output.read_text(encoding="utf-8").startswith("x\tresult\tfeasible\n")
 
+    import json
+    from mobo.optimization.convergence import record_convergence
+
+    curve_path = tmp_path / "convergence.json"
+    recorded_output = tmp_path / "recorded.tsv"
+    with record_convergence(curve_path, "multi", request["objective_config"]):
+        run_parameterized_nsga2(request, model_dir=str(model_dir), output_path=str(recorded_output))
+    assert recorded_output.read_bytes() == output.read_bytes()
+    curve = json.loads(curve_path.read_text())
+    assert curve["x"] == [1, 2]
+    assert len(curve["y"]) == 2
+    assert curve["metric"] == "hypervolume" and curve["direction"] == "max"
+    assert curve["hv_config"]["objective_names"] == ["result"]
+
 
 def test_run_weighted_single_nsga2_exports_raw_objectives(tmp_path):
     model_dir = tmp_path / "weighted_models"
@@ -127,3 +141,26 @@ def test_run_weighted_single_nsga2_exports_raw_objectives(tmp_path):
 
     assert summary["columns"] == ["x", "y1", "y2", "feasible"]
     assert all(len(line.split("\t")) == 4 for line in output.read_text().splitlines())
+
+    import json
+    from mobo.optimization.convergence import record_convergence
+
+    path = tmp_path / "convergence.json"
+    observed = tmp_path / "observed.tsv"
+    with record_convergence(path, "single", request["objective_config"]):
+        run_parameterized_nsga2(request, model_dir=str(model_dir), output_path=str(observed))
+    assert observed.read_bytes() == output.read_bytes()
+    curve = json.loads(path.read_text())
+    assert curve["x"] == [1, 2]
+    assert curve["y"][1] <= curve["y"][0]
+
+    request["mode"] = "multi"
+    multi_plain, multi_recorded = tmp_path / "multi_plain.tsv", tmp_path / "multi_recorded.tsv"
+    run_parameterized_nsga2(request, model_dir=str(model_dir), output_path=str(multi_plain))
+    with record_convergence(path, "multi", request["objective_config"]):
+        run_parameterized_nsga2(request, model_dir=str(model_dir), output_path=str(multi_recorded))
+    assert multi_plain.read_bytes() == multi_recorded.read_bytes()
+    multi_curve = json.loads(path.read_text())
+    assert multi_curve["x"] == [1, 2]
+    assert all(value > 0 for value in multi_curve["y"])
+    assert multi_curve["hv_config"]["objective_names"] == ["y1", "y2"]

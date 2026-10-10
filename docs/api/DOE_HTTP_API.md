@@ -43,6 +43,7 @@ Docker 环境可执行 `docker compose up --build -d`，容器会自动使用 Gu
 | **`POST /api/v1/hust/doe/optimize/start`** | **见下文** | **后台提交 NSGA-II、单目标或 RL 优化** |
 | **`POST /api/v1/hust/doe/optimize/stop`** | **`id`** | **发出优化中止请求** |
 | **`GET /api/v1/hust/doe/optimize/getById`** | **`id`** | **查询优化状态、参数与结果文件** |
+| **`GET /api/v1/hust/doe/optimize/process`** | **`id`、可选 `run_id`** | **查询单目标、多目标或强化学习的优化过程曲线** |
 
 除健康检查外，成功响应统一使用 `code/message/data`。GET 参数通过 query string 传递，
 POST 参数使用 JSON 对象；GET 接口不读取请求体
@@ -1645,6 +1646,163 @@ DOE 不存在时返回 HTTP 404：
 
 
 
+## 12 获取优化过程与收敛曲线
+
+**GET /api/v1/hust/doe/optimize/process**
+
+按 DOE 和优化轮次查询已经落盘的过程数据，支持运行中轮询、完成后查询及历史轮次查询。
+本接口只读，不启动优化，不暴露服务器路径，也不需要客户端读取任务文件。
+
+**请求示例与字段说明**：
+
+```text
+GET /api/v1/hust/doe/optimize/process?id=doe_20260622_001
+GET /api/v1/hust/doe/optimize/process?id=doe_20260622_001&run_id=run_a1b2c3d4e5f6
+```
+
+GET 参数放在 URL query 中，不使用 JSON 请求体。`run_id` 取自优化提交响应的
+`data.run_id` 或第11节 `data.history[].run_id`，不是代理模型标识或底层 `optimization_id`。
+
+| 请求字段 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---:|---|
+| `id` | query | string | 是 | DOE 唯一标识 |
+| `run_id` | query | string | 否 | 优化轮次标识，不传时查询最近一次提交的轮次，传入时必须属于当前 DOE |
+
+**成功响应示例与字段说明**：
+
+多目标优化返回 HTTP 200：
+
+```json
+{
+  "code": 0,
+  "message": "ok",
+  "data": {
+    "id": "doe_20260622_001",
+    "run_id": "run_a1b2c3d4e5f6",
+    "status": "running",
+    "available": true,
+    "point_count": 3,
+    "mode": "multi",
+    "metric": "hypervolume",
+    "x_label": "generation",
+    "x": [1, 2, 3],
+    "y": [0.0, 12.5, 15.2],
+    "direction": "max",
+    "hv_config": {
+      "objective_names": ["grain", "strength"],
+      "offset": [15.0, -650.0],
+      "scale": [5.0, 100.0],
+      "reference_point": [4.0, 4.0]
+    }
+  }
+}
+```
+
+三种模式均只返回一条曲线，`x` 和 `y` 都是一维数组，长度一致。
+端上直接将 `x[i]` 和 `y[i]` 配对绘图；单目标的 `null` 绘制为空缺而不是0。
+
+单目标模式的曲线字段示例，其余外层结构相同：
+
+```json
+{
+  "mode": "single",
+  "metric": "best_feasible_weighted_objective",
+  "x_label": "generation",
+  "x": [1, 2, 3],
+  "y": [0.8, 0.5, 0.4],
+  "direction": "min",
+  "hv_config": null
+}
+```
+
+强化学习模式的曲线字段示例，其余外层结构相同：
+
+```json
+{
+  "mode": "reinforcement_learning",
+  "metric": "episode_reward_mean_100",
+  "x_label": "episode",
+  "x": [1, 2, 3],
+  "y": [-35.0, -30.0, -28.0],
+  "direction": "max",
+  "hv_config": null
+}
+```
+
+| 成功响应字段 | 类型 | 说明 |
+|---|---|---|
+| `code` | integer | 成功固定为0 |
+| `message` | string | 成功固定为 `ok` |
+| `data.id` | string | DOE 唯一标识 |
+| `data.run_id` | string或null | 查询的优化轮次，尚未提交优化时为 `null` |
+| `data.status` | string | 该轮次状态，支持 `not_started/queued/running/stopping/stopped/finished/failed` |
+| `data.available` | boolean | 是否已记录至少一个横轴点，不代表已经找到可行解 |
+| `data.point_count` | integer | 横轴点数，与 `x` 长度一致 |
+| `data.mode` | string或null | `single/multi/reinforcement_learning`，未提交时为 `null` |
+| `data.metric` | string或null | 指标定义，见下表，尚未提交优化时为null |
+| `data.x_label` | string或null | `generation` 为遗传算法代数，`episode` 为 PPO 已完成训练回合数，尚未提交时为null |
+| `data.x` | integer array | 横轴点，按记录顺序递增 |
+| `data.y` | number或null array | 单条曲线的一维纵轴数组，长度与x一致 |
+| `data.direction` | string或null | 曲线优化方向，`min` 越小越好，`max` 越大越好，尚未提交时为null |
+| `data.hv_config` | object或null | 多目标HV的固定计算尺度和参考点，第一代记录前及其他模式为null |
+| `data.hv_config.objective_names` | string array | HV所用目标名称与坐标顺序 |
+| `data.hv_config.offset` | number array | 固定中心值，最小化目标使用训练均值，最大化目标使用训练均值的负值 |
+| `data.hv_config.scale` | number array | 固定尺度，使用模型目标标准化器的scale值，常量目标按标准化器规则使用1 |
+| `data.hv_config.reference_point` | number array | 标准化、统一最小化方向后的参考点，第一代确定后不再改变 |
+
+| 模式 | 指标与纵轴 | 记录时机与含义 |
+|---|---|---|
+| 单目标 | `best_feasible_weighted_objective`，目标函数值 | 每代记录截至当前代的最佳可行加权标准化目标值，最大化目标先取负号，再按权重求和，数值越小越好 |
+| 多目标 | `hypervolume`，HV超体积 | 每代记录当前种群可行解前沿的HV，衡量整体前沿质量，越大越好，不是某个原始目标值 |
+| 强化学习 | `episode_reward_mean_100`，平均回合累计奖励 | 每个训练回合结束时记录最近最多100个已完成回合的累计奖励均值，横轴为已完成回合数，奖励包含现有约束惩罚；不包含训练后的推理评价回合 |
+
+多目标没有唯一的标量目标函数，因此使用 HV 表示单条收敛曲线。计算时先将最大化目标取负，
+统一为最小化方向，再使用固定训练尺度：`z=(F-offset)/scale`。
+第一代用整个种群的有限目标值确定每个坐标的参考点：`r=max(3, 第一代z最大值)+1`，
+没有有限目标行时使用4，后续不重新归一化、不移动参考点。只使用满足全部约束的解计算HV，
+在任何坐标不优于参考点的解不贡献体积。HV定义参考
+[pymoo官方指标文档](https://pymoo.org/misc/indicators.html)。
+不同轮次可能具有不同模型尺度、目标数或参考点，不能直接比较HV绝对值。
+过程观测不改变算法的选择、目标、权重、约束或随机数；获取解对应的工艺参数和目标值仍使用第2节。
+
+单目标尚未发现可行解时纵轴为 `null`；发现后保留历史最佳值。
+多目标没有可行解或没有对参考点贡献体积的解时HV为0；当前前沿HV不保证单调。
+PPO 回合奖励均值也不保证单调，横轴不是epoch或训练步数；其实际训练步数可能因完整 rollout
+超过请求的 `total_timesteps`，因此记录的回合数量由实际训练决定。
+
+尚未优化、排队中尚无记录、旧轮次没有过程文件，或 PPO 尚未完成一个回合时，仍返回 HTTP 200，
+`available=false`、`point_count=0`、`x=[]`、`y=[]`。
+未提交优化时 `mode=null`、`metric=null`、`x_label=null`、`direction=null`、`hv_config=null`。
+中止或失败后保留已经写出的点，新轮次不会覆盖历史轮次。
+旧版单目标记录可转换成一维数组；旧版PPO单环境记录可将已完成回合顺序转换成横轴。
+旧版多目标逐目标最优值不能重建前沿和HV，返回空曲线，不伪造数据，需要重新优化后获取。
+
+**失败响应示例与字段说明**：
+
+未传 `id` 或标识格式非法返回 HTTP 400：
+
+```json
+{"code": 1, "message": "id 只能包含字母、数字、下划线、短横线，且长度为 1-128", "data": {}}
+```
+
+优化轮次不存在或不属于当前 DOE 返回 HTTP 404：
+
+```json
+{"code": 404, "message": "优化轮次不存在：run_missing", "data": {}}
+```
+
+DOE 不存在返回 HTTP 404：
+
+```json
+{"code": 404, "message": "DOE 任务不存在：doe_missing", "data": {}}
+```
+
+| 失败响应字段 | 类型 | 说明 |
+|---|---|---|
+| `code` | integer | 参数错误为1，DOE或轮次不存在为404，内部错误为500 |
+| `message` | string | 错误说明，内部错误仅返回 `服务内部错误` |
+| `data` | object | 失败时为空对象 |
+
 ## 落盘结构
 
 ```text
@@ -1663,6 +1821,7 @@ data/doe_tasks/<id>/
 │   └── training_result.json
 └── optimization/runs/<optimization_run_id>/
     ├── pareto_solutions.tsv|rl_solutions.tsv
+    ├── convergence.json
     ├── internal/
     └── optimization_result.json
 ```
