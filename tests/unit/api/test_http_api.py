@@ -227,7 +227,7 @@ def test_training_dataset_can_be_saved_without_starting_training(monkeypatch, tm
     response = client.post("/api/v1/hust/doe/dataset/save", json={
         "id": "saved_definition",
         "data_source": {
-            "source_name": "7050-training.txt",
+            "source_name": "7075-training.txt",
             "input_data": {
                 "labels": ["工件温度", "压下速度"],
                 "samples": [[900, 10], [1000, 30], [1100, 50]],
@@ -255,7 +255,7 @@ def test_training_dataset_can_be_saved_without_starting_training(monkeypatch, tm
         {"name": "压下速度", "lower": 10.0, "upper": 50.0},
     ]
     assert progress["dataset"]["resource_id"].startswith("tos-")
-    assert progress["dataset"]["source_name"] == "7050-training.txt"
+    assert progress["dataset"]["source_name"] == "7075-training.txt"
 
 
 def test_training_request_is_async(monkeypatch, tmp_path):

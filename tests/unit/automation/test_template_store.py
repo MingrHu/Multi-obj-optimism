@@ -5,7 +5,7 @@ import pytest
 
 import mobo.automation.template_store as template_store
 from mobo.automation.task_collection import (
-    RING_7050_SINGLE_TASK_1,
+    RING_7075_SINGLE_TASK_1,
     TC4_RING_MULTI_TASK_1,
 )
 
@@ -27,7 +27,7 @@ def test_single_template_round_trip_and_delete(monkeypatch, tmp_path):
     storage = tmp_path / "templates"
     monkeypatch.setattr(template_store, "AUTOMATION_TEMPLATES_DIR", storage)
     definition = replace(
-        RING_7050_SINGLE_TASK_1,
+        RING_7075_SINGLE_TASK_1,
         task_id="custom-single",
         name="自定义单工步",
         workspace=tmp_path / "workspace",
@@ -70,7 +70,7 @@ def test_multi_template_round_trip(monkeypatch, tmp_path):
 def test_template_ids_are_unique_and_builtins_are_read_only(monkeypatch, tmp_path):
     monkeypatch.setattr(template_store, "AUTOMATION_TEMPLATES_DIR", tmp_path / "templates")
     custom = replace(
-        RING_7050_SINGLE_TASK_1,
+        RING_7075_SINGLE_TASK_1,
         task_id="unique-task",
         name="唯一模板",
         workspace=tmp_path / "workspace",
@@ -84,7 +84,7 @@ def test_template_ids_are_unique_and_builtins_are_read_only(monkeypatch, tmp_pat
     assert template_store.load_template("unique-task").name == "更新名称"
 
     builtin = replace(
-        RING_7050_SINGLE_TASK_1,
+        RING_7075_SINGLE_TASK_1,
         template_key=_key(tmp_path / "builtin.KEY"),
     )
     with pytest.raises(ValueError, match="内置"):
@@ -94,10 +94,10 @@ def test_template_ids_are_unique_and_builtins_are_read_only(monkeypatch, tmp_pat
 
 
 def test_template_validation_rejects_unknown_objects_and_invalid_transition_key(tmp_path):
-    parameter = dict(RING_7050_SINGLE_TASK_1.parameters[0])
+    parameter = dict(RING_7075_SINGLE_TASK_1.parameters[0])
     parameter["object"] = "unknown_object"
     invalid_single = replace(
-        RING_7050_SINGLE_TASK_1,
+        RING_7075_SINGLE_TASK_1,
         task_id="invalid-single",
         template_key=_key(tmp_path / "single.KEY"),
         parameters=(parameter,),

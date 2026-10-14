@@ -34,7 +34,7 @@ from .multi_operation_service import (
 from .task_collection import (
     TASK_COLLECTION,
     TC4_RING_MULTI_TASK_1,
-    RING_7050_SINGLE_TASK_1,
+    RING_7075_SINGLE_TASK_1,
     GH4169_RING_SINGLE_TASK_1,
     MultiOperationTaskDefinition,
     SingleOperationTaskDefinition,
@@ -74,7 +74,7 @@ __all__ = [
     "TargetDefinition",
     "TASK_COLLECTION",
     "TC4_RING_MULTI_TASK_1",
-    "RING_7050_SINGLE_TASK_1",
+    "RING_7075_SINGLE_TASK_1",
     "GH4169_RING_SINGLE_TASK_1",
     "get_task_definition",
     "get_multi_operation_task_definition",

@@ -429,15 +429,15 @@ TC4_RING_MULTI_TASK_1 = MultiOperationTaskDefinition(
 )
 
 
-_7050_TEMPLATE_DIR = KEY_FILE_DIR / "7050_ring_single_task_1"
+_7075_TEMPLATE_DIR = KEY_FILE_DIR / "7075_ring_single_task_1"
 
 # 模板中的 GRNDAT 取自 RINGROLL.KEY，仅用于打通晶粒状态读写与求解验证；
-# 在用于 7050 晶粒演化预测前，必须替换为经试验标定的 7050 材料模型参数。
-RING_7050_SINGLE_TASK_1 = SingleOperationTaskDefinition(
-    task_id="7050-ring-single-task-1",
-    name="7050碾环单工步任务1",
-    workspace=AUTO_SINGLE_DIR / "7050_ring_single_task_1",
-    template_key=str(_7050_TEMPLATE_DIR / "7050.KEY"),
+# 在用于 7075 晶粒演化预测前，必须替换为经试验标定的 7075 材料模型参数。
+RING_7075_SINGLE_TASK_1 = SingleOperationTaskDefinition(
+    task_id="7075-ring-single-task-1",
+    name="7075碾环单工步任务1",
+    workspace=AUTO_SINGLE_DIR / "7075_ring_single_task_1",
+    template_key=str(_7075_TEMPLATE_DIR / "7075.KEY"),
     parameters=(
         {"name": "workpiece_temperature", "object": "workpiece", "range": [320.0, 450.0]},
         {"name": "ring_die_temperature", "object": "ring_dies", "range": [150.0, 250.0]},
@@ -492,7 +492,7 @@ GH4169_RING_SINGLE_TASK_1 = SingleOperationTaskDefinition(
 
 TASK_COLLECTION: Dict[str, MultiOperationTaskDefinition | SingleOperationTaskDefinition] = {
     TC4_RING_MULTI_TASK_1.task_id: TC4_RING_MULTI_TASK_1,
-    RING_7050_SINGLE_TASK_1.task_id: RING_7050_SINGLE_TASK_1,
+    RING_7075_SINGLE_TASK_1.task_id: RING_7075_SINGLE_TASK_1,
     GH4169_RING_SINGLE_TASK_1.task_id: GH4169_RING_SINGLE_TASK_1,
 }
 
@@ -526,7 +526,7 @@ __all__ = [
     "TargetDefinition",
     "TASK_COLLECTION",
     "TC4_RING_MULTI_TASK_1",
-    "RING_7050_SINGLE_TASK_1",
+    "RING_7075_SINGLE_TASK_1",
     "GH4169_RING_SINGLE_TASK_1",
     "get_task_definition",
     "get_multi_operation_task_definition",

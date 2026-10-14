@@ -66,8 +66,8 @@ def test_extract_sample_uses_task_parameter_column_order(tmp_path):
             "1125.00\t300.00\t1.25\n",
         ),
         (
-            "7050-ring-single-task-1",
-            "7050",
+            "7075-ring-single-task-1",
+            "7075",
             _constant_key("400", "200", "0.75"),
             "400.00\t200.00\t0.75\n",
         ),

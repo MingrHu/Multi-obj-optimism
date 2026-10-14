@@ -953,14 +953,14 @@ def test_single_operation_editor_builds_definition_from_ui(monkeypatch, tmp_path
     tasks = importlib.import_module("mobo.automation.task_collection")
     app = QApplication.instance() or QApplication([])
     editor = module.TaskDefinitionEditor(multi=False)
-    editor.load_definition(tasks.RING_7050_SINGLE_TASK_1)
+    editor.load_definition(tasks.RING_7075_SINGLE_TASK_1)
 
     editor.task_id.setText("custom-single")
     editor.task_name.setText("自定义单工步")
     editor.parameter_table.item(0, 3).setText("300")
     editor.parameter_table.item(0, 4).setText("480")
     definition = editor.build_definition(
-        tasks.RING_7050_SINGLE_TASK_1,
+        tasks.RING_7075_SINGLE_TASK_1,
         workspace=str(tmp_path / "single"),
         template_key=str(tmp_path / "template.KEY"),
     )
@@ -970,7 +970,7 @@ def test_single_operation_editor_builds_definition_from_ui(monkeypatch, tmp_path
     assert definition.workspace == tmp_path / "single"
     assert definition.template_key == str(tmp_path / "template.KEY")
     assert definition.parameters[0]["range"] == [300.0, 480.0]
-    assert definition.targets == tasks.RING_7050_SINGLE_TASK_1.targets
+    assert definition.targets == tasks.RING_7075_SINGLE_TASK_1.targets
     app.processEvents()
 
 
@@ -1012,12 +1012,12 @@ def test_task_editor_rejects_unknown_parameter_type(monkeypatch, tmp_path):
     tasks = importlib.import_module("mobo.automation.task_collection")
     app = QApplication.instance() or QApplication([])
     editor = module.TaskDefinitionEditor(multi=False)
-    editor.load_definition(tasks.RING_7050_SINGLE_TASK_1)
+    editor.load_definition(tasks.RING_7075_SINGLE_TASK_1)
     editor.parameter_table.cellWidget(0, 1).setCurrentText("not_registered")
 
     with pytest.raises(ValueError, match="未注册的参数类型"):
         editor.build_definition(
-            tasks.RING_7050_SINGLE_TASK_1,
+            tasks.RING_7075_SINGLE_TASK_1,
             workspace=str(tmp_path),
             template_key=str(tmp_path / "template.KEY"),
         )

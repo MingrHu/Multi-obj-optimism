@@ -10,7 +10,7 @@ import pytest
 import mobo.automation.task_collection as task_collection
 from mobo.automation.task_collection import (
     GH4169_RING_SINGLE_TASK_1,
-    RING_7050_SINGLE_TASK_1,
+    RING_7075_SINGLE_TASK_1,
     TC4_RING_MULTI_TASK_1,
     get_multi_operation_task_definition,
     get_single_operation_task_definition,
@@ -99,9 +99,13 @@ def test_gh4169_single_task_is_registered_with_requested_design_space():
     assert task.targets[-1].verified is False
 
 
-def test_7050_single_task_remains_registered():
-    task = get_single_operation_task_definition("7050-ring-single-task-1")
-    assert task is RING_7050_SINGLE_TASK_1
+def test_7075_single_task_remains_registered():
+    task = get_single_operation_task_definition("7075-ring-single-task-1")
+    assert task is RING_7075_SINGLE_TASK_1
+    assert task.name == "7075碾环单工步任务1"
+    assert Path(task.template_key).name == "7075.KEY"
+    assert Path(task.template_key).parent.name == "7075_ring_single_task_1"
+    assert Path(task.workspace).name == "7075_ring_single_task_1"
     assert [(item["name"], item["range"]) for item in task.parameters] == [
         ("workpiece_temperature", [320.0, 450.0]),
         ("ring_die_temperature", [150.0, 250.0]),
@@ -123,8 +127,8 @@ def test_typed_task_getters_reject_the_wrong_task_kind():
 
 
 @pytest.mark.integration
-def test_real_7050_template_has_grain_and_generates_parameterized_key(tmp_path):
-    task = RING_7050_SINGLE_TASK_1
+def test_real_7075_template_has_grain_and_generates_parameterized_key(tmp_path):
+    task = RING_7075_SINGLE_TASK_1
     task.validate()
     template = Path(task.template_key)
     text = template.read_text(encoding="utf-8")

@@ -187,11 +187,16 @@ TC4 碾环多工步任务由 `task_collection.TC4_RING_MULTI_TASK_1` 完整定�
 工步1不含参数绑定，预生成时字节复制；工步2、3将一个模具温度样本值
 展开到所有模具对象。`prepare_keys()` 只验证参数到 KEY 的映射，不调用 DEFORM。
 
-7050 和 GH4169 碾环单工步任务分别由 `task_collection.RING_7050_SINGLE_TASK_1` 与
+7075 和 GH4169 碾环单工步任务分别由 `task_collection.RING_7075_SINGLE_TASK_1` 与
 `task_collection.GH4169_RING_SINGLE_TASK_1` 定义，复用
 `ForgingTask` 的 KEY 生成、求解与提取流水线。一个 `ring_die_temperature` 样本值通过
 文档级替换原子能力同步作用于对象 2～5；GH4169 模板保留其自带的 GRNDAT 晶粒模型，
 初始和平均晶粒尺寸均为 50 μm；`material_fill` 是尚未确定计算方法的目标占位符。
+7075 任务 ID 为 `7075-ring-single-task-1`，模板位于
+`data/keyfile/7075_ring_single_task_1/7075.KEY`，默认工作区为
+`data/AUTO/single/7075_ring_single_task_1`。模板数据由各部署环境自行提供，不随 Git 同步；
+部署时须确保目录名和 KEY 文件名与上述路径一致。材料命名统一不改变模板中的数值参数，
+现有晶粒参数仍需经 7075 材料试验标定后才能用于真实材料预测。
 结果提取不再要求调用方提供最大步数：终态目标用空步号导出 DB 最新结果集；全过程目标
 先从 DEFORM 的 `Step Numbers` 查询 DB 实际保存步号，再逐帧导出。多工步全过程目标从
 各工步 checkpoint DB 提取，因此启用这类目标时必须保留工步检查点。

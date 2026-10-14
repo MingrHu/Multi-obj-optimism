@@ -137,7 +137,7 @@ DOE 的 `id` 是任务唯一标识，展示名称 `name` 允许重复。显式�
 
 ```json
 {
-  "name": "7050环件优化",
+  "name": "7075环件优化",
   "description": "第一组参数"
 }
 ```
@@ -150,7 +150,7 @@ DOE 的 `id` 是任务唯一标识，展示名称 `name` 允许重复。显式�
   "message": "DOE 任务已创建",
   "data": {
     "id": "doe_a1b2c3d4e5f67890",
-    "name": "7050环件优化",
+    "name": "7075环件优化",
     "description": "第一组参数",
     "metadata": {},
     "status": "created",
