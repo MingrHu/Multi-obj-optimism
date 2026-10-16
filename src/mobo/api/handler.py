@@ -186,6 +186,7 @@ def stop_training():
 #  @param  data_source.input_data 输入标签和二维样本数组 必填
 #  @param  data_source.output_data 输出标签和二维样本数组 必填
 #  @param  models 待训练模型配置列表 可选 支持name和params
+#  @param  target_models 按输出名称配置的模型列表 可选 与models互斥
 #  @param  evaluation 模型评价配置 可选 支持enabled method n_splits random_state
 #  @param  data_file 兼容字段 服务端已有训练数据文件路径
 #  @param  all_var_list 兼容字段 输入变量和目标变量名称列表

@@ -95,6 +95,7 @@ from .theme import (
     style_chart,
     ui_asset_path,
 )
+from .ui_helpers import HelpButton, configure_scrollable_tabs
 
 
 def card(title: str | None = None) -> tuple[QFrame, QVBoxLayout]:
@@ -1576,13 +1577,21 @@ class ModelPage(QWidget, AsyncMixin):
         self.hovered_score_index: int | None = None
         self.score_series: QBarSeries | None = None
         self.hyperparameter_catalog: dict[str, dict[str, dict[str, Any]]] = {}
+        self.model_families = ("PRG", "SVR", "RF", "KM", "DNN")
         self.model_params: dict[str, dict[str, Any]] = {
-            name: {} for name in ("PRG", "SVR", "RF", "KM", "DNN")
+            name: {} for name in self.model_families
         }
+        self.draft_model_selections = {"PRG", "SVR", "RF", "KM"}
+        self.target_model_selections: dict[str, set[str]] = {}
+        self.target_model_params: dict[str, dict[str, dict[str, Any]]] = {}
+        self.target_model_controls: dict[str, dict[str, Any]] = {}
+        self.active_model_target = ""
+        self.loading_target_model_config = False
+        self.models: dict[str, QCheckBox] = {}
         self.model_param_buttons: dict[str, QPushButton] = {}
         self.hyperparameters_loading = False
         self.hyperparameters_error = ""
-        self.pending_model_configuration: str | None = None
+        self.pending_model_configuration: tuple[str, str] | None = None
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -1629,16 +1638,20 @@ class ModelPage(QWidget, AsyncMixin):
         config_layout.addLayout(training_run_row)
         self.dataset = PathPicker("TXT / TSV / CSV 训练数据")
         self.dataset.changed.connect(self.load_dataset)
-        config_layout.addWidget(QLabel("训练数据文件（支持 TXT / TSV / CSV）"))
+        dataset_heading = QHBoxLayout()
+        dataset_heading.addWidget(QLabel("训练数据文件"))
+        dataset_heading.addWidget(HelpButton(
+            "训练数据文件",
+            "支持 TXT、TSV 和 CSV 文件。TXT/TSV 可以没有表头；"
+            "选择本地文件后会立即上传并绑定到当前 DOE。"
+            "“生成并载入演示数据”由当前 DOE 的后端生成数据。",
+            self,
+        ))
+        dataset_heading.addStretch()
+        config_layout.addLayout(dataset_heading)
         config_layout.addWidget(self.dataset)
         dataset_actions = QHBoxLayout()
-        dataset_hint = QLabel(
-            "TXT/TSV 可无表头；选择本地文件后会立即上传并绑定到当前 DOE。"
-            "演示数据由当前 DOE 后端生成。"
-        )
-        dataset_hint.setObjectName("Caption")
-        dataset_hint.setWordWrap(True)
-        dataset_actions.addWidget(dataset_hint, 1)
+        dataset_actions.addStretch()
         self.demo_button = QPushButton("生成并载入演示数据")
         self.demo_button.setMinimumWidth(176)
         self.demo_button.clicked.connect(self.load_demo_dataset)
@@ -1655,16 +1668,24 @@ class ModelPage(QWidget, AsyncMixin):
         self.input_count.setToolTip("修改后默认把前 N 列设为输入参数；可用“编辑字段”逐列指定。")
         self.input_count.valueChanged.connect(self._reset_default_roles)
         self.folds = QSpinBox()
-        self.folds.setRange(2, 20)
+        self.folds.setRange(1, 20)
         self.folds.setValue(5)
         input_row.addWidget(QLabel("默认输入列数"))
         input_row.addWidget(self.input_count)
         input_row.addSpacing(12)
-        input_row.addWidget(QLabel("交叉验证折数"))
+        input_row.addWidget(QLabel("评价折数"))
         input_row.addWidget(self.folds)
         self.edit_fields_button = QPushButton("编辑字段名称与角色")
         self.edit_fields_button.clicked.connect(self.edit_fields)
         input_row.addWidget(self.edit_fields_button)
+        input_row.addWidget(HelpButton(
+            "字段与评价设置",
+            "“默认输入列数”会把前 N 列设为输入，也可通过"
+            "“编辑字段名称与角色”逐列调整。\n\n"
+            "评价折数为 1 时，使用固定随机种子的 80% 训练集和 "
+            "20% 测试集；不小于 2 时使用 K 折交叉验证。",
+            self,
+        ))
         input_row.addStretch()
         config_layout.addLayout(input_row)
         self.schema_summary = QLabel("加载数据后可定义输入参数和输出目标")
@@ -1675,22 +1696,26 @@ class ModelPage(QWidget, AsyncMixin):
         self.save_hint.setObjectName("Caption")
         self.save_hint.setWordWrap(True)
         config_layout.addWidget(self.save_hint)
-        config_layout.addWidget(QLabel("待训练模型"))
-        model_grid = QGridLayout()
-        self.models: dict[str, QCheckBox] = {}
-        for column, name in enumerate(("PRG", "SVR", "RF", "KM", "DNN")):
-            checkbox = QCheckBox(name)
-            checkbox.setChecked(name in {"PRG", "SVR", "RF", "KM"})
-            self.models[name] = checkbox
-            model_grid.addWidget(checkbox, 0, column, Qt.AlignmentFlag.AlignCenter)
-            param_button = QPushButton("参数（默认）")
-            param_button.setEnabled(False)
-            param_button.setToolTip("勾选模型后可设置超参数；不设置时使用后端默认值。")
-            param_button.clicked.connect(partial(self.configure_model, name))
-            checkbox.toggled.connect(self._refresh_model_parameter_buttons)
-            self.model_param_buttons[name] = param_button
-            model_grid.addWidget(param_button, 1, column)
-        config_layout.addLayout(model_grid)
+        model_heading = QHBoxLayout()
+        model_heading.addWidget(QLabel("逐输出训练模型"))
+        model_heading.addWidget(HelpButton(
+            "逐输出训练模型",
+            "每个输出目标都独立保存候选模型和超参数。"
+            "先切换到对应输出标签，再勾选模型并设置参数。\n\n"
+            "输出较多或名称较长时，可用标签栏右侧箭头或鼠标滚轮"
+            "水平切换；悬停标签可查看完整输出名称。",
+            self,
+        ))
+        model_heading.addStretch()
+        config_layout.addLayout(model_heading)
+        self.model_target_tabs = configure_scrollable_tabs(QTabWidget())
+        self.model_target_tabs.currentChanged.connect(self._model_target_changed)
+        self.model_target = self.model_target_tabs
+        empty_model_page = QLabel("请先加载数据并定义输出目标")
+        empty_model_page.setObjectName("Caption")
+        empty_model_page.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.model_target_tabs.addTab(empty_model_page, "尚无输出")
+        config_layout.addWidget(self.model_target_tabs)
         button_row = QHBoxLayout()
         self.save_button = QPushButton("保存 DOE 配置")
         self.save_button.setToolTip("保存当前数据、字段名称以及输入/输出角色，不会启动训练。")
@@ -1734,7 +1759,7 @@ class ModelPage(QWidget, AsyncMixin):
         split.addWidget(status, 3)
         layout.addLayout(split)
 
-        tabs = QTabWidget()
+        tabs = configure_scrollable_tabs(QTabWidget())
         self.preview = DataTable()
         self.preview.enable_wide_columns()
         self.preview.setToolTip("字段较多时可横向滚动；拖动表头分隔线可调整列宽。")
@@ -1790,8 +1815,8 @@ class ModelPage(QWidget, AsyncMixin):
         self._refresh_model_parameter_buttons()
         pending = self.pending_model_configuration
         self.pending_model_configuration = None
-        if pending and pending in self.hyperparameter_catalog:
-            QTimer.singleShot(0, partial(self.configure_model, pending))
+        if pending and pending[1] in self.hyperparameter_catalog:
+            QTimer.singleShot(0, partial(self.configure_target_model, *pending))
 
     def _hyperparameters_failed(self, message: str) -> None:
         self.hyperparameters_loading = False
@@ -1804,35 +1829,212 @@ class ModelPage(QWidget, AsyncMixin):
         )
 
     def _refresh_model_parameter_buttons(self, _checked: bool | None = None) -> None:
-        for name, button in self.model_param_buttons.items():
-            count = len(self.model_params.get(name, {}))
-            if name in self.hyperparameter_catalog:
-                button.setText(f"参数（{count} 项）" if count else "参数（默认）")
-                button.setToolTip("设置该模型的超参数；留空时使用后端默认值。")
-                button.setEnabled(self.models[name].isChecked())
-            elif self.hyperparameters_loading:
-                button.setText("参数（加载中）")
-                button.setEnabled(False)
-            else:
-                button.setText("参数（重试）")
-                button.setToolTip(
-                    f"参数定义尚未加载，点击重试。{self.hyperparameters_error}"
+        for target, controls in self.target_model_controls.items():
+            params = self.target_model_params.get(target, {})
+            for name, button in controls["buttons"].items():
+                count = len(params.get(name, {}))
+                checkbox = controls["models"][name]
+                if name in self.hyperparameter_catalog:
+                    button.setText(f"参数（{count} 项）" if count else "参数（默认）")
+                    button.setToolTip(
+                        f"设置输出“{target}”使用 {name} 时的超参数。"
+                    )
+                    button.setEnabled(checkbox.isChecked())
+                elif self.hyperparameters_loading:
+                    button.setText("参数（加载中）")
+                    button.setEnabled(False)
+                else:
+                    button.setText("参数（重试）")
+                    button.setToolTip(
+                        f"参数定义尚未加载，点击重试。{self.hyperparameters_error}"
+                    )
+                    button.setEnabled(checkbox.isChecked())
+
+    def _model_selection_changed(self, _checked: bool | None = None) -> None:
+        if not self.loading_target_model_config:
+            self._save_current_model_target_config()
+        self._refresh_model_parameter_buttons()
+
+    def _target_model_selection_changed(
+        self, target: str, family: str, checked: bool,
+    ) -> None:
+        if self.loading_target_model_config:
+            return
+        selected = self.target_model_selections.setdefault(target, set())
+        if checked:
+            selected.add(family)
+        else:
+            selected.discard(family)
+        self._refresh_model_parameter_buttons()
+
+    def _save_current_model_target_config(self) -> None:
+        target = self.active_model_target
+        if not target:
+            return
+        self.target_model_selections[target] = {
+            name for name, checkbox in self.models.items() if checkbox.isChecked()
+        }
+        self.target_model_params[target] = {
+            name: dict(self.model_params.get(name, {})) for name in self.models
+        }
+
+    def _load_model_target_config(self, target: str) -> None:
+        controls = self.target_model_controls.get(target)
+        if not controls:
+            return
+        selected = self.target_model_selections.get(target, set())
+        params = self.target_model_params.setdefault(
+            target, {name: {} for name in self.model_families}
+        )
+        self.loading_target_model_config = True
+        try:
+            for name, checkbox in controls["models"].items():
+                checkbox.setChecked(name in selected)
+        finally:
+            self.loading_target_model_config = False
+        if target == self.active_model_target:
+            self.models = controls["models"]
+            self.model_param_buttons = controls["buttons"]
+            self.model_params = params
+        self._refresh_model_parameter_buttons()
+
+    def _model_target_changed(self, index: int) -> None:
+        self._save_current_model_target_config()
+        target = self.model_target_tabs.tabText(index) if index >= 0 else ""
+        self.active_model_target = target if target in self.target_model_controls else ""
+        if self.active_model_target:
+            self._load_model_target_config(self.active_model_target)
+
+    def _rebuild_model_target_tabs(
+        self, outputs: list[str], desired: str,
+    ) -> None:
+        self.model_target_tabs.blockSignals(True)
+        while self.model_target_tabs.count():
+            page = self.model_target_tabs.widget(0)
+            self.model_target_tabs.removeTab(0)
+            page.deleteLater()
+        self.target_model_controls = {}
+        for target in outputs:
+            page = QWidget()
+            page_layout = QVBoxLayout(page)
+            page_layout.setContentsMargins(12, 12, 12, 12)
+            model_controls_heading = QHBoxLayout()
+            model_controls_heading.addWidget(QLabel("候选模型与参数"))
+            model_controls_heading.addWidget(HelpButton(
+                f"输出“{target}”的模型设置",
+                "勾选要训练的候选模型，再点击对应的“参数”按钮"
+                "设置该输出下的独立超参数。未填写的参数使用后端默认值。",
+                page,
+            ))
+            model_controls_heading.addStretch()
+            page_layout.addLayout(model_controls_heading)
+            model_grid = QGridLayout()
+            checkboxes: dict[str, QCheckBox] = {}
+            buttons: dict[str, QPushButton] = {}
+            selected = self.target_model_selections[target]
+            for column, family in enumerate(self.model_families):
+                checkbox = QCheckBox(family)
+                checkbox.setChecked(family in selected)
+                checkbox.toggled.connect(
+                    partial(self._target_model_selection_changed, target, family)
                 )
-                button.setEnabled(self.models[name].isChecked())
+                checkboxes[family] = checkbox
+                model_grid.addWidget(
+                    checkbox, 0, column, Qt.AlignmentFlag.AlignCenter
+                )
+                button = QPushButton("参数（默认）")
+                button.setToolTip(
+                    f"设置输出“{target}”使用 {family} 时的超参数。"
+                )
+                button.clicked.connect(
+                    partial(self.configure_target_model, target, family)
+                )
+                buttons[family] = button
+                model_grid.addWidget(button, 1, column)
+            page_layout.addLayout(model_grid)
+            self.target_model_controls[target] = {
+                "models": checkboxes, "buttons": buttons,
+            }
+            tab_index = self.model_target_tabs.addTab(page, target)
+            self.model_target_tabs.setTabToolTip(tab_index, target)
+        index = outputs.index(desired)
+        self.model_target_tabs.setCurrentIndex(index)
+        self.model_target_tabs.blockSignals(False)
+        self.active_model_target = desired
+        self._load_model_target_config(desired)
+
+    def _sync_model_targets(self) -> None:
+        outputs = [
+            name for name, role in zip(self.headers, self.field_roles, strict=True)
+            if role == "output"
+        ]
+        if not outputs:
+            while self.model_target_tabs.count():
+                page = self.model_target_tabs.widget(0)
+                self.model_target_tabs.removeTab(0)
+                page.deleteLater()
+            empty_model_page = QLabel("请先加载数据并定义输出目标")
+            empty_model_page.setObjectName("Caption")
+            empty_model_page.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.model_target_tabs.addTab(empty_model_page, "尚无输出")
+            self.target_model_controls = {}
+            self.models = {}
+            self.model_param_buttons = {}
+            self.active_model_target = ""
+            return
+        self._save_current_model_target_config()
+        template_selected = (
+            set(self.target_model_selections.get(self.active_model_target, set()))
+            if self.active_model_target else set(self.draft_model_selections)
+        )
+        template_params = {
+            name: dict(self.model_params.get(name, {})) for name in self.model_families
+        }
+        for target in outputs:
+            self.target_model_selections.setdefault(target, set(template_selected))
+            self.target_model_params.setdefault(
+                target,
+                {name: dict(params) for name, params in template_params.items()},
+            )
+        desired = self.active_model_target if self.active_model_target in outputs else outputs[0]
+        current_tabs = [
+            self.model_target_tabs.tabText(index)
+            for index in range(self.model_target_tabs.count())
+            if self.model_target_tabs.tabText(index) in self.target_model_controls
+        ]
+        if current_tabs != outputs:
+            self._rebuild_model_target_tabs(outputs, desired)
+        else:
+            self.active_model_target = desired
+            self.model_target_tabs.blockSignals(True)
+            self.model_target_tabs.setCurrentIndex(outputs.index(desired))
+            self.model_target_tabs.blockSignals(False)
+            for target in outputs:
+                self._load_model_target_config(target)
+            self._load_model_target_config(desired)
 
     def configure_model(self, family: str) -> None:
+        if self.active_model_target:
+            self.configure_target_model(self.active_model_target, family)
+
+    def configure_target_model(self, target: str, family: str) -> None:
         schema = self.hyperparameter_catalog.get(family)
         if not schema:
-            self.pending_model_configuration = family
+            self.pending_model_configuration = (target, family)
             self.save_hint.setText("正在重新加载代理模型超参数定义…")
             self.load_hyperparameter_catalog()
             return
+        params = self.target_model_params.setdefault(
+            target, {name: {} for name in self.model_families}
+        )
         dialog = ModelHyperparameterDialog(
-            family, schema, self.model_params.get(family, {}), self
+            family, schema, params.get(family, {}), self
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
-        self.model_params[family] = dialog.configured_values
+        params[family] = dialog.configured_values
+        if target == self.active_model_target:
+            self.model_params = params
         self._refresh_model_parameter_buttons()
 
     def refresh_does(self) -> None:
@@ -1999,7 +2201,15 @@ class ModelPage(QWidget, AsyncMixin):
         self.headers = []
         self.rows = []
         self.field_roles = []
-        self.model_params = {name: {} for name in self.models}
+        self.model_params = {name: {} for name in self.model_families}
+        self.draft_model_selections = {"PRG", "SVR", "RF", "KM"}
+        self.target_model_selections = {}
+        self.target_model_params = {}
+        self.target_model_controls = {}
+        self.models = {}
+        self.model_param_buttons = {}
+        self.active_model_target = ""
+        self._sync_model_targets()
         self._refresh_model_parameter_buttons()
         self.configuration_dirty = False
         self.pending_configuration_save = False
@@ -2126,6 +2336,7 @@ class ModelPage(QWidget, AsyncMixin):
             f"输入参数（{len(inputs)}）：{', '.join(inputs) or '未定义'}  ·  "
             f"输出目标（{len(outputs)}）：{', '.join(outputs) or '未定义'}"
         )
+        self._sync_model_targets()
         self._refresh_training_actions()
 
     def _mark_configuration_dirty(self) -> None:
@@ -2310,10 +2521,6 @@ class ModelPage(QWidget, AsyncMixin):
         schema = self._current_schema()
         input_indices = schema["input_indices"]
         output_indices = schema["output_indices"]
-        selected = [name for name, checkbox in self.models.items() if checkbox.isChecked()]
-        if not selected:
-            self.show_error("至少选择一种代理模型")
-            return
         doe_id = self.current_doe_id()
         if not doe_id:
             self.show_error("请选择 DOE")
@@ -2322,6 +2529,17 @@ class ModelPage(QWidget, AsyncMixin):
         target_names = [self.headers[index] for index in output_indices]
         if not input_names or not target_names:
             self.show_error("至少需要定义一个输入参数和一个输出目标")
+            return
+        self._sync_model_targets()
+        self._save_current_model_target_config()
+        missing_models = [
+            target for target in target_names
+            if not self.target_model_selections.get(target)
+        ]
+        if missing_models:
+            self.show_error(
+                f"请至少为每个输出选择一种代理模型；尚未选择：{', '.join(missing_models)}"
+            )
             return
         if self.has_completed_training:
             answer = QMessageBox.question(
@@ -2337,10 +2555,19 @@ class ModelPage(QWidget, AsyncMixin):
         payload = {
             "id": doe_id,
             "data_source": self._training_data_source(schema),
-            "models": [
-                {"name": name, "params": dict(self.model_params.get(name, {}))}
-                for name in selected
-            ],
+            "target_models": {
+                target: [
+                    {
+                        "name": name,
+                        "params": dict(
+                            self.target_model_params.get(target, {}).get(name, {})
+                        ),
+                    }
+                    for name in self.model_families
+                    if name in self.target_model_selections[target]
+                ]
+                for target in target_names
+            },
             "evaluation": {"enabled": True, "method": "k_fold", "n_splits": self.folds.value(), "random_state": 42},
         }
         self.start_button.setEnabled(False)
@@ -2487,11 +2714,12 @@ class ModelPage(QWidget, AsyncMixin):
             self.training_record_hint.setText("训练任务已提交，正在等待后台开始执行。")
         elif state == "running":
             current_model = str(data.get("current_model") or "").strip()
+            current_target = str(data.get("current_target") or "").strip()
             current_index = data.get("current_model_index")
             total_models = data.get("total_models")
             model_detail = ""
             if current_model:
-                model_detail = f"：{current_model}"
+                model_detail = f"：{current_target} / {current_model}" if current_target else f"：{current_model}"
                 if current_index and total_models:
                     model_detail += f"（{current_index}/{total_models}）"
             if str(data.get("stage")) == "evaluating":
@@ -2563,22 +2791,50 @@ class ModelPage(QWidget, AsyncMixin):
     def _restore_model_parameters(self, configs: Any) -> None:
         if not isinstance(configs, list):
             return
+        target_configs = [
+            config for config in configs
+            if isinstance(config, dict) and config.get("target_name")
+        ]
+        if target_configs:
+            selections: dict[str, set[str]] = {}
+            params_by_target: dict[str, dict[str, dict[str, Any]]] = {}
+            for config in target_configs:
+                target = str(config["target_name"])
+                name = str(config.get("name") or "")
+                if name not in self.model_families:
+                    continue
+                selections.setdefault(target, set()).add(name)
+                params_by_target.setdefault(
+                    target, {family: {} for family in self.model_families}
+                )
+                overrides = config.get("param_overrides")
+                if isinstance(overrides, dict):
+                    params_by_target[target][name] = dict(overrides)
+            if selections:
+                self.target_model_selections = selections
+                self.target_model_params = params_by_target
+                self.active_model_target = ""
+                self._sync_model_targets()
+            return
         selected_names = set()
-        restored = {name: {} for name in self.models}
+        restored = {name: {} for name in self.model_families}
         for config in configs:
             if not isinstance(config, dict):
                 continue
             name = str(config.get("name") or "")
-            if name not in self.models:
+            if name not in self.model_families:
                 continue
             selected_names.add(name)
             overrides = config.get("param_overrides")
             if isinstance(overrides, dict):
                 restored[name] = dict(overrides)
         if selected_names:
+            self.target_model_selections = {}
+            self.target_model_params = {}
+            self.active_model_target = ""
             self.model_params = restored
-            for name, checkbox in self.models.items():
-                checkbox.setChecked(name in selected_names)
+            self.draft_model_selections = set(selected_names)
+            self._sync_model_targets()
             self._refresh_model_parameter_buttons()
 
     def _restore_saved_dataset(self, data: dict[str, Any]) -> None:
@@ -2692,6 +2948,9 @@ class ModelPage(QWidget, AsyncMixin):
         for model in models:
             if model.get("score") is not None:
                 name = str(model.get("model_family", model.get("model_id", "model")))
+                targets = list(model.get("target_names") or [])
+                if len(targets) == 1 and name != "MIXED":
+                    name = f"{targets[0]} / {name}"
                 score = float(model["score"])
                 categories.append(name)
                 self.score_entries.append((name, score))

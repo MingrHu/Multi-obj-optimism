@@ -327,6 +327,98 @@ def test_training_accepts_inline_data_and_model_names(monkeypatch, tmp_path):
     }]
 
 
+def test_training_accepts_different_models_and_params_per_target(monkeypatch, tmp_path):
+    from mobo.api import service
+
+    client = _client(monkeypatch, tmp_path)
+    client.post("/api/v1/doe/add", json={"id": "target_models"})
+    monkeypatch.setattr(service.registry, "start", lambda *args: None)
+
+    response = client.post("/api/v1/hust/doe/train/startTrain", json={
+        "id": "target_models",
+        "data_source": {
+            "input_data": {"labels": ["x"], "samples": [[1], [2], [3]]},
+            "output_data": {
+                "labels": ["load", "grain"],
+                "samples": [[2, 5], [4, 4], [6, 3]],
+            },
+        },
+        "target_models": {
+            "load": [
+                {"name": "RF", "params": {"n_estimators": 120, "max_depth": 8}},
+                {"name": "SVR", "params": {"C": 20.0}},
+            ],
+            "grain": [
+                {"name": "RF", "params": {"n_estimators": 500, "max_depth": 16}},
+            ],
+        },
+        "evaluation": {"enabled": True, "n_splits": 1},
+    })
+
+    assert response.status_code == 202
+    request = store.load("target_models")["training"]["request"]
+    assert [item["target_name"] for item in request["models"]] == [
+        "load", "load", "grain"
+    ]
+    load_rf, load_svr, grain_rf = request["models"]
+    assert load_rf["model_index"] == 2
+    assert load_rf["params"]["n_estimators"] == 120
+    assert load_svr["model_index"] == 1
+    assert load_svr["params"]["C"] == 20.0
+    assert grain_rf["model_index"] == 2
+    assert grain_rf["params"]["n_estimators"] == 500
+    assert grain_rf["params"]["max_depth"] == 16
+    progress = client.get(
+        "/api/v1/hust/doe/train/progress?id=target_models"
+    ).json["data"]
+    assert [item["target_name"] for item in progress["model_configs"]] == [
+        "load", "load", "grain"
+    ]
+
+
+def test_training_rejects_incomplete_target_model_configuration(monkeypatch, tmp_path):
+    from mobo.api import service
+
+    client = _client(monkeypatch, tmp_path)
+    client.post("/api/v1/doe/add", json={"id": "missing_target_model"})
+    monkeypatch.setattr(service.registry, "start", lambda *args: None)
+    response = client.post("/api/v1/hust/doe/train/startTrain", json={
+        "id": "missing_target_model",
+        "data_source": {
+            "input_data": {"labels": ["x"], "samples": [[1], [2]]},
+            "output_data": {
+                "labels": ["y1", "y2"], "samples": [[2, 3], [4, 5]],
+            },
+        },
+        "target_models": {"y1": [{"name": "RF"}]},
+    })
+
+    assert response.status_code == 400
+    assert "缺少输出配置：y2" in response.json["message"]
+
+
+def test_training_accepts_one_split_holdout_evaluation(monkeypatch, tmp_path):
+    from mobo.api import service
+
+    client = _client(monkeypatch, tmp_path)
+    client.post("/api/v1/doe/add", json={"id": "one_split"})
+    monkeypatch.setattr(service.registry, "start", lambda *args: None)
+
+    response = client.post("/api/v1/hust/doe/train/startTrain", json={
+        "id": "one_split",
+        "data_source": {
+            "input_data": {"labels": ["x"], "samples": [[1], [2], [3]]},
+            "output_data": {"labels": ["y"], "samples": [[2], [4], [6]]},
+        },
+        "models": [{"name": "PRG"}],
+        "evaluation": {"enabled": True, "method": "k_fold", "n_splits": 1},
+    })
+
+    assert response.status_code == 202
+    request = store.load("one_split")["training"]["request"]
+    assert request["evaluation"]["n_splits"] == 1
+
+
 def test_training_hyperparameter_catalog_and_validation(monkeypatch, tmp_path):
     client = _client(monkeypatch, tmp_path)
     catalog = client.get("/api/v1/hust/doe/train/hyperparameters")
@@ -544,6 +636,107 @@ def test_training_worker_snapshots_model(monkeypatch, tmp_path):
     assert historical["models"][0]["model_family"] == "RF"
 
 
+def test_composite_model_selects_best_family_for_each_target(monkeypatch, tmp_path):
+    from mobo.api import service
+
+    _client(monkeypatch, tmp_path)
+    store.create({"id": "mixed_training"})
+    run_id = "train_mixed"
+    records = []
+    for index, family in enumerate(("PRG", "RF")):
+        model_dir = service._training_run_dir("mixed_training", run_id) / "models" / family
+        model_dir.mkdir(parents=True)
+        for target in ("y1", "y2"):
+            (model_dir / f"{target}_model.pkl").write_bytes(f"{family}-{target}".encode())
+            (model_dir / f"{target}_scalers.pkl").write_bytes(f"scaler-{family}-{target}".encode())
+        records.append({
+            "model_id": f"model_{family}", "model_index": index,
+            "model_family": family, "model_dir": str(model_dir),
+            "target_names": ["y1", "y2"], "train_cost_sec": 1.0,
+            "hyper_params": {"family": family},
+            "evaluation": [
+                {"target_name": "y1", "r2_mean": 0.95 if family == "PRG" else 0.90,
+                 "score": 0.8},
+                {"target_name": "y2", "r2_mean": 0.85 if family == "PRG" else 0.96,
+                 "score": 0.9},
+            ],
+        })
+
+    mixed = service._build_composite_model("mixed_training", run_id, records)
+
+    assert mixed["model_family"] == "MIXED"
+    assert mixed["is_composite"]
+    assert mixed["target_models"]["y1"]["model_family"] == "PRG"
+    assert mixed["target_models"]["y2"]["model_family"] == "RF"
+    destination = Path(mixed["model_dir"])
+    assert (destination / "y1_model.pkl").read_bytes() == b"PRG-y1"
+    assert (destination / "y2_model.pkl").read_bytes() == b"RF-y2"
+    assert (destination / "manifest.json").is_file()
+
+
+def test_training_worker_trains_each_target_with_its_own_params(monkeypatch, tmp_path):
+    from mobo.api import service
+    from mobo.surrogate import service as surrogate_service
+
+    _client(monkeypatch, tmp_path)
+    store.create({"id": "per_target_worker"})
+    dataset = tmp_path / "training.tsv"
+    dataset.write_text("1\t2\t3\n2\t4\t5\n3\t6\t7\n", encoding="utf-8")
+    calls = []
+
+    def fake_train(data_file, names, n_vars, model_index, params, model_id, **kwargs):
+        calls.append((Path(data_file), list(names), model_index, dict(params)))
+        target = names[n_vars]
+        model_dir = Path(kwargs["snapshot_dir"])
+        model_dir.mkdir(parents=True, exist_ok=True)
+        (model_dir / f"{target}_model.pkl").write_bytes(b"model")
+        (model_dir / f"{target}_scalers.pkl").write_bytes(b"scalers")
+        return {"code": 0, "model_id": model_id, "data": {
+            "model_dir": str(model_dir), "model_index": model_index,
+            "model_family": service.MODEL_FAMILIES[model_index],
+            "target_names": [target], "train_cost_sec": 0.1,
+            "hyper_params": params,
+        }}
+
+    def fake_evaluate(_doe_id, _request, records, _cancel, _run_id):
+        for record in records:
+            target = record["target_names"][0]
+            record["evaluation"] = [{
+                "target_name": target, "r2_mean": 0.95, "score": 0.95,
+            }]
+            record["score"] = 0.95
+        return records
+
+    monkeypatch.setattr(surrogate_service, "train_surrogate", fake_train)
+    monkeypatch.setattr(service, "_evaluate_models", fake_evaluate)
+    request = {
+        "data_file": str(dataset), "all_var_list": ["x", "y1", "y2"],
+        "input_var_count": 1, "sample_count": 3,
+        "models": [
+            {"model_index": 2, "target_name": "y1", "params": {"max_depth": 8}},
+            {"model_index": 2, "target_name": "y2", "params": {"max_depth": 16}},
+        ],
+        "evaluation": {"enabled": True, "n_splits": 1},
+    }
+
+    service._run_training(
+        "per_target_worker", request, threading.Event(), "train_per_target",
+    )
+
+    assert [(names, index, params) for _, names, index, params in calls] == [
+        (["x", "y1"], 2, {"max_depth": 8}),
+        (["x", "y2"], 2, {"max_depth": 16}),
+    ]
+    assert all(path.parent.name == "target_datasets" for path, *_ in calls)
+    training = store.load("per_target_worker")["training"]
+    mixed = next(
+        item for item in training["models"] if item["model_family"] == "MIXED"
+    )
+    assert set(mixed["target_models"]) == {"y1", "y2"}
+    assert mixed["target_models"]["y1"]["hyper_params"] == {"max_depth": 8}
+    assert mixed["target_models"]["y2"]["hyper_params"] == {"max_depth": 16}
+
+
 def test_real_training_is_fully_isolated_inside_doe_run(monkeypatch, tmp_path):
     from mobo.api import service
     from mobo.common import paths
@@ -684,6 +877,59 @@ def test_inference_supports_named_inputs_and_selected_outputs(monkeypatch, tmp_p
         "id": "infer_fields", "resource_id": response["resource_id"], "fields": ["load"],
     })
     assert fetched["values"] == {"load": pytest.approx([10.0, 30.0])}
+
+
+def test_inference_uses_each_target_model_scalers(monkeypatch, tmp_path):
+    import joblib
+    import numpy as np
+    from sklearn.linear_model import LinearRegression
+    from sklearn.preprocessing import StandardScaler
+
+    from mobo.api import service
+
+    _client(monkeypatch, tmp_path)
+    store.create({"id": "infer_target_scalers"})
+    model_dir = store.task_dir("infer_target_scalers") / "models" / "mixed"
+    model_dir.mkdir(parents=True)
+    raw_x = np.array([[0.0], [1.0], [2.0], [3.0]])
+    target_specs = (
+        ("y1", 2.0, StandardScaler().fit(raw_x)),
+        ("y2", 3.0, StandardScaler().fit(raw_x + 10.0)),
+    )
+    for index, (target, factor, scaler_x) in enumerate(target_specs):
+        y = raw_x * factor
+        scaler_y = StandardScaler().fit(y)
+        model = LinearRegression().fit(
+            scaler_x.transform(raw_x), scaler_y.transform(y).ravel()
+        )
+        joblib.dump(model, model_dir / f"{target}_model.pkl")
+        joblib.dump(
+            {"scaler_X": scaler_x, f"scaler_y_{index}": scaler_y},
+            model_dir / f"{target}_scalers.pkl",
+        )
+    store.update_section(
+        "infer_target_scalers",
+        "training",
+        status="finished",
+        request={"all_var_list": ["x", "y1", "y2"], "input_var_count": 1},
+        models=[{
+            "model_id": "mixed",
+            "model_dir": str(model_dir),
+            "model_family": "MIXED",
+            "target_names": ["y1", "y2"],
+            "score": 1.0,
+        }],
+    )
+
+    response = service.start_inference({
+        "id": "infer_target_scalers",
+        "inputs": [1.0],
+    })
+
+    assert response["predictions"] == {
+        "y1": pytest.approx([2.0]),
+        "y2": pytest.approx([3.0]),
+    }
 
 
 def test_inference_returns_documented_failures(monkeypatch, tmp_path):
@@ -845,6 +1091,15 @@ def test_optimization_can_bind_a_specific_training_run(monkeypatch, tmp_path):
     assert normalized["model_id"] == "old_model"
     assert normalized["model_dir"] == str(tmp_path / "old")
 
+    latest = service._normalize_optimization({
+        "mode": "multi",
+        "objectives": [{"name": "y1", "direction": "min"}],
+        "decision_variables": [{"name": "x1", "lower": 0, "upper": 1}],
+        "algorithm": {"name": "nsga2", "params": {}},
+    }, store.load("versioned_training"))
+    assert latest["training_run_id"] == "train_new"
+    assert latest["model_id"] == "new_model"
+
 
 def test_optimization_result_resources_are_preserved_per_run(monkeypatch, tmp_path):
     from mobo.api import service
@@ -873,6 +1128,9 @@ def test_optimization_result_resources_are_preserved_per_run(monkeypatch, tmp_pa
     second = service._collect_optimization_result(
         "result_history", response("opt_second", source_two), "run_second"
     )
+    nested = service._collect_optimization_result(
+        "result_history", response("opt_nested", source_two), "run_nested", "train_1"
+    )
     first_resource = store.resolve_resource("result_history", first["resource_id"])
     second_resource = store.resolve_resource("result_history", second["resource_id"])
 
@@ -881,6 +1139,11 @@ def test_optimization_result_resources_are_preserved_per_run(monkeypatch, tmp_pa
     assert Path(second_resource["path"]).read_text(encoding="utf-8") == "3\t4\n"
     assert Path(first_resource["path"]).parent.name == "run_first"
     assert Path(second_resource["path"]).parent.name == "run_second"
+    nested_resource = store.resolve_resource("result_history", nested["resource_id"])
+    assert Path(nested_resource["path"]).parent == (
+        store.task_dir("result_history") / "training" / "runs" / "train_1"
+        / "optimizations" / "run_nested"
+    )
 
 
 def test_optimization_accepts_rl_and_rejects_unsupported_algorithm(monkeypatch, tmp_path):

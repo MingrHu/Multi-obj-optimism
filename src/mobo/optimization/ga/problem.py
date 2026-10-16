@@ -11,6 +11,8 @@ class ObjectiveSpec:
     model: Any
     y_index: int
     minimize: bool = True
+    scaler_x: Any = None
+    scaler_y: Any = None
 
 
 @dataclass(frozen=True)
@@ -54,7 +56,7 @@ class SurrogateOptimizationProblem(Problem):
 
         if "scaler_X" not in self.scalers:
             raise KeyError("scalers 缺少 scaler_X（需要与 SurrogateModel/common.py 输出一致）")
-        self.scaler_X = self.scalers["scaler_X"]
+        self.scaler_X = self.objectives[0].scaler_x or self.scalers["scaler_X"]
 
         if not hasattr(self.scaler_X, "mean_") or not hasattr(self.scaler_X, "scale_"):
             raise TypeError("scaler_X 不是 StandardScaler 或缺少 mean_/scale_ 属性")
@@ -102,7 +104,7 @@ class SurrogateOptimizationProblem(Problem):
 
         for o in [*self.objectives, *self.constraint_objectives]:
             key = f"scaler_y_{o.y_index}"
-            if key not in self.scalers:
+            if o.scaler_y is None and key not in self.scalers:
                 raise KeyError(
                     f"scalers 缺少 {key}。"
                     f"你训练时保存的标准化器应包含 scaler_y_0/scaler_y_1/...（来自 split_data_*）。"
@@ -213,16 +215,16 @@ class SurrogateOptimizationProblem(Problem):
             if full_i < 0 or full_i >= self.full_input_dim:
                 raise ValueError(f"fixed_values index 越界：{full_i}")
             full_x[:, full_i] = float(value)
-        scaled_x = self.scaler_X.transform(full_x)
-
         prediction_specs = [*self.objectives, *self.constraint_objectives]
         scaled_columns = []
         raw_columns = []
         for spec in prediction_specs:
+            scaler_x = spec.scaler_x or self.scaler_X
+            scaled_x = scaler_x.transform(full_x)
             scaled = np.asarray(spec.model.predict(scaled_x), dtype=float).reshape(-1)
             if len(scaled) != len(decisions):
                 raise ValueError(f"{spec.name} 的预测结果数量与候选解数量不一致")
-            scaler_y = self.scalers[f"scaler_y_{spec.y_index}"]
+            scaler_y = spec.scaler_y or self.scalers[f"scaler_y_{spec.y_index}"]
             raw = np.asarray(
                 scaler_y.inverse_transform(scaled.reshape(-1, 1)), dtype=float
             ).reshape(-1)

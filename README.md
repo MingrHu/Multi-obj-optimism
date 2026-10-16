@@ -379,12 +379,14 @@ Dependabot 每周检查 Python、GitHub Actions 和 Docker 依赖。SonarQube Cl
 - [README.md](README.md)：项目入口、安装、启动和目录总览。
 - [docs/README.md](docs/README.md)：文档知识库导航与职责边界。
 - [DOE_HTTP_API.md](docs/api/DOE_HTTP_API.md)：端上调用的唯一 HTTP 协议。
+- [SURROGATE_HYPERPARAMETERS.md](docs/api/SURROGATE_HYPERPARAMETERS.md)：五类代理模型的中文超参数、请求控制字段与参考值。
 - [interface_protocol.md](docs/api/interface_protocol.md)：Python 内部任务服务协议。
 - [ARCHITECTURE.md](docs/ARCHITECTURE.md)：分层、数据流、持久化和平台边界。
 - [DOCKER_DEPLOYMENT.md](docs/deployment/DOCKER_DEPLOYMENT.md)：容器构建、数据卷、发布与服务器部署。
 - [OPEN_SOURCE_DEPENDENCIES.md](docs/compliance/OPEN_SOURCE_DEPENDENCIES.md)：优化与代理模型模块开源依赖合规清单。
 - [DEFORM_KEY_KEYWORDS.md](docs/deform/DEFORM_KEY_KEYWORDS.md)：KEY 关键字与能力映射。
 - [DESKTOP_UI.md](docs/ui/DESKTOP_UI.md)：桌面界面信息架构、执行位置与交互约定。
+- [RING_SURROGATE_MODEL_RESULTS.md](docs/research/RING_SURROGATE_MODEL_RESULTS.md)：三个碾环数据集的代理模型、超参数与定向测试 R²。
 - [接口参数文档.md](docs/api/接口参数文档.md)：兼容历史文件名的文档索引。
 
 `python tools/check_docs.py` 会检查知识库链接、HTTP 路由、CLI 入口、包/模块清单和文档

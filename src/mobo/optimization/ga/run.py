@@ -26,6 +26,18 @@ def _load_model(model_dir: str, target_name: str):
     raise FileNotFoundError(f"找不到模型文件：{pkl_path} 或 {keras_path}")
 
 
+def _load_scalers(model_dir: str, target_name: str, fallback_target: str | None = None):
+    """加载目标模型配套的缩放器，并兼容只保存一份缩放器的历史模型包。"""
+    target_path = os.path.join(model_dir, f"{target_name}_scalers.pkl")
+    if os.path.isfile(target_path):
+        return joblib_load(target_path)
+    if fallback_target:
+        fallback_path = os.path.join(model_dir, f"{fallback_target}_scalers.pkl")
+        if os.path.isfile(fallback_path):
+            return joblib_load(fallback_path)
+    raise FileNotFoundError(f"找不到标准化器文件：{target_path}")
+
+
 #  @brief  遗传算法运行示例
 #  @return None
 #  @author Hu Mingrui

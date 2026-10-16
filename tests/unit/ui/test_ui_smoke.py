@@ -41,6 +41,31 @@ def test_path_picker_keeps_a_readable_browse_button(monkeypatch):
     app.processEvents()
 
 
+def test_context_help_button_opens_its_explanation(monkeypatch):
+    pytest.importorskip("PySide6")
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication, QMessageBox
+
+    helpers = importlib.import_module("work_platform.mobo_ui.ui_helpers")
+    app = QApplication.instance() or QApplication([])
+    captured = {}
+    monkeypatch.setattr(
+        QMessageBox,
+        "information",
+        lambda parent, title, message: captured.update(
+            {"parent": parent, "title": title, "message": message}
+        ),
+    )
+    button = helpers.HelpButton("字段说明", "这是完整的帮助内容")
+
+    button.click()
+
+    assert captured["title"] == "字段说明"
+    assert captured["message"] == "这是完整的帮助内容"
+    assert button.toolTip() == "查看“字段说明”说明"
+    app.processEvents()
+
+
 def test_sidebar_groups_pages_without_numeric_prefixes_and_collapses(monkeypatch):
     pytest.importorskip("PySide6")
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
@@ -505,6 +530,7 @@ def test_model_page_submits_explicit_hyperparameter_overrides(monkeypatch):
     page.headers = ["温度", "载荷"]
     page.rows = [[900, 8.2], [1000, 8.0], [1100, 7.9]]
     page.field_roles = ["input", "output"]
+    page._update_schema_summary()
     for name, checkbox in page.models.items():
         checkbox.setChecked(name == "RF")
     page.model_params["RF"] = {"n_estimators": 120, "max_depth": 8}
@@ -512,11 +538,92 @@ def test_model_page_submits_explicit_hyperparameter_overrides(monkeypatch):
 
     page.start_training()
 
-    assert captured["models"] == [{
-        "name": "RF", "params": {"n_estimators": 120, "max_depth": 8}
-    }]
+    assert captured["target_models"] == {
+        "载荷": [{
+            "name": "RF", "params": {"n_estimators": 120, "max_depth": 8}
+        }]
+    }
     assert page.model_param_buttons["RF"].text() == "参数（2 项）"
     assert page.model_param_buttons["RF"].isEnabled()
+    app.processEvents()
+
+
+def test_model_page_keeps_independent_model_params_for_each_output(monkeypatch):
+    pytest.importorskip("PySide6")
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    module = importlib.import_module("work_platform.mobo_ui.app")
+    app = QApplication.instance() or QApplication([])
+    captured = {}
+
+    class FakeClient:
+        def start_training(self, payload):
+            captured.update(payload)
+            return {"status": "queued"}
+
+        def training_progress(self, doe_id):
+            assert doe_id == "doe-a"
+            return {"status": "queued", "stage": "queued", "progress": 0}
+
+    page = module.ModelPage(module.QThreadPool.globalInstance(), FakeClient)
+    page.run_async = lambda fn, done=None, failed=None: (done or (lambda _value: None))(fn())
+    page.doe_id.addItem("任务 A", "doe-a")
+    page.doe_id.setCurrentIndex(0)
+    page.headers = ["温度", "载荷", "晶粒"]
+    page.rows = [[900, 8.2, 5.0], [1000, 8.0, 4.5], [1100, 7.9, 4.0]]
+    page.field_roles = ["input", "output", "output"]
+    page._update_schema_summary()
+
+    for name, checkbox in page.models.items():
+        checkbox.setChecked(name == "RF")
+    page.model_params["RF"] = {"n_estimators": 120, "max_depth": 8}
+    page._save_current_model_target_config()
+
+    page.model_target.setCurrentIndex(1)
+    for name, checkbox in page.models.items():
+        checkbox.setChecked(name in {"SVR", "RF"})
+    page.model_params["SVR"] = {"C": 25.0}
+    page.model_params["RF"] = {"n_estimators": 500, "max_depth": 16}
+    page._save_current_model_target_config()
+
+    page.start_training()
+
+    assert captured["target_models"] == {
+        "载荷": [{
+            "name": "RF", "params": {"n_estimators": 120, "max_depth": 8}
+        }],
+        "晶粒": [
+            {"name": "SVR", "params": {"C": 25.0}},
+            {"name": "RF", "params": {"n_estimators": 500, "max_depth": 16}},
+        ],
+    }
+    app.processEvents()
+
+
+def test_model_page_keeps_many_long_output_tabs_reachable(monkeypatch):
+    pytest.importorskip("PySide6")
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication, QToolButton
+
+    module = importlib.import_module("work_platform.mobo_ui.app")
+    app = QApplication.instance() or QApplication([])
+    page = module.ModelPage(module.QThreadPool.globalInstance(), lambda: None)
+    outputs = [f"第{index:02d}个超长输出目标字段" for index in range(1, 15)]
+    page.headers = ["输入参数", *outputs]
+    page.rows = [[float(index) for index in range(len(page.headers))]]
+    page.field_roles = ["input", *(["output"] * len(outputs))]
+
+    page._update_schema_summary()
+
+    tab_bar = page.model_target_tabs.tabBar()
+    assert page.model_target_tabs.count() == len(outputs)
+    assert tab_bar.usesScrollButtons()
+    assert not tab_bar.expanding()
+    assert page.model_target_tabs.tabToolTip(len(outputs) - 1) == outputs[-1]
+    page.model_target_tabs.setCurrentIndex(len(outputs) - 1)
+    assert page.active_model_target == outputs[-1]
+    assert len(page.findChildren(QToolButton, "Help")) >= 4
     app.processEvents()
 
 
@@ -596,6 +703,10 @@ def test_model_parameter_button_can_retry_after_catalog_failure(monkeypatch):
             }
 
     page = module.ModelPage(module.QThreadPool.globalInstance(), FakeClient)
+    page.headers = ["温度", "载荷"]
+    page.rows = [[900, 8.2], [1000, 8.0]]
+    page.field_roles = ["input", "output"]
+    page._update_schema_summary()
     page._hyperparameters_failed("404 NOT FOUND")
     assert page.model_param_buttons["RF"].isEnabled()
     assert page.model_param_buttons["RF"].text() == "参数（重试）"

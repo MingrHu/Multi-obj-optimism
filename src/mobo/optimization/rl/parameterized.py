@@ -12,7 +12,7 @@ import joblib
 import numpy as np
 from gymnasium import spaces
 
-from mobo.optimization.ga.run import _load_model
+from mobo.optimization.ga.run import _load_model, _load_scalers
 from mobo.optimization.convergence import rl_callback
 
 
@@ -38,6 +38,9 @@ class SurrogatePPOEnv(gym.Env):
         self.scaler_x = self.scalers["scaler_X"]
         self.models = {name: _load_model(model_dir, name) for name in target_names}
         self.output_indices = {name: output_names.index(name) for name in target_names}
+        self.target_scalers = {
+            name: _load_scalers(model_dir, name, first_target) for name in target_names
+        }
         self.base = np.asarray(self.scaler_x.mean_, dtype=float).reshape(-1)
         config = request["optimizer_config"]
         self.step_ratio = float(config.get("action_step_ratio", 0.05))
@@ -52,8 +55,13 @@ class SurrogatePPOEnv(gym.Env):
         scaled_x = self.scaler_x.transform(full.reshape(1, -1))
         raw, normalized = {}, {}
         for name, model in self.models.items():
+            target_scalers = self.target_scalers[name]
+            scaled_x = target_scalers["scaler_X"].transform(full.reshape(1, -1))
             scaled_y = float(np.asarray(model.predict(scaled_x)).reshape(-1)[0])
-            scaler_y = self.scalers[f"scaler_y_{self.output_indices[name]}"]
+            y_index = self.output_indices[name]
+            scaler_y = target_scalers.get(
+                f"scaler_y_{y_index}", target_scalers.get("scaler_y_0")
+            )
             raw[name] = float(scaler_y.inverse_transform([[scaled_y]])[0, 0])
             normalized[name] = scaled_y
         return raw, normalized

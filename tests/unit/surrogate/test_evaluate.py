@@ -5,7 +5,11 @@ import time
 
 import pytest
 
-from mobo.surrogate.evaluate import SurrogateModelEvaluator, TargetCVSummary
+from mobo.surrogate.evaluate import (
+    SurrogateModelEvaluator,
+    TargetCVSummary,
+    _HoldoutSplit,
+)
 
 
 @pytest.fixture
@@ -25,7 +29,29 @@ def small_evaluator(simulated_data_file):
 
 def test_n_splits_validation(simulated_data_file):
     with pytest.raises(ValueError):
-        SurrogateModelEvaluator(simulated_data_file, ["a", "b", "c", "grain", "load"], 3, n_splits=1)
+        SurrogateModelEvaluator(simulated_data_file, ["a", "b", "c", "grain", "load"], 3, n_splits=0)
+
+
+def test_one_split_uses_80_20_holdout(simulated_data_file):
+    train_indices, test_indices = next(_HoldoutSplit(42).split(list(range(10))))
+    assert len(train_indices) == 8
+    assert len(test_indices) == 2
+    assert set(train_indices).isdisjoint(test_indices)
+
+    evaluator = SurrogateModelEvaluator(
+        simulated_data_file,
+        ["a", "b", "c", "grain", "load"],
+        3,
+        n_splits=1,
+        model_params={"PRG": {"degree": 2}},
+    )
+
+    summary = evaluator.evaluate(models=["PRG"], target_indices=[0])[0]
+
+    assert summary.n_splits == 1
+    assert summary.n_samples > 0
+    assert summary.r2_std == 0.0
+    assert "单次留出法评价" in evaluator.format_report_lines([summary])[3]
 
 
 def test_max_workers_validation(simulated_data_file):

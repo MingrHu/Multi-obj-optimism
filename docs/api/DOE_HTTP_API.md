@@ -38,7 +38,7 @@ Docker 环境可执行 `docker compose up --build -d`，容器会自动使用 Gu
 | **`GET /api/v1/hust/doe/train/progress`** | **`id`, `run_id?`** | **查询当前或指定训练轮次的进度及模型评价** |
 | **`POST /api/v1/hust/doe/train/delete`** | **`id`** | **删除训练记录和代理模型** |
 | **`POST /api/v1/hust/doe/train/stop`** | **`id`** | **发出训练中止请求** |
-| **`POST /api/v1/hust/doe/train/startTrain`** | **见下文** | **后台训练并交叉验证** |
+| **`POST /api/v1/hust/doe/train/startTrain`** | **见下文** | **后台训练并评价** |
 | **`POST /api/v1/hust/doe/inference/startInference`** | **`id`, `inputs`, `fields?`, `model_id?`** | **代理模型批量推理并按目标字段返回** |
 | **`POST /api/v1/hust/doe/optimize/start`** | **`id`, `training_run_id?`, `model_id?` 等，见第9节** | **提交优化并返回新的优化 `run_id`** |
 | **`POST /api/v1/hust/doe/optimize/stop`** | **`id`** | **发出优化中止请求** |
@@ -71,7 +71,7 @@ POST 参数使用 JSON 对象；GET 接口不读取请求体
 | 训练进度 | query `run_id`，必须是训练轮次 | 返回当前训练聚合状态，并返回全部轮次摘要 |
 | 训练中止 / 删除 | 仅使用 `id`，不支持按轮次操作 | 中止当前训练；删除该 DOE 全部训练记录与模型 |
 | 推理 | 仅 `model_id`，不支持 `training_run_id` | 在当前训练聚合记录的模型中选择；指定历史模型不会自动查找历史轮次 |
-| 优化提交 | JSON `training_run_id`，必须是训练轮次 | 使用当前训练聚合记录；在所选范围内按 `model_id` 或最高评分选模型 |
+| 优化提交 | JSON `training_run_id`，必须是训练轮次 | 默认使用最近完成的训练轮次；未传 `model_id` 时优先使用逐输出最优组合模型 |
 | 优化中止 | 仅使用 `id`，不支持 `run_id` | 请求中止当前优化 |
 | 优化查询 | 仅 query `id`，不支持 query `run_id` | 返回当前状态及全部 `history`，客户端按 `history[].run_id` 选历史结果 |
 | 优化过程 | query `run_id`，必须是优化轮次 | 使用 `current_run_id`；为空时回退到最后一条历史轮次 |
@@ -539,15 +539,21 @@ GET /api/v1/hust/doe/data/get?id=doe_sample_001&resource_id=tos-a1b2c3d4e5f60718
       ]
     }
   },
-  "models": [
-    {
-      "name": "RF",
-      "params": {
-        "n_estimators": 300,
-        "n_jobs": -1
-      }
-    }
-  ],
+  "target_models": {
+    "Y1": [
+      {"name": "RF", "params": {"n_estimators": 300, "max_depth": 8}}
+    ],
+    "Y2": [
+      {"name": "SVR", "params": {"C": 20.0}},
+      {"name": "RF", "params": {"n_estimators": 500, "max_depth": 16}}
+    ],
+    "Y3": [{"name": "PRG", "params": {"degree": 3}}],
+    "Y4": [{"name": "KM", "params": {"alpha": 0.01}}],
+    "Y5": [{"name": "RF", "params": {"n_estimators": 300}}],
+    "Y6": [{"name": "SVR", "params": {"C": 10.0}}],
+    "Y7": [{"name": "PRG", "params": {"degree": 2}}],
+    "Y8": [{"name": "DNN", "params": {"epochs": 1000}}]
+  },
   "evaluation": {
     "enabled": true,
     "method": "k_fold",
@@ -563,7 +569,12 @@ DOE 的 `training` 目录落盘为无表头 TSV。`all_var_list`、`input_var_co
 样本总数均由后端计算，端上不需要传递服务端文件路径。
 
 输入和输出样本行数必须相同，每行数据宽度必须与对应 `labels` 数量相同。
-`models` 支持 `PRG`、`SVR`、`RF`、`KM` 和 `DNN`，同一模型不能重复提交。
+推荐使用 `target_models` 为每个输出分别选择候选模型和超参数。对象的键必须与
+`output_data.labels` 完全一致，每个输出至少配置一个候选；同一输出内不能重复模型，
+不同输出可以选择相同模型族并使用不同参数。服务端把每个“输出 × 候选模型”独立训练、
+独立评价，再按各输出测试 R² 选择组合模型。`models` 是兼容字段：它把同一组模型和参数
+应用到所有输出。`models` 与 `target_models` 不能同时提交。两种格式均只支持
+`PRG`、`SVR`、`RF`、`KM` 和 `DNN`。
 四行数据仅用于展示协议结构，实际训练应根据输入维度和模型复杂度提供足够样本。
 
 各模型参数示例：
@@ -582,7 +593,7 @@ DOE 的 `training` 目录落盘为无表头 TSV。`all_var_list`、`input_var_co
 ```
 
 `params` 可以省略或传空对象。后端只接受下表列出的字段，并把调用方覆盖值与默认值合并；未知字段、
-错误类型、越界值或不一致的上下界在启动后台任务前返回 HTTP 400。训练模型快照与 K 折交叉验证使用
+错误类型、越界值或不一致的上下界在启动后台任务前返回 HTTP 400。训练模型快照与模型评价使用
 同一组完整有效参数，完整参数写入训练请求与模型记录，调用方显式覆盖项另存为
 `param_overrides`，便于界面恢复。
 
@@ -656,6 +667,8 @@ DOE 的 `training` 目录落盘为无表头 TSV。`all_var_list`、`input_var_co
 客户端可通过 **GET `/api/v1/hust/doe/train/hyperparameters`** 动态读取以上元数据。响应中
 `data.models.<模型>.<参数>` 包含 `type`、`default`、`label`，以及适用的 `choices`、
 `minimum`、`maximum`、`exclusive_minimum`、`exclusive_maximum` 和 `nullable`。
+各字段的中文含义、调参作用、建议起点与完整请求片段见
+[代理模型超参数中文说明与请求参考](SURROGATE_HYPERPARAMETERS.md)。
 
 | 请求字段 | 类型 | 必填 | 说明 |
 |---|---|---:|---|
@@ -668,20 +681,35 @@ DOE 的 `training` 目录落盘为无表头 TSV。`all_var_list`、`input_var_co
 | `data_source.output_data` | object | 是 | 输出目标和输出样本 |
 | `output_data.labels` | string array | 是 | 输出目标名称，不能为空或重复 |
 | `output_data.samples` | `number[][]` | 是 | 输出样本二维数组 |
-| `models` | object array | 否 | 模型配置列表，默认训练 PRG、SVR、RF 和 KM |
-| `models[].name` | string | 是 | 模型名称 `PRG`、`SVR`、`RF`、`KM` 或 `DNN` |
+| `target_models` | object | 否 | 推荐；按输出名称配置候选模型。键必须覆盖全部 `output_data.labels`，且不能包含未知输出 |
+| `target_models.<输出名>` | object array | 条件必填 | 该输出的非空候选模型数组；数组元素结构同 `models[]` |
+| `target_models.<输出名>[].name` | string | 条件必填 | `PRG`、`SVR`、`RF`、`KM` 或 `DNN` |
+| `target_models.<输出名>[].model_index` | integer | 条件必填 | 与 `name` 二选一：0-PRG、1-SVR、2-RF、3-KM、4-DNN |
+| `target_models.<输出名>[].params` | object | 否 | 只作用于该输出、该模型族的超参数 |
+| `models` | object array | 否 | 兼容格式；把同一组模型及参数用于所有输出。未传两种模型字段时默认训练 PRG、SVR、RF 和 KM |
+| `models[].name` | string | 条件必填 | 推荐的模型标识：`PRG`、`SVR`、`RF`、`KM` 或 `DNN`；与 `model_index` 二选一 |
+| `models[].model_index` | integer | 条件必填 | 兼容模型标识：0-PRG、1-SVR、2-RF、3-KM、4-DNN；仅未传 `name` 时读取 |
 | `models[].params` | object | 否 | 模型超参数，默认使用模型自身默认值 |
-| `evaluation` | object | 否 | 模型交叉验证配置 |
+| `evaluation` | object | 否 | 模型评价配置 |
 | `evaluation.enabled` | boolean | 否 | 是否执行评价，默认 `true` |
 | `evaluation.method` | string | 否 | 当前仅支持 `k_fold`，默认 `k_fold` |
-| `evaluation.n_splits` | integer | 否 | 折数，范围为2到样本总数，默认5 |
+| `evaluation.n_splits` | integer | 否 | 评价折数，范围为1到样本总数，默认5；传1表示一次80%训练、20%测试的留出法评价 |
 | `evaluation.random_state` | integer | 否 | 评价随机种子，默认42 |
 | `evaluation.max_workers` | integer or string | 否 | 不同输出目标的并发线程数，可取1～64或`auto`，默认`auto` |
 
-交叉验证按模型族依次执行，避免多个模型同时争抢 CPU 和内存；同一模型的不同输出目标由线程池并行，
-但单个输出目标内部的 K 折仍保持串行。`max_workers=auto` 时取输出目标数、逻辑 CPU 数一半和8三者
-的最小值（至少1）。如模型自身还启用了内部并行（例如 RF 的 `n_jobs=-1`），可显式传
-`max_workers=1` 避免嵌套并行。
+`n_splits=1` 时，服务端使用 `evaluation.random_state` 执行一次随机留出划分：80%样本只用于
+训练，20%样本只用于测试，`r2_mean` 是这20%测试集的决定系数，`r2_std` 固定为0。
+`n_splits>=2` 时执行打乱后的 K 折交叉验证。
+
+逐输出配置时，模型训练和评价按“输出 × 候选模型”依次执行，避免同时争抢 CPU 和内存；
+兼容 `models` 格式下，同一模型族的不同输出目标仍可由线程池并行。单个输出目标内部的各次
+划分保持串行。`max_workers=auto` 时取输出目标数、逻辑 CPU 数一半和8三者的最小值（至少1）。
+如模型自身还启用了内部并行（例如 RF 的 `n_jobs=-1`），可显式传 `max_workers=1` 避免嵌套并行。
+
+评价启用时，服务端在各请求模型族训练完成后，按每个输出目标的 `r2_mean` 选择最佳候选，并在
+本训练轮次内生成一个 `model_family="MIXED"` 的组合模型。组合模型仍只有一个 `model_id`，但
+每个输出分别保留来源模型、完整超参数、模型文件以及配套的 X/Y 标准化器。推理、NSGA-II 和
+PPO 均按输出加载自身模型和标准化器。评价关闭时没有逐输出评分依据，因此不生成组合模型。
 
 **成功响应字段说明**：
 
@@ -967,6 +995,7 @@ GET /api/v1/hust/doe/train/progress?id=doe_20260622_001&run_id=train_1a2b3c4d5e6
     "current_run_id": "train_1a2b3c4d5e6f",
     "selected_run_id": "train_1a2b3c4d5e6f",
     "current_model": "RF",
+    "current_target": "load",
     "current_model_index": 1,
     "total_models": 1,
     "input_names": ["workpiece_temperature", "die_temperature"],
@@ -1113,12 +1142,13 @@ GET /api/v1/hust/doe/train/progress?id=doe_20260622_001&run_id=train_1a2b3c4d5e6
 | `data.history[].run_id` | string | 训练轮次，可作为本接口的 query `run_id` 或优化提交的 `training_run_id` |
 | `data.history[].status/stage/progress` | string / string / number | 该历史轮次的状态、阶段和进度 |
 | `data.history[].dataset` | object | 该轮数据集的资源索引、列顺序、样本数和来源名称，字段可能按实际记录省略 |
-| `data.history[].models` | object array | 模型摘要，包含 `model_id/model_index/model_family/target_names/train_cost_sec/score`，不包含完整评价指标 |
+| `data.history[].models` | object array | 模型摘要；组合模型还包含 `is_composite/target_models`，不包含完整评价指标 |
 | `data.history[].model_configs` | object array | 该轮模型参数，结构同顶层 `model_configs` |
 | `data.history[].best_model` | string或null | 最佳模型的 `model_id`；尚未评选时为null |
 | `data.history[].error` | string或null | 历史记录的错误信息；可能保留历史内部异常，不等同于顶层通用失败提示 |
 | `data.history[].created_at/updated_at` | string | 该轮提交和更新时间，ISO 8601 格式 |
 | `data.current_model` | string or null | 当前正在训练或交叉验证的模型族；终态为空 |
+| `data.current_target` | string or null | 逐输出配置时当前正在训练或评价的输出名称；兼容 `models` 格式或终态为空 |
 | `data.current_model_index` | integer or null | 当前模型在本次所选模型中的从1开始序号；终态为空 |
 | `data.total_models` | integer or null | 本次所选模型总数；尚未提交训练时为空 |
 | `data.input_names` | string array | 本次训练定义的输入参数名称；未提交训练时为空数组 |
@@ -1131,24 +1161,31 @@ GET /api/v1/hust/doe/train/progress?id=doe_20260622_001&run_id=train_1a2b3c4d5e6
 | `data.dataset.source_name` | string | 客户端提交的数据源名称或服务端生成的数据集名称 |
 | `data.model_configs` | object array | 本次训练选择的模型配置；未提交训练时为空数组 |
 | `data.model_configs[].name` | string | 模型族名称 |
+| `data.model_configs[].target_name` | string | 使用 `target_models` 提交时对应的输出名称；兼容 `models` 格式时省略 |
 | `data.model_configs[].params` | object | 与默认值合并并通过校验后的完整有效参数 |
 | `data.model_configs[].param_overrides` | object | 调用方显式提交的覆盖项；界面据此恢复用户设置，空对象表示全部使用默认值 |
 | `data.models` | object array | 已完成训练或正在累计的模型记录 |
 | `data.models[].hyper_params` | object | 生成模型快照和交叉验证时共同使用的完整有效参数 |
 | `data.models[].model_id` | string | 当前 DOE 下唯一的代理模型标识，可用于推理和优化接口 |
-| `data.models[].model_index` | integer | 后端代理模型类型编号 |
-| `data.models[].model_family` | string | 代理模型类型，例如 `PRG`、`SVR`、`RF`、`KM` 或 `DNN` |
+| `data.models[].model_index` | integer or null | 后端代理模型类型编号；逐输出组合模型为 `null` |
+| `data.models[].model_family` | string | `PRG`、`SVR`、`RF`、`KM`、`DNN`，或服务端生成的 `MIXED` |
+| `data.models[].is_composite` | boolean | 是否为逐输出选择最佳候选后生成的组合模型 |
+| `data.models[].target_models` | object | 组合模型的逐输出来源；普通模型可为空或省略 |
+| `data.models[].target_models.<目标>.source_model_id` | string | 该输出所复制的来源模型标识 |
+| `data.models[].target_models.<目标>.model_family` | string | 该输出实际使用的模型族 |
+| `data.models[].target_models.<目标>.hyper_params` | object | 该输出实际使用的完整超参数 |
+| `data.models[].target_models.<目标>.r2_mean` | number | 用于逐输出选择的评价 R²；单折时为20%测试集 R²，多折时为 K 折平均 R² |
 | `data.models[].target_names` | string array | 当前模型包含的输出目标及其顺序 |
 | `data.models[].train_cost_sec` | number | 生成可推理模型快照的训练耗时，单位为秒 |
 | `data.models[].score` | number or null | 当前模型所有输出目标评价分的平均值，评价完成前为 `null` |
-| `data.models[].evaluation` | object array | 各输出目标的 K 折交叉验证结果，评价完成前为空数组 |
+| `data.models[].evaluation` | object array | 各输出目标的单次留出法或 K 折交叉验证结果，评价完成前为空数组 |
 | `data.models[].evaluation[].model_name` | string | 本项评价对应的代理模型类型 |
 | `data.models[].evaluation[].target_index` | integer | 输出目标从0开始的索引 |
 | `data.models[].evaluation[].target_name` | string | 输出目标名称 |
-| `data.models[].evaluation[].n_splits` | integer | K 折交叉验证折数 |
-| `data.models[].evaluation[].n_samples` | integer | 参与交叉验证的数据集样本数 |
-| `data.models[].evaluation[].r2_mean` | number | 各折 R² 决定系数的平均值，通常越大越好 |
-| `data.models[].evaluation[].r2_std` | number | 各折 R² 决定系数的标准差 |
+| `data.models[].evaluation[].n_splits` | integer | 评价折数；1表示一次80%训练、20%测试的留出法评价 |
+| `data.models[].evaluation[].n_samples` | integer | 参与模型评价的数据集样本数 |
+| `data.models[].evaluation[].r2_mean` | number | R² 决定系数；单折时为20%测试集 R²，多折时为各折平均值 |
+| `data.models[].evaluation[].r2_std` | number | R² 标准差；单折时固定为0 |
 | `data.models[].evaluation[].nmae_mean` | number | 各折归一化最大绝对误差的平均值，不是 MSE |
 | `data.models[].evaluation[].nmae_std` | number | 各折归一化最大绝对误差的标准差 |
 | `data.models[].evaluation[].mae_mean` | number | 各折平均绝对误差 MAE 的平均值，通常越小越好 |
@@ -1180,7 +1217,8 @@ DNN 正式训练对每个输出目标使用独立进程，默认并发上限为�
 最小值（至少1）；每个子进程使用1个计算线程，模型超参数保持不变。服务端可通过正整数
 环境变量 `MOBO_DNN_MAX_WORKERS` 调整并发上限，端上无需新增请求字段。
 进度仍按模型族和训练/评价阶段汇总，不表示各输出的逐轮进度。
-启用 K 折评价后，还会针对每个目标额外训练 K 次。
+启用评价后，还会针对每个目标额外训练 `n_splits` 次；单折时这一次训练使用80%训练集，并在
+隔离的20%测试集上计算指标。
 例如8个输出、3折评价会额外训练24个 DNN。调用方可根据 `current_model` 和序号展示
 当前阶段；DNN 默认 `verbose=0`。每个正式输出模型结束后会释放 Keras 计算图；并行交叉验证
 会在该模型的全部输出目标结束后统一释放，避免训练中的线程被全局会话清理干扰。
@@ -1263,8 +1301,9 @@ DOE 不存在返回 HTTP 404：
 }
 ```
 
-不指定 `model_id` 时，自动选择当前训练聚合记录中平均评价分最高的模型；不传 `fields`
-时返回该模型的全部输出目标。`inputs` 还支持二维数组形式，用于一次提交多个样本。
+不指定 `model_id` 时，若当前训练记录包含逐输出组合模型则优先使用它，否则选择平均评价分最高的
+普通模型；不传 `fields` 时返回该模型的全部输出目标。组合模型会为每个输出加载自己的代理模型、
+输入标准化器和目标标准化器。`inputs` 还支持二维数组形式，用于一次提交多个样本。
 
 本接口当前不读取 `training_run_id` 或 `run_id`，无法指定历史训练轮次。`model_id` 也只在
 当前训练记录中匹配；若重新训练清空了当前模型列表，旧模型不能仅凭历史 `model_id` 在本接口中加载。
@@ -1273,7 +1312,7 @@ DOE 不存在返回 HTTP 404：
 | 请求字段 | 类型 | 必填 | 说明 |
 |---|---|---:|---|
 | `id` | string | 是 | 已完成代理模型训练的 DOE 唯一标识 |
-| `model_id` | string | 否 | 指定当前训练记录中的代理模型，不传时在该范围内选择评分最高模型 |
+| `model_id` | string | 否 | 指定当前训练记录中的代理模型；不传时优先选择逐输出组合模型，否则选择评分最高普通模型 |
 | `inputs` | `number[]`、`number[][]` 或 object | 是 | 单样本、批量样本或按输入字段组织的批量数据 |
 | `fields` | string array | 否 | 需要返回的输出目标，默认返回全部目标 |
 
@@ -1361,9 +1400,10 @@ DOE 尚无可用模型或指定的 `model_id` 不属于当前 DOE 时返回 HTTP
 
 接口支持标准化加权单目标、Pareto 多目标和 PPO 强化学习三种模式。调用方只提交
 目标、约束和设计变量，后端从 DOE 训练记录推导完整字段顺序和变量下标。
-不指定 `model_id` 时，在所选训练轮次的模型中自动选择平均评价分最高的模型。
+不指定 `model_id` 时，在所选训练轮次中优先选择逐输出组合模型；该轮没有组合模型时选择平均
+评价分最高的普通模型。
 下列示例显式指定 `training_run_id`，其值来自第4节训练提交响应的 `data.run_id`；
-省略时使用当前训练聚合记录，不会自动在全部历史轮次中搜索模型。
+省略时自动绑定本 DOE 最近完成的训练轮次。
 
 **请求字段说明**：
 
@@ -1476,8 +1516,8 @@ PPO 的观测是当前设计变量，动作是相对于变量范围的增量。�
 | 请求字段 | 类型 | 必填 | 说明 |
 |---|---|---:|---|
 | `id` | string | 是 | 已完成代理模型训练的 DOE 唯一标识 |
-| `training_run_id` | string | 否 | 指定本 DOE 下已经完成的训练轮次；不传或空字符串使用当前训练聚合记录；建议显式固定来源 |
-| `model_id` | string | 否 | 指定所选训练轮次内的模型；省略时在该范围内选择评分最高模型，不在全部历史轮次中搜索 |
+| `training_run_id` | string | 否 | 指定本 DOE 下已经完成的训练轮次；不传或空字符串使用最近完成的训练轮次 |
+| `model_id` | string | 否 | 指定所选训练轮次内的模型；省略时优先选择该轮逐输出组合模型，否则选择评分最高普通模型 |
 | `mode` | string | 是 | `single`、`multi` 或 `reinforcement_learning` |
 | `objectives` | object array | 是 | 优化目标配置，名称必须是所选模型的输出字段 |
 | `objectives[].name` | string | 是 | 输出目标名称 |
@@ -2447,17 +2487,21 @@ data/doe_tasks/<id>/
 │   ├── dataset.tsv
 │   ├── models/<model_id>/
 │   │   ├── <target>_model.pkl|keras
-│   │   └── <target>_scalers.pkl
+│   │   ├── <target>_scalers.pkl
+│   │   └── manifest.json              # 仅逐输出组合模型
 │   ├── internal/
+│   ├── optimizations/<optimization_run_id>/
+│   │   ├── pareto_solutions.tsv|rl_solutions.tsv
+│   │   ├── convergence.json
+│   │   ├── internal/
+│   │   └── optimization_result.json
 │   ├── best_model.json
 │   └── training_result.json
-└── optimization/runs/<optimization_run_id>/
-    ├── pareto_solutions.tsv|rl_solutions.tsv
-    ├── convergence.json
-    ├── internal/
-    └── optimization_result.json
+└── optimization/runs/                 # 仅兼容升级前未绑定训练轮次的历史记录
 ```
 
-`doe.json` 是任务元数据、进度和产物索引入口。每个训练和优化轮次都拥有独立目录；
-HTTP 聚合流程不会再把模型或运行状态写入顶层 `data/models`、`data/tasks`。旧目录不参与
-新协议读取，既有旧任务需要重新训练或重新优化。
+`doe.json` 是任务元数据、进度和产物索引入口。每个 DOE、训练轮次和优化轮次都拥有独立目录；
+新优化轮次保存在其绑定的训练轮次目录下。不传 `training_run_id` 时绑定最近完成的训练轮次，
+显式传入时绑定指定的已完成训练轮次。这样同一 DOE 的多次训练及其优化结果不会相互覆盖。
+HTTP 聚合流程不会再把模型或运行状态写入顶层 `data/models`、`data/tasks`。升级前位于
+`optimization/runs` 且未绑定训练轮次的记录仍可读取，但所有新优化产物只写入对应训练轮次目录。

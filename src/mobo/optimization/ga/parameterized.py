@@ -21,7 +21,7 @@ from mobo.optimization.convergence import ga_callback
 
 from .operators import AdaptiveSBX
 from .problem import ConstraintSpec, ObjectiveSpec, SurrogateOptimizationProblem
-from .run import _load_model
+from .run import _load_model, _load_scalers
 
 
 def _write_solutions(
@@ -112,25 +112,32 @@ def run_parameterized_nsga2(
         item["name"]: item["minimize"] for item in request["objective_config"]
     }
     for name in objective_names:
+        target_scalers = _load_scalers(model_dir, name, objective_names[0])
+        y_index = output_names.index(name)
         objectives.append(ObjectiveSpec(
             name=name,
             model=_prepare_model_for_optimization(_load_model(model_dir, name)),
-            y_index=output_names.index(name),
+            y_index=y_index,
             minimize=minimize_by_name[name],
+            scaler_x=target_scalers["scaler_X"],
+            scaler_y=target_scalers.get(f"scaler_y_{y_index}", target_scalers.get("scaler_y_0")),
         ))
 
     constraint_names = list(dict.fromkeys(
         item["target_obj"] for item in request["constraints"]
         if isinstance(item["target_obj"], str) and item["target_obj"] not in objective_names
     ))
-    constraint_objectives = [
-        ObjectiveSpec(
+    constraint_objectives = []
+    for name in constraint_names:
+        target_scalers = _load_scalers(model_dir, name, objective_names[0])
+        y_index = output_names.index(name)
+        constraint_objectives.append(ObjectiveSpec(
             name=name,
             model=_prepare_model_for_optimization(_load_model(model_dir, name)),
-            y_index=output_names.index(name), minimize=True,
-        )
-        for name in constraint_names
-    ]
+            y_index=y_index, minimize=True,
+            scaler_x=target_scalers["scaler_X"],
+            scaler_y=target_scalers.get(f"scaler_y_{y_index}", target_scalers.get("scaler_y_0")),
+        ))
 
     constraints = [
         ConstraintSpec(

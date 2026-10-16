@@ -201,6 +201,18 @@ docker compose up --build -d
 最终镜像约 3.5 GB。Dockerfile 使用 BuildKit pip 缓存；依赖不变时，后续代码构建会直接复用
 缓存。
 
+从 `1.1.1` 更新到 `1.1.2` 时，保留构建缓存并在新容器健康后删除旧镜像：
+
+```bash
+MOBO_IMAGE_TAG=1.1.2 docker compose build mobo-api
+MOBO_IMAGE_TAG=1.1.2 docker compose up -d --no-build
+docker compose ps
+curl http://127.0.0.1:5050/health
+docker image rm mobo-api:1.1.1
+```
+
+不要在新容器启动前删除旧镜像，也不要使用 `docker image prune -a`，以免删除无关服务镜像。
+
 Compose 启动时会：
 
 1. 创建 `mobo-api` 容器；
@@ -231,15 +243,15 @@ curl http://127.0.0.1:8000/health
 若 CentOS 服务器不能访问外网，应在可联网且架构相同的机器构建镜像：
 
 ```bash
-MOBO_IMAGE_TAG=1.1.1 docker compose build mobo-api
-docker save mobo-api:1.1.1 -o mobo-api-1.1.1.tar
+MOBO_IMAGE_TAG=1.1.2 docker compose build mobo-api
+docker save mobo-api:1.1.2 -o mobo-api-1.1.2.tar
 ```
 
 将镜像 tar、`compose.yaml` 和仓库中 `deploy/` 目录传到服务器，然后执行：
 
 ```bash
-docker load -i mobo-api-1.1.1.tar
-MOBO_IMAGE_TAG=1.1.1 docker compose up -d --no-build
+docker load -i mobo-api-1.1.2.tar
+MOBO_IMAGE_TAG=1.1.2 docker compose up -d --no-build
 ```
 
 使用 Compose 启动时仍建议保留完整仓库，以保证 Compose 路径、版本说明和运维脚本完全一致；

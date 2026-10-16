@@ -17,7 +17,7 @@ from sklearn.gaussian_process.kernels import ConstantKernel as C
 from sklearn.gaussian_process.kernels import RBF
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import max_error, mean_absolute_error, mean_squared_error, r2_score
-from sklearn.model_selection import KFold
+from sklearn.model_selection import KFold, train_test_split
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import PolynomialFeatures, StandardScaler
 from sklearn.svm import SVR
@@ -36,7 +36,7 @@ os.makedirs(output_dir, exist_ok=True)
 output_path = os.path.join(output_dir, "evaluate_history_result.txt")
 
 
-# @brief  目标值交叉验证摘要类
+# @brief  目标值评价摘要类
 # @return None
 # @author MingrHu
 # @date   2026/01/20
@@ -88,6 +88,26 @@ class TargetCVSummary:
     score: Optional[float] = None
 
 
+class _HoldoutSplit:
+    """按固定随机种子执行一次80%训练集、20%测试集划分。"""
+
+    n_splits = 1
+    shuffle = True
+
+    def __init__(self, random_state: int) -> None:
+        self.random_state = random_state
+
+    def split(self, X: np.ndarray):
+        indices = np.arange(len(X))
+        train_indices, test_indices = train_test_split(
+            indices,
+            test_size=0.2,
+            shuffle=True,
+            random_state=self.random_state,
+        )
+        yield train_indices, test_indices
+
+
 # @brief  代理模型评估类
 # @return None
 # @author MingrHu
@@ -118,8 +138,8 @@ class SurrogateModelEvaluator:
         self.vars_out = vars_out
         self.n_vars = n_vars
 
-        if n_splits < 2:
-            raise ValueError("n_splits 必须 >= 2")
+        if n_splits < 1:
+            raise ValueError("n_splits 必须 >= 1")
         self.n_splits = n_splits
         self.shuffle = shuffle
         self.random_state = random_state
@@ -130,7 +150,7 @@ class SurrogateModelEvaluator:
         self.max_workers = max_workers
 
     # @brief  评估代理模型
-    # @return 目标值交叉验证摘要列表
+    # @return 目标值评价摘要列表
     # @author MingrHu
     # @date   2026/01/20
     # @param  models             模型名称序列（可选）
@@ -167,10 +187,14 @@ class SurrogateModelEvaluator:
             target_names=target_names,
         )
 
-        kf = KFold(
-            n_splits=self.n_splits,
-            shuffle=self.shuffle,
-            random_state=self.random_state,
+        kf = (
+            _HoldoutSplit(self.random_state)
+            if self.n_splits == 1
+            else KFold(
+                n_splits=self.n_splits,
+                shuffle=self.shuffle,
+                random_state=self.random_state,
+            )
         )
 
         summaries: List[TargetCVSummary] = []
@@ -197,22 +221,26 @@ class SurrogateModelEvaluator:
         *,
         X: np.ndarray,
         Y: np.ndarray,
-        kf: KFold,
+        kf: Any,
         model_name: str,
         target_indices: Sequence[int],
         target_names: Sequence[str],
     ) -> List[TargetCVSummary]:
-        """并行评价不同输出目标；单个目标内部的 K 折保持串行。"""
+        """并行评价不同输出目标；单个目标内部的各次划分保持串行。"""
         jobs = list(zip(target_indices, target_names, strict=True))
         workers = self._resolve_target_workers(len(jobs))
 
         def evaluate_target(job: tuple[int, str]) -> TargetCVSummary:
             target_idx, target_name = job
-            # 每个目标使用独立的 KFold 实例，避免在线程间共享可迭代器状态。
-            target_kf = KFold(
-                n_splits=kf.n_splits,
-                shuffle=kf.shuffle,
-                random_state=kf.random_state,
+            # 每个目标使用独立划分器，避免在线程间共享可迭代器状态。
+            target_kf = (
+                _HoldoutSplit(self.random_state)
+                if self.n_splits == 1
+                else KFold(
+                    n_splits=kf.n_splits,
+                    shuffle=kf.shuffle,
+                    random_state=kf.random_state,
+                )
             )
             return self._evaluate_one(
                 X=X,
@@ -294,7 +322,13 @@ class SurrogateModelEvaluator:
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         lines.append(f"MingrHu-{current_time}-进行模型评价")
         lines.append(f"数据集Data: {self.data_file}")
-        lines.append(f"K交叉验证KFold: n_splits={self.n_splits}, shuffle={self.shuffle}, random_state={self.random_state}")
+        if self.n_splits == 1:
+            lines.append(
+                "单次留出法评价: n_splits=1, train_size=0.8, "
+                f"test_size=0.2, random_state={self.random_state}"
+            )
+        else:
+            lines.append(f"K交叉验证KFold: n_splits={self.n_splits}, shuffle={self.shuffle}, random_state={self.random_state}")
         lines.append("=" * 100)
 
         for s in summaries:
@@ -348,7 +382,7 @@ class SurrogateModelEvaluator:
     # @date   2026/01/20
     # @param  X                输入特征矩阵
     # @param  y                目标值向量
-    # @param  kf               KFold 交叉验证对象
+    # @param  kf               数据划分器
     # @param  model_name       模型名称
     # @param  target_index     目标值索引
     # @param  target_name      目标值名称
@@ -357,7 +391,7 @@ class SurrogateModelEvaluator:
         *,
         X: np.ndarray,
         y: np.ndarray,
-        kf: KFold,
+        kf: Any,
         model_name: str,
         target_index: int,
         target_name: str,

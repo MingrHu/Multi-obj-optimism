@@ -23,6 +23,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .ui_helpers import configure_scrollable_tabs
+
 
 def _item(value: Any = "", *, checked: bool | None = None) -> QTableWidgetItem:
     item = QTableWidgetItem(str(value))
@@ -113,7 +115,7 @@ class TaskDefinitionEditor(QWidget):
         identity.addRow("任务名称", self.task_name)
         layout.addLayout(identity)
 
-        self.tabs = QTabWidget()
+        self.tabs = configure_scrollable_tabs(QTabWidget())
         if multi:
             self.operation_table = DefinitionTable(
                 ["工步名称", "KEY 模板", "继承材料", "启用晶粒", "偏移 X", "偏移 Y", "偏移 Z"]

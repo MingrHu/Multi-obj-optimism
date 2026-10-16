@@ -106,12 +106,21 @@ def main() -> None:
 
     # 7 查询后端支持的模型超参数 再训练代理模型并评价
     catalog = call("GET", "/api/v1/hust/doe/train/hyperparameters")
-    if "RF" not in catalog["data"]["models"]:
-        raise RuntimeError(f"后端未返回 RF 超参数定义 {catalog['data']}")
+    if not {"PRG", "SVR", "RF"} <= set(catalog["data"]["models"]):
+        raise RuntimeError(f"后端未返回完整超参数定义 {catalog['data']}")
     call("POST", "/api/v1/hust/doe/train/startTrain", json={
         "id": doe_id,
         "data_source": data_source,
-        "models": [{"name": "RF", "params": {"n_estimators": 300, "n_jobs": -1}}],
+        "target_models": {
+            "grain": [
+                {"name": "PRG", "params": {"degree": 2}},
+                {"name": "RF", "params": {"n_estimators": 300, "n_jobs": -1}},
+            ],
+            "load": [
+                {"name": "SVR", "params": {"kernel": "rbf", "C": 10.0}},
+                {"name": "RF", "params": {"n_estimators": 500, "max_depth": 12}},
+            ],
+        },
         "evaluation": {
             "enabled": True,
             "method": "k_fold",
@@ -128,6 +137,12 @@ def main() -> None:
         raise RuntimeError(f"训练输入字段异常 {training['data']}")
     if training["data"].get("target_names") != target_names:
         raise RuntimeError(f"训练目标字段异常 {training['data']}")
+    mixed = [
+        item for item in training["data"].get("models", [])
+        if item.get("model_family") == "MIXED"
+    ]
+    if not mixed:
+        raise RuntimeError(f"训练未生成逐输出最优组合模型 {training['data']}")
 
     # 9 推理测试 只返回 grain
     inference = call("POST", "/api/v1/hust/doe/inference/startInference", json={

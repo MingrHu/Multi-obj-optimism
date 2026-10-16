@@ -323,15 +323,7 @@ def get_training_progress(doe_id: str, run_id: str | None = None) -> dict[str, A
         {key: value for key, value in model.items() if key != "model_dir"}
         for model in selected.get("models", [])
     ]
-    model_configs = [
-        {
-            "name": MODEL_FAMILIES[item["model_index"]],
-            "params": dict(item.get("params") or {}),
-            "param_overrides": dict(item.get("param_overrides") or {}),
-        }
-        for item in request.get("models", [])
-        if item.get("model_index") in MODEL_FAMILIES
-    ]
+    model_configs = _public_model_configs(request)
     return {
         "id": doe_id,
         "status": selected.get("status", "not_started"),
@@ -351,6 +343,7 @@ def get_training_progress(doe_id: str, run_id: str | None = None) -> dict[str, A
         "models": models,
         "model_configs": model_configs,
         "current_model": selected.get("current_model"),
+        "current_target": selected.get("current_target"),
         "current_model_index": selected.get("current_model_index"),
         "total_models": selected.get("total_models"),
         "error": (
@@ -444,17 +437,27 @@ def start_training(payload: dict[str, Any]) -> dict[str, Any]:
         "sample_count": request["sample_count"],
         "input_names": request["all_var_list"][:request["input_var_count"]],
         "target_names": request["all_var_list"][request["input_var_count"]:],
-        "models": [MODEL_FAMILIES[item["model_index"]] for item in request["models"]],
+        "models": list(dict.fromkeys(
+            MODEL_FAMILIES[item["model_index"]] for item in request["models"]
+        )),
     }
 
 
 def _normalize_training(
     doe_id: str, payload: dict[str, Any], run_id: str,
 ) -> dict[str, Any]:
-    models = _normalize_training_models(payload.get("models"))
     dataset = _normalize_inline_dataset(doe_id, payload.get("data_source"))
     if dataset is None:
         dataset = _normalize_file_dataset(payload)
+    target_names = dataset["all_var_list"][dataset["input_var_count"]:]
+    if payload.get("target_models") is not None:
+        if payload.get("models") is not None:
+            raise ApiError("models 与 target_models 不能同时提交")
+        models = _normalize_target_training_models(
+            payload.get("target_models"), target_names
+        )
+    else:
+        models = _normalize_training_models(payload.get("models"))
     evaluation = _normalize_evaluation(payload.get("evaluation"), dataset["sample_count"])
     run_dir = _training_run_dir(doe_id, run_id)
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -607,6 +610,30 @@ def _normalize_training_models(value: Any) -> list[dict[str, Any]]:
     return normalized
 
 
+def _normalize_target_training_models(
+    value: Any, target_names: list[str],
+) -> list[dict[str, Any]]:
+    if not isinstance(value, dict) or not value:
+        raise ApiError("target_models 必须是按输出名称配置的非空 JSON 对象")
+    unknown = [name for name in value if name not in target_names]
+    missing = [name for name in target_names if name not in value]
+    if unknown:
+        raise ApiError(f"target_models 包含未知输出：{', '.join(unknown)}")
+    if missing:
+        raise ApiError(f"target_models 缺少输出配置：{', '.join(missing)}")
+    normalized = []
+    for target_name in target_names:
+        try:
+            target_configs = _normalize_training_models(value[target_name])
+        except ApiError as exc:
+            raise ApiError(f"target_models.{target_name}: {exc}") from exc
+        normalized.extend(
+            {**config, "target_name": target_name}
+            for config in target_configs
+        )
+    return normalized
+
+
 def _normalize_evaluation(value: Any, sample_count: int) -> dict[str, Any]:
     config = {
         "enabled": True,
@@ -625,8 +652,8 @@ def _normalize_evaluation(value: Any, sample_count: int) -> dict[str, Any]:
         raise ApiError("evaluation.method 当前仅支持 k_fold")
     if config["enabled"]:
         splits = config.get("n_splits")
-        if not isinstance(splits, int) or isinstance(splits, bool) or not 2 <= splits <= sample_count:
-            raise ApiError("evaluation.n_splits 必须是2到样本总数之间的整数")
+        if not isinstance(splits, int) or isinstance(splits, bool) or not 1 <= splits <= sample_count:
+            raise ApiError("evaluation.n_splits 必须是1到样本总数之间的整数")
     if not isinstance(config.get("random_state"), int) or isinstance(config["random_state"], bool):
         raise ApiError("evaluation.random_state 必须是整数")
     max_workers = config.get("max_workers")
@@ -641,6 +668,18 @@ def _normalize_evaluation(value: Any, sample_count: int) -> dict[str, Any]:
 
 def _training_run_dir(doe_id: str, run_id: str) -> Path:
     return store.task_dir(doe_id) / "training" / "runs" / run_id
+
+
+def _optimization_run_dir(
+    doe_id: str, training_run_id: str | None, optimization_run_id: str,
+) -> Path:
+    if training_run_id:
+        return (
+            _training_run_dir(doe_id, training_run_id)
+            / "optimizations" / optimization_run_id
+        )
+    # 兼容升级前没有绑定训练轮次的优化记录。
+    return store.task_dir(doe_id) / "optimization" / "runs" / optimization_run_id
 
 
 def _write_json(path: Path, value: dict[str, Any]) -> None:
@@ -668,22 +707,30 @@ def _public_training_run(run: dict[str, Any]) -> dict[str, Any]:
             key: model.get(key)
             for key in (
                 "model_id", "model_index", "model_family", "target_names",
-                "train_cost_sec", "score",
+                "train_cost_sec", "score", "is_composite", "target_models",
             )
         }
         for model in run.get("models", [])
     ]
     request = run.get("request") or {}
-    public["model_configs"] = [
-        {
+    public["model_configs"] = _public_model_configs(request)
+    return public
+
+
+def _public_model_configs(request: dict[str, Any]) -> list[dict[str, Any]]:
+    configs = []
+    for item in request.get("models", []):
+        if item.get("model_index") not in MODEL_FAMILIES:
+            continue
+        config = {
             "name": MODEL_FAMILIES[item["model_index"]],
             "params": dict(item.get("params") or {}),
             "param_overrides": dict(item.get("param_overrides") or {}),
         }
-        for item in request.get("models", [])
-        if item.get("model_index") in MODEL_FAMILIES
-    ]
-    return public
+        if item.get("target_name"):
+            config["target_name"] = item["target_name"]
+        configs.append(config)
+    return configs
 
 
 def _update_training_run(doe_id: str, run_id: str, **fields: Any) -> None:
@@ -732,7 +779,10 @@ def _run_training(
             _mark_cancelled(doe_id, "training", run_id)
             return
         records = _evaluate_models(doe_id, request, records, cancel, run_id)
-        best_model = max(
+        composite = _build_composite_model(doe_id, run_id, records)
+        if composite:
+            records.append(composite)
+        best_model = composite or max(
             records,
             key=lambda item: item.get("score") if item.get("score") is not None else -1e99,
             default=None,
@@ -740,12 +790,12 @@ def _run_training(
         store.update_section(
             doe_id, "training", status="finished", stage="finished",
             progress=100, models=records, current_model=None,
-            current_model_index=None,
+            current_model_index=None, current_target=None,
         )
         _update_training_run(
             doe_id, run_id, status="finished", stage="finished", progress=100,
             models=records, best_model=(best_model or {}).get("model_id"),
-            current_model=None, current_model_index=None,
+            current_model=None, current_model_index=None, current_target=None,
         )
         if best_model:
             _write_json(
@@ -755,6 +805,8 @@ def _run_training(
                     "model_id": best_model["model_id"],
                     "model_family": best_model["model_family"],
                     "score": best_model.get("score"),
+                    "is_composite": best_model.get("is_composite", False),
+                    "target_models": best_model.get("target_models", {}),
                 },
             )
         store.update(doe_id, status="finished", stage="training_finished", progress=100)
@@ -764,12 +816,12 @@ def _run_training(
         else:
             store.update_section(
                 doe_id, "training", status="failed", stage="failed", error=str(exc),
-                current_model=None, current_model_index=None,
+                current_model=None, current_model_index=None, current_target=None,
             )
             _update_training_run(
                 doe_id, run_id, status="failed", stage="failed",
                 error="代理模型训练失败，内部异常详情由服务端维护",
-                current_model=None, current_model_index=None,
+                current_model=None, current_model_index=None, current_target=None,
             )
             store.update(doe_id, status="failed", stage="training_failed")
 
@@ -786,27 +838,33 @@ def _train_models(doe_id, request, cancel, run_id) -> list[dict[str, Any]]:
             break
         index = config["model_index"]
         family = MODEL_FAMILIES[index]
+        target_name = config.get("target_name")
         store.update_section(
             doe_id,
             "training",
             status="running",
             stage="training",
             current_model=family,
+            current_target=target_name,
             current_model_index=position + 1,
             total_models=len(models),
         )
         _update_training_run(
             doe_id, run_id, status="running", stage="training",
             current_model=family, current_model_index=position + 1,
+            current_target=target_name,
             total_models=len(models),
         )
         # 模型标识包含 DOE 和模型类型 末尾随机段防止重复训练覆盖旧任务
         model_id = f"tr_{doe_id}_{index}_{uuid.uuid4().hex[:6]}"
         staging_dir = _training_run_dir(doe_id, run_id) / ".staging" / model_id
         snapshot_dir = _training_run_dir(doe_id, run_id) / "models" / model_id
+        data_file, all_var_list = _training_dataset_for_model(
+            doe_id, run_id, request, target_name
+        )
         with task_workspace(_training_run_dir(doe_id, run_id) / "internal"), training_control(cancel):
             response = train_surrogate(
-                request["data_file"], request["all_var_list"],
+                data_file, all_var_list,
                 request["input_var_count"], index, config.get("params", {}),
                 model_id, artifact_dir=str(staging_dir),
                 snapshot_dir=str(snapshot_dir),
@@ -820,14 +878,41 @@ def _train_models(doe_id, request, cancel, run_id) -> list[dict[str, Any]]:
         store.update_section(
             doe_id, "training", status="running", stage="training",
             progress=training_progress, models=records, current_model=family,
+            current_target=target_name,
             current_model_index=position + 1, total_models=len(models),
         )
         _update_training_run(
             doe_id, run_id, status="running", stage="training",
             progress=training_progress, models=records, current_model=family,
+            current_target=target_name,
             current_model_index=position + 1, total_models=len(models),
         )
     return records
+
+
+def _training_dataset_for_model(
+    doe_id: str,
+    run_id: str,
+    request: dict[str, Any],
+    target_name: str | None,
+) -> tuple[str, list[str]]:
+    if not target_name:
+        return request["data_file"], request["all_var_list"]
+    import numpy as np
+
+    input_count = request["input_var_count"]
+    target_index = request["all_var_list"].index(target_name)
+    output = (
+        _training_run_dir(doe_id, run_id)
+        / "target_datasets"
+        / f"target_{target_index - input_count}.tsv"
+    )
+    if not output.is_file():
+        output.parent.mkdir(parents=True, exist_ok=True)
+        values = np.loadtxt(request["data_file"], delimiter="\t", ndmin=2)
+        selected = np.column_stack((values[:, :input_count], values[:, target_index]))
+        np.savetxt(output, selected, delimiter="\t", fmt="%.8g")
+    return str(output), [*request["all_var_list"][:input_count], target_name]
 
 
 def _snapshot_model(
@@ -842,8 +927,96 @@ def _snapshot_model(
         "model_id": response["model_id"], "model_index": data["model_index"],
         "model_family": data["model_family"], "model_dir": str(destination),
         "target_names": data["target_names"], "train_cost_sec": data["train_cost_sec"],
-        "score": None, "evaluation": [],
+        "hyper_params": dict(data.get("hyper_params") or {}),
+        "score": None, "evaluation": [], "is_composite": False,
     }
+
+
+def _build_composite_model(
+    doe_id: str, run_id: str, records: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """按目标 R² 选择最佳候选，并生成单一 model_id 的混合模型包。"""
+    if not records:
+        return None
+    target_names = list(dict.fromkeys(
+        target
+        for record in records
+        for target in (record.get("target_names") or [])
+    ))
+    selected: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {}
+    for target in target_names:
+        candidates = []
+        for record in records:
+            summary = next(
+                (
+                    item for item in record.get("evaluation", [])
+                    if item.get("target_name") == target and item.get("r2_mean") is not None
+                ),
+                None,
+            )
+            if summary is not None:
+                candidates.append((record, summary))
+        if not candidates:
+            return None
+        selected[target] = max(candidates, key=lambda item: item[1]["r2_mean"])
+
+    model_id = f"tr_{doe_id}_mixed_{uuid.uuid4().hex[:6]}"
+    destination = _training_run_dir(doe_id, run_id) / "models" / model_id
+    destination.mkdir(parents=True, exist_ok=True)
+    target_models: dict[str, dict[str, Any]] = {}
+    evaluations = []
+    for target in target_names:
+        record, summary = selected[target]
+        source_dir = Path(record["model_dir"])
+        source_model = next(
+            (
+                source_dir / f"{target}_model.{extension}"
+                for extension in ("pkl", "keras")
+                if (source_dir / f"{target}_model.{extension}").is_file()
+            ),
+            None,
+        )
+        source_scalers = source_dir / f"{target}_scalers.pkl"
+        if source_model is None or not source_scalers.is_file():
+            raise FileNotFoundError(f"目标 {target} 缺少可组合的模型或标准化器")
+        destination_model = destination / source_model.name
+        shutil.copy2(source_model, destination_model)
+        shutil.copy2(source_scalers, destination / source_scalers.name)
+        target_models[target] = {
+            "source_model_id": record["model_id"],
+            "model_index": record["model_index"],
+            "model_family": record["model_family"],
+            "hyper_params": dict(record.get("hyper_params") or {}),
+            "r2_mean": summary["r2_mean"],
+            "score": summary.get("score"),
+        }
+        evaluations.append({**summary, "source_model_id": record["model_id"]})
+
+    scores = [item.get("score") for item in evaluations if item.get("score") is not None]
+    record = {
+        "model_id": model_id,
+        "model_index": None,
+        "model_family": "MIXED",
+        "model_dir": str(destination),
+        "target_names": target_names,
+        "target_models": target_models,
+        "train_cost_sec": sum(float(item.get("train_cost_sec") or 0) for item in records),
+        "score": sum(scores) / len(scores) if scores else None,
+        "evaluation": evaluations,
+        "hyper_params": {},
+        "is_composite": True,
+    }
+    _write_json(
+        destination / "manifest.json",
+        {
+            key: record[key]
+            for key in (
+                "model_id", "model_family", "target_names", "target_models",
+                "score", "is_composite",
+            )
+        },
+    )
+    return record
 
 
 def _evaluate_models(doe_id, request, records, cancel, run_id):
@@ -858,18 +1031,7 @@ def _evaluate_models(doe_id, request, records, cancel, run_id):
         doe_id, run_id, status="running", stage="evaluating", progress=75,
         models=records,
     )
-    evaluator = SurrogateModelEvaluator(
-        request["data_file"], request["all_var_list"], request["input_var_count"],
-        n_splits=config.get("n_splits", 5), random_state=config.get("random_state", 42),
-        max_workers=(
-            None if config.get("max_workers", "auto") == "auto"
-            else config["max_workers"]
-        ),
-        model_params={
-            MODEL_FAMILIES[item["model_index"]]: item["params"]
-            for item in request["models"]
-        },
-    )
+    all_targets = request["all_var_list"][request["input_var_count"]:]
     for position, record in enumerate(records):
         if cancel.is_set():
             break
@@ -878,6 +1040,7 @@ def _evaluate_models(doe_id, request, records, cancel, run_id):
             "training",
             stage="evaluating",
             current_model=record["model_family"],
+            current_target=(record.get("target_names") or [None])[0],
             current_model_index=position + 1,
             total_models=len(records),
         )
@@ -885,9 +1048,26 @@ def _evaluate_models(doe_id, request, records, cancel, run_id):
             doe_id, run_id, status="running", stage="evaluating",
             progress=75 + round(25 * (position + 1) / len(records)),
             models=records, current_model=record["model_family"],
+            current_target=(record.get("target_names") or [None])[0],
             current_model_index=position + 1, total_models=len(records),
         )
-        summaries = evaluator.evaluate(models=[record["model_family"]])
+        evaluator = SurrogateModelEvaluator(
+            request["data_file"], request["all_var_list"], request["input_var_count"],
+            n_splits=config.get("n_splits", 5),
+            random_state=config.get("random_state", 42),
+            max_workers=(
+                None if config.get("max_workers", "auto") == "auto"
+                else config["max_workers"]
+            ),
+            model_params={record["model_family"]: record.get("hyper_params") or {}},
+        )
+        target_names = list(record.get("target_names") or all_targets)
+        target_indices = [all_targets.index(name) for name in target_names]
+        summaries = evaluator.evaluate(
+            models=[record["model_family"]],
+            target_indices=target_indices,
+            target_names=target_names,
+        )
         serialized = [asdict(item) for item in summaries]
         scores = [item["score"] for item in serialized if item["score"] is not None]
         record["evaluation"] = serialized
@@ -897,6 +1077,7 @@ def _evaluate_models(doe_id, request, records, cancel, run_id):
             doe_id, "training", stage="evaluating",
             progress=75 + round(25 * (position + 1) / len(records)), models=records,
             current_model=record["model_family"], current_model_index=position + 1,
+            current_target=(record.get("target_names") or [None])[0],
             total_models=len(records),
         )
     return records
@@ -912,20 +1093,20 @@ def _mark_cancelled(
         stage="stopped",
         current_model=None,
         current_model_index=None,
+        current_target=None,
     )
     if section == "training" and run_id:
         _update_training_run(
             doe_id, run_id, status="stopped", stage="stopped",
-            current_model=None, current_model_index=None,
+            current_model=None, current_model_index=None, current_target=None,
         )
     store.update(doe_id, status="stopped", stage=f"{section}_stopped")
 
 
 def start_inference(payload: dict[str, Any]) -> dict[str, Any]:
     # 推理相关依赖按请求加载 避免服务启动时加载全部模型框架
-    import joblib
     import numpy as np
-    from mobo.optimization.ga.run import _load_model
+    from mobo.optimization.ga.run import _load_model, _load_scalers
 
     doe_id = _require_id(payload)
     record = _select_model(store.load(doe_id), payload.get("model_id"))
@@ -935,14 +1116,16 @@ def start_inference(payload: dict[str, Any]) -> dict[str, Any]:
     array = np.asarray(rows, dtype=float)
     if array.ndim == 1:
         array = array.reshape(1, -1)
-    scalers = joblib.load(Path(record["model_dir"]) / f"{record['target_names'][0]}_scalers.pkl")
-    # 输入和输出必须复用训练时保存的标准化器 保证预测尺度正确
-    scaled = scalers["scaler_X"].transform(array)
     predictions = []
+    first_target = record["target_names"][0]
     for index, target in enumerate(record["target_names"]):
+        scalers = _load_scalers(record["model_dir"], target, first_target)
+        # 混合模型的每个输出必须复用自身训练时保存的输入和目标标准化器
+        scaled = scalers["scaler_X"].transform(array)
         model = _load_model(record["model_dir"], target)
         values = np.asarray(model.predict(scaled)).reshape(-1, 1) # type: ignore
-        predictions.append(scalers[f"scaler_y_{index}"].inverse_transform(values).ravel())
+        scaler_y = scalers.get(f"scaler_y_{index}", scalers.get("scaler_y_0"))
+        predictions.append(scaler_y.inverse_transform(values).ravel())
     matrix = np.column_stack(predictions)
     all_results = {
         target: matrix[:, index].tolist()
@@ -1068,7 +1251,15 @@ def _select_training_run(
 ) -> dict[str, Any]:
     training = state.get("training", {})
     if not run_id:
-        return training
+        finished = [
+            item for item in training.get("history", [])
+            if item.get("status") == "finished"
+        ]
+        if finished:
+            return finished[-1]
+        if training.get("status") == "finished":
+            return training
+        raise ConflictError("DOE 没有已完成的训练轮次")
     for run in training.get("history", []):
         if run.get("run_id") == run_id:
             if run.get("status") != "finished":
@@ -1081,11 +1272,19 @@ def _select_model(
     state: dict[str, Any], model_id: str | None,
     training_run_id: str | None = None,
 ) -> dict[str, Any]:
-    models = _select_training_run(state, training_run_id).get("models", [])
+    training = (
+        _select_training_run(state, training_run_id)
+        if training_run_id else state.get("training", {})
+    )
+    models = training.get("models", [])
     if model_id:
         models = [item for item in models if item["model_id"] == model_id]
     if not models:
         raise ApiError("没有可用的已训练代理模型", status=409, code=409)
+    if not model_id:
+        composite = [item for item in models if item.get("is_composite")]
+        if composite:
+            return composite[-1]
     # 未指定模型时选择平均评分最高者 未评价模型使用最低优先级
     return max(models, key=lambda item: item.get("score") if item.get("score") is not None else -1e99)
 
@@ -1144,8 +1343,9 @@ def _update_optimization_run(doe_id: str, run_id: str, **fields: Any) -> None:
             break
     store.update_section(doe_id, "optimization", history=history)
     if updated_run is not None:
+        training_run_id = (updated_run.get("request") or {}).get("training_run_id")
         _write_json(
-            store.task_dir(doe_id) / "optimization" / "runs" / run_id
+            _optimization_run_dir(doe_id, training_run_id, run_id)
             / "optimization_result.json",
             updated_run,
         )
@@ -1164,7 +1364,12 @@ def _normalize_optimization(payload, state) -> dict[str, Any]:
     input_count = training_request.get("input_var_count", 0)
     if not all_names or not isinstance(input_count, int) or not 0 < input_count < len(all_names):
         raise ConflictError("DOE 未记录可用于优化的训练字段")
-    model = _select_model(state, payload.get("model_id"), training_run_id)
+    selected_training_run_id = (
+        training.get("run_id") or state.get("training", {}).get("current_run_id")
+    )
+    model = _select_model(
+        state, payload.get("model_id"), selected_training_run_id,
+    )
     input_names, output_names = all_names[:input_count], all_names[input_count:]
     objective_names, objective_config = _normalize_optimization_objectives(
         payload.get("objectives"), output_names, mode
@@ -1182,7 +1387,7 @@ def _normalize_optimization(payload, state) -> dict[str, Any]:
         raise ApiError("目标或约束字段不在所选代理模型的输出字段中")
     return {
         "model_id": model["model_id"], "model_dir": model.get("model_dir"),
-        "training_run_id": training.get("run_id") or state.get("training", {}).get("current_run_id"),
+        "training_run_id": selected_training_run_id,
         "mode": "single" if mode != "multi" else "multi",
         "objective_names": objective_names, "objective_config": objective_config,
         "objective_normalization": normalization,
@@ -1323,7 +1528,8 @@ def _run_optimization(
             doe_id, run_id, status="running", stage="optimizing", progress=10,
         )
         optimizer = request.pop("optimizer")
-        run_dir = store.task_dir(doe_id) / "optimization" / "runs" / run_id
+        training_run_id = request["training_run_id"]
+        run_dir = _optimization_run_dir(doe_id, training_run_id, run_id)
         run_dir.mkdir(parents=True, exist_ok=True)
         output_name = "pareto_solutions.tsv" if optimizer == "nsga2" else "rl_solutions.tsv"
         request["output_config"] = {
@@ -1343,7 +1549,9 @@ def _run_optimization(
         elif response["code"] != 0:
             raise RuntimeError(response["msg"])
         else:
-            result = _collect_optimization_result(doe_id, response, run_id)
+            result = _collect_optimization_result(
+                doe_id, response, run_id, training_run_id,
+            )
             store.update_section(
                 doe_id, "optimization", status="finished", stage="finished",
                 progress=100, result=result, error=None,
@@ -1370,10 +1578,12 @@ def _run_optimization(
             store.update(doe_id, status="failed", stage="optimization_failed")
 
 
-def _collect_optimization_result(doe_id, response, run_id) -> dict[str, Any]:
+def _collect_optimization_result(
+    doe_id, response, run_id, training_run_id=None,
+) -> dict[str, Any]:
     data = response["data"]
     resources = dict(data.get("file_resource") or {})
-    output_dir = store.task_dir(doe_id) / "optimization" / "runs" / run_id
+    output_dir = _optimization_run_dir(doe_id, training_run_id, run_id)
     output_dir.mkdir(parents=True, exist_ok=True)
     # 将算法输出文件复制到 DOE 专属目录 返回路径不再依赖共享输出位置
     for key, source in list(resources.items()):
@@ -1435,7 +1645,10 @@ def get_optimization_process(doe_id: str, run_id: str | None = None) -> dict[str
     mode = request.get("requested_mode", request.get("mode"))
     curve = empty_curve(mode, request.get("objective_config", []))
     if run is not None:
-        path = store.task_dir(doe_id) / "optimization" / "runs" / selected_id / "convergence.json"
+        training_run_id = request.get("training_run_id")
+        path = _optimization_run_dir(
+            doe_id, training_run_id, selected_id,
+        ) / "convergence.json"
         if path.is_file():
             curve = read_curve(path, mode, request.get("objective_config", []))
     return {

@@ -99,13 +99,15 @@ DOE 聚合服务。路由层位于 `api.handler`，实际处理层位于 `api.se
                                             │
                     (extraction: 按 workpiece_type/target 选择提取器)
                                             ▼
-                                   数据集（X 工艺参数 + Y 目标值）
+                                   数据集（共享 X + 多个 Y 目标值）
                                             │
-                              (surrogate: 训练并保存代理模型 + scalers)
+                (surrogate: 按输出独立选择候选模型/超参数并保存模型 + scalers)
                                             ▼
                     doe_tasks/<doe_id>/training/runs/<run_id>/models/*
                                             │
-                    (optimization: GA / RL 加载模型做多目标寻优)
+           (逐输出选择最高 R² 模型并保留各自 X/Y 标准化器)
+                                            │
+                    (optimization: GA / RL 加载组合模型做多目标寻优)
                                             ▼
                           Pareto 前沿 / RL 解集（data/*.txt, *.png）
 ```
@@ -136,7 +138,7 @@ Flask/Gunicorn worker 在接受请求前通过 `api.readiness` 一次性加载�
 - HTTP 唯一协议入口是 [`DOE_HTTP_API.md`](api/DOE_HTTP_API.md)；Python 内部任务接口记录在
   [`interface_protocol.md`](api/interface_protocol.md)。
 - `GET /api/v1/hust/doe/optimize/process` 按 DOE 的 `id` 与可选 `run_id` 查询
-  `optimization/runs/<run_id>/convergence.json` 中的一维数组 `x` 和 `y`，三种模式均为单条曲线；
+  所绑定训练轮次下 `optimizations/<run_id>/convergence.json` 中的一维数组 `x` 和 `y`，三种模式均为单条曲线；
   运行中原子更新，完成、中止或失败后保留，路径不暴露给客户端。单目标记录最佳可行
   加权目标，多目标记录当前可行前沿的HV，采用训练目标标准化尺度及第一代确定的固定参考点；
   PPO按已完成训练回合数记录最近100回合的平均累计奖励，方向由 `direction` 指明。
@@ -237,8 +239,9 @@ TC4 碾环多工步任务由 `task_collection.TC4_RING_MULTI_TASK_1` 完整定�
   和结果数据。
 - HTTP 层以 `data/doe_tasks/<doe_id>/doe.json` 作为聚合状态入口。当前数据配置保存在
   `dataset/`；每次训练写入 `training/runs/<training_run_id>/`，其中包含本轮数据副本、模型、
-  标准化器、内部状态、完整训练结果和最佳模型索引；每次优化写入
-  `optimization/runs/<optimization_run_id>/`，包含绑定的训练轮次、内部状态、结果表与结果元数据。
+  逐输出组合模型、标准化器、内部状态、完整训练结果和最佳模型索引；每次优化写入所绑定训练轮次的
+  `optimizations/<optimization_run_id>/`，包含内部状态、结果表与结果元数据。不指定训练轮次时使用
+  最近完成的训练轮次，显式指定时只读取该轮模型。
   HTTP 聚合流程通过任务局部工作区调用底层服务，不在顶层 `data/models` 或 `data/tasks`
   产生跨 DOE 的共享产物。桌面端选择 DOE 后还需选择具体训练轮次或优化轮次。
 

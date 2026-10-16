@@ -6,6 +6,7 @@
 |---|---|---|
 | 架构 | [ARCHITECTURE.md](ARCHITECTURE.md) | 分层、数据流、持久化与平台边界 |
 | 外部 API | [api/DOE_HTTP_API.md](api/DOE_HTTP_API.md) | 端上调用的唯一 HTTP 协议 |
+| 代理模型参数 | [api/SURROGATE_HYPERPARAMETERS.md](api/SURROGATE_HYPERPARAMETERS.md) | 五类代理模型的中文超参数、请求控制字段与参考值 |
 | 内部接口 | [api/interface_protocol.md](api/interface_protocol.md) | Python 任务服务协议 |
 | 历史索引 | [api/接口参数文档.md](api/接口参数文档.md) | 兼容原中文文件名入口 |
 | 后端启动 | [deployment/BACKEND_STARTUP.md](deployment/BACKEND_STARTUP.md) | 本机启动与完整 Demo |
@@ -13,5 +14,6 @@
 | 合规 | [compliance/OPEN_SOURCE_DEPENDENCIES.md](compliance/OPEN_SOURCE_DEPENDENCIES.md) | 优化与代理模型模块开源依赖、许可证和交付结论 |
 | DEFORM | [deform/DEFORM_KEY_KEYWORDS.md](deform/DEFORM_KEY_KEYWORDS.md) | KEY 关键字与能力映射 |
 | 桌面界面 | [ui/DESKTOP_UI.md](ui/DESKTOP_UI.md) | Windows 工作台的信息架构、运行边界与交互约定 |
+| 模型研究 | [research/RING_SURROGATE_MODEL_RESULTS.md](research/RING_SURROGATE_MODEL_RESULTS.md) | 三个碾环数据集的代理模型、超参数与定向测试 R² |
 
 文档公共表面检查方式见 [tools/README.md](../tools/README.md)。

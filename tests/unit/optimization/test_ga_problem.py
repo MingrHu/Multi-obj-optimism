@@ -72,6 +72,33 @@ def test_evaluate_objectives(fake_scaler_cls, fake_model_cls):
     np.testing.assert_allclose(out["F"], [25.0, 300000.0], rtol=1e-6)
 
 
+def test_evaluate_uses_each_target_model_scalers(fake_scaler_cls, fake_model_cls):
+    first_x = fake_scaler_cls(mean=[10.0], scale=[2.0])
+    second_x = fake_scaler_cls(mean=[100.0], scale=[10.0])
+    first_y = fake_scaler_cls(mean=[1.0], scale=[3.0])
+    second_y = fake_scaler_cls(mean=[50.0], scale=[5.0])
+    problem = SurrogateOptimizationProblem(
+        objectives=[
+            ObjectiveSpec(
+                "first", fake_model_cls([1.0]), 0,
+                scaler_x=first_x, scaler_y=first_y,
+            ),
+            ObjectiveSpec(
+                "second", fake_model_cls([1.0]), 1,
+                scaler_x=second_x, scaler_y=second_y,
+            ),
+        ],
+        scalers={"scaler_X": first_x},
+        decision_var_indices=[0], bounds=[(0.0, 200.0)],
+    )
+
+    out = {}
+    problem._evaluate(np.array([20.0]), out)
+
+    # first: ((20-10)/2)*3+1=16; second: ((20-100)/10)*5+50=10
+    np.testing.assert_allclose(out["F"], [16.0, 10.0])
+
+
 def test_batch_evaluation_deduplicates_and_caches_predictions(fake_scaler_cls):
     class CountingModel:
         def __init__(self):
