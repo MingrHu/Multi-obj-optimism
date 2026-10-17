@@ -38,7 +38,8 @@ def test_documented_optimization_submission_matches_service(monkeypatch, tmp_pat
     expected = example["data"]
     monkeypatch.setattr(service, "_normalize_optimization", lambda payload, state: {
         "requested_mode": expected["mode"], "optimizer": "rl",
-        "model_id": expected["model_id"], "objective_names": expected["objectives"],
+        "target_model_ids": expected["target_model_ids"],
+        "objective_names": expected["objectives"],
     })
     monkeypatch.setattr(service.registry, "running", lambda *args: False)
     monkeypatch.setattr(service.registry, "start", lambda *args: None)

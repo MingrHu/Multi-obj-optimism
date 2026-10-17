@@ -143,6 +143,26 @@ def main() -> None:
     ]
     if not mixed:
         raise RuntimeError(f"训练未生成逐输出最优组合模型 {training['data']}")
+    target_model_ids = {}
+    for target in target_names:
+        candidates = [
+            item for item in training["data"].get("models", [])
+            if not item.get("is_composite")
+            and target in (item.get("target_names") or [])
+        ]
+        if not candidates:
+            raise RuntimeError(f"输出 {target} 没有可用候选模型")
+        target_model_ids[target] = max(
+            candidates,
+            key=lambda item: next(
+                (
+                    score.get("r2_mean", float("-inf"))
+                    for score in item.get("evaluation") or []
+                    if score.get("target_name") == target
+                ),
+                float("-inf"),
+            ),
+        )["model_id"]
 
     # 9 推理测试 只返回 grain
     inference = call("POST", "/api/v1/hust/doe/inference/startInference", json={
@@ -165,6 +185,8 @@ def main() -> None:
     call("POST", "/api/v1/hust/doe/optimize/start", json={
         "id": doe_id,
         "mode": "multi",
+        "training_run_id": training["data"]["selected_run_id"],
+        "target_model_ids": target_model_ids,
         "objectives": [
             {"name": "grain", "direction": "min"},
             {"name": "load", "direction": "min"},

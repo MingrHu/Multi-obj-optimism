@@ -93,7 +93,7 @@ def _prepare_model_for_optimization(model: Any) -> Any:
 def run_parameterized_nsga2(
     request: dict[str, Any],
     *,
-    model_dir: str,
+    model_dir: str | None,
     output_path: str,
 ) -> dict[str, Any]:
     """按已校验协议参数运行 NSGA-II，并返回产物与约束汇总。"""
@@ -102,7 +102,16 @@ def run_parameterized_nsga2(
     input_var_count = request["input_var_count"]
     output_names = all_var_list[input_var_count:]
 
-    scalers_path = os.path.join(model_dir, f"{objective_names[0]}_scalers.pkl")
+    target_model_dirs = request.get("target_model_dirs") or {}
+
+    def directory_for(name: str) -> str:
+        directory = target_model_dirs.get(name, model_dir)
+        if not directory:
+            raise ValueError(f"输出 {name} 未配置代理模型目录")
+        return str(directory)
+
+    first_model_dir = directory_for(objective_names[0])
+    scalers_path = os.path.join(first_model_dir, f"{objective_names[0]}_scalers.pkl")
     if not os.path.isfile(scalers_path):
         raise FileNotFoundError(f"找不到标准化器文件：{scalers_path}")
     scalers = joblib_load(scalers_path)
@@ -112,11 +121,13 @@ def run_parameterized_nsga2(
         item["name"]: item["minimize"] for item in request["objective_config"]
     }
     for name in objective_names:
-        target_scalers = _load_scalers(model_dir, name, objective_names[0])
+        target_dir = directory_for(name)
+        fallback_target = objective_names[0] if target_dir == first_model_dir else name
+        target_scalers = _load_scalers(target_dir, name, fallback_target)
         y_index = output_names.index(name)
         objectives.append(ObjectiveSpec(
             name=name,
-            model=_prepare_model_for_optimization(_load_model(model_dir, name)),
+            model=_prepare_model_for_optimization(_load_model(target_dir, name)),
             y_index=y_index,
             minimize=minimize_by_name[name],
             scaler_x=target_scalers["scaler_X"],
@@ -129,11 +140,13 @@ def run_parameterized_nsga2(
     ))
     constraint_objectives = []
     for name in constraint_names:
-        target_scalers = _load_scalers(model_dir, name, objective_names[0])
+        target_dir = directory_for(name)
+        fallback_target = objective_names[0] if target_dir == first_model_dir else name
+        target_scalers = _load_scalers(target_dir, name, fallback_target)
         y_index = output_names.index(name)
         constraint_objectives.append(ObjectiveSpec(
             name=name,
-            model=_prepare_model_for_optimization(_load_model(model_dir, name)),
+            model=_prepare_model_for_optimization(_load_model(target_dir, name)),
             y_index=y_index, minimize=True,
             scaler_x=target_scalers["scaler_X"],
             scaler_y=target_scalers.get(f"scaler_y_{y_index}", target_scalers.get("scaler_y_0")),

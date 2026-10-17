@@ -968,8 +968,14 @@ def _prepare_optimization_doe(doe_id):
         "input_var_count": 2,
     }, models=[{
         "model_id": f"model_{doe_id}", "model_dir": "unused",
+        "model_family": "RF",
         "target_names": ["y1", "y2", "limit"], "score": 1.0,
     }])
+
+
+def _optimization_target_models(doe_id):
+    model_id = f"model_{doe_id}"
+    return {"y1": model_id, "y2": model_id, "limit": model_id}
 
 
 def test_optimization_accepts_multi_and_weighted_single(monkeypatch, tmp_path):
@@ -981,6 +987,7 @@ def test_optimization_accepts_multi_and_weighted_single(monkeypatch, tmp_path):
     _prepare_optimization_doe("multi_opt")
     multi = client.post("/api/v1/hust/doe/optimize/start", json={
         "id": "multi_opt", "mode": "multi",
+        "target_model_ids": _optimization_target_models("multi_opt"),
         "objectives": [
             {"name": "y1", "direction": "min"},
             {"name": "y2", "direction": "max"},
@@ -995,6 +1002,7 @@ def test_optimization_accepts_multi_and_weighted_single(monkeypatch, tmp_path):
     _prepare_optimization_doe("single_opt")
     single = client.post("/api/v1/hust/doe/optimize/start", json={
         "id": "single_opt", "mode": "single",
+        "target_model_ids": _optimization_target_models("single_opt"),
         "objectives": [
             {"name": "y1", "direction": "min", "weight": 0.7},
             {"name": "y2", "direction": "max", "weight": 0.3},
@@ -1026,6 +1034,7 @@ def test_reoptimization_appends_unique_run_history(monkeypatch, tmp_path):
     _prepare_optimization_doe("history_opt")
     payload = {
         "id": "history_opt", "mode": "multi",
+        "target_model_ids": _optimization_target_models("history_opt"),
         "objectives": [{"name": "y1", "direction": "min"}],
         "decision_variables": [{"name": "x1", "lower": 0, "upper": 1}],
         "algorithm": {"name": "nsga2", "params": {}},
@@ -1056,11 +1065,11 @@ def test_optimization_can_bind_a_specific_training_run(monkeypatch, tmp_path):
     }
     old_model = {
         "model_id": "old_model", "model_dir": str(tmp_path / "old"),
-        "target_names": ["y1"], "score": 0.8,
+        "model_family": "RF", "target_names": ["y1"], "score": 0.8,
     }
     new_model = {
         "model_id": "new_model", "model_dir": str(tmp_path / "new"),
-        "target_names": ["y1"], "score": 0.9,
+        "model_family": "SVR", "target_names": ["y1"], "score": 0.9,
     }
     store.update_section(
         "versioned_training", "training", status="finished",
@@ -1079,6 +1088,7 @@ def test_optimization_can_bind_a_specific_training_run(monkeypatch, tmp_path):
 
     response = client.post("/api/v1/hust/doe/optimize/start", json={
         "id": "versioned_training", "training_run_id": "train_old",
+        "target_model_ids": {"y1": "old_model"},
         "mode": "multi",
         "objectives": [{"name": "y1", "direction": "min"}],
         "decision_variables": [{"name": "x1", "lower": 0, "upper": 1}],
@@ -1088,17 +1098,48 @@ def test_optimization_can_bind_a_specific_training_run(monkeypatch, tmp_path):
     assert response.status_code == 202
     normalized = store.load("versioned_training")["optimization"]["request"]
     assert normalized["training_run_id"] == "train_old"
-    assert normalized["model_id"] == "old_model"
-    assert normalized["model_dir"] == str(tmp_path / "old")
+    assert normalized["target_model_ids"] == {"y1": "old_model"}
+    assert normalized["target_model_dirs"] == {"y1": str(tmp_path / "old")}
 
     latest = service._normalize_optimization({
+        "target_model_ids": {"y1": "new_model"},
         "mode": "multi",
         "objectives": [{"name": "y1", "direction": "min"}],
         "decision_variables": [{"name": "x1", "lower": 0, "upper": 1}],
         "algorithm": {"name": "nsga2", "params": {}},
     }, store.load("versioned_training"))
     assert latest["training_run_id"] == "train_new"
-    assert latest["model_id"] == "new_model"
+    assert latest["target_model_ids"] == {"y1": "new_model"}
+
+
+def test_optimization_requires_one_valid_model_for_every_output(monkeypatch, tmp_path):
+    from mobo.api import service
+
+    client = _client(monkeypatch, tmp_path)
+    monkeypatch.setattr(service.registry, "start", lambda *args: None)
+    _prepare_optimization_doe("model_mapping")
+    base = {
+        "id": "model_mapping", "mode": "multi",
+        "objectives": [{"name": "y1", "direction": "min"}],
+        "decision_variables": [{"name": "x1", "lower": 0, "upper": 1}],
+        "algorithm": {"name": "nsga2", "params": {}},
+    }
+
+    missing = client.post(
+        "/api/v1/hust/doe/optimize/start",
+        json={**base, "target_model_ids": {"y1": "model_model_mapping"}},
+    )
+    wrong = client.post(
+        "/api/v1/hust/doe/optimize/start",
+        json={**base, "target_model_ids": {
+            "y1": "model_model_mapping", "y2": "unknown", "limit": "model_model_mapping",
+        }},
+    )
+
+    assert missing.status_code == 400
+    assert "必须覆盖全部输出" in missing.json["message"]
+    assert wrong.status_code == 400
+    assert wrong.json["message"] == "输出 y2 所选模型不属于当前训练轮次"
 
 
 def test_optimization_result_resources_are_preserved_per_run(monkeypatch, tmp_path):
@@ -1154,6 +1195,7 @@ def test_optimization_accepts_rl_and_rejects_unsupported_algorithm(monkeypatch, 
     _prepare_optimization_doe("rl_opt")
     request = {
         "id": "rl_opt", "mode": "reinforcement_learning",
+        "target_model_ids": _optimization_target_models("rl_opt"),
         "objectives": [
             {"name": "y1", "direction": "min", "weight": 0.6},
             {"name": "y2", "direction": "max", "weight": 0.4},

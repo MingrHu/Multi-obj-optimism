@@ -40,7 +40,7 @@ Docker 环境可执行 `docker compose up --build -d`，容器会自动使用 Gu
 | **`POST /api/v1/hust/doe/train/stop`** | **`id`** | **发出训练中止请求** |
 | **`POST /api/v1/hust/doe/train/startTrain`** | **见下文** | **后台训练并评价** |
 | **`POST /api/v1/hust/doe/inference/startInference`** | **`id`, `inputs`, `fields?`, `model_id?`** | **代理模型批量推理并按目标字段返回** |
-| **`POST /api/v1/hust/doe/optimize/start`** | **`id`, `training_run_id?`, `model_id?` 等，见第9节** | **提交优化并返回新的优化 `run_id`** |
+| **`POST /api/v1/hust/doe/optimize/start`** | **`id`, `training_run_id?`, `target_model_ids` 等，见第9节** | **按输出绑定模型后提交优化，返回新的优化 `run_id`** |
 | **`POST /api/v1/hust/doe/optimize/stop`** | **`id`** | **发出优化中止请求** |
 | **`GET /api/v1/hust/doe/optimize/getById`** | **`id`** | **查询当前优化状态及全部历史轮次的参数与结果索引** |
 | **`GET /api/v1/hust/doe/optimize/process`** | **`id`、可选 `run_id`** | **查询单目标、多目标或强化学习的优化过程曲线** |
@@ -62,6 +62,7 @@ POST 参数使用 JSON 对象；GET 接口不读取请求体
 | `selected_run_id` | 训练进度查询响应 | 本次实际展示的训练轮次，查询历史时可以不同于 `current_run_id` |
 | `training_run_id` | 优化请求字段，以及优化查询的 `request.training_run_id` | 优化所使用的训练轮次，不能传优化 `run_id` |
 | `model_id` | 训练进度的 `models[].model_id` | 某轮训练中生成的模型标识，模型族名称 `RF` 等不能替代它 |
+| `target_model_ids` | 优化请求映射 | 键为输出字段，值为该输出选用的 `model_id`；所有值必须属于同一训练轮次 |
 | `optimization_id` | 优化结果的 `result.optimization_id` | 底层算法执行标识，不是轮次查询参数，不用于查询收敛曲线 |
 | `resource_id` | 业务响应或历史结果中的 `tos-...` | 传给数据获取接口，不是路径，必须与所属 DOE 的 `id` 一起使用 |
 
@@ -71,7 +72,7 @@ POST 参数使用 JSON 对象；GET 接口不读取请求体
 | 训练进度 | query `run_id`，必须是训练轮次 | 返回当前训练聚合状态，并返回全部轮次摘要 |
 | 训练中止 / 删除 | 仅使用 `id`，不支持按轮次操作 | 中止当前训练；删除该 DOE 全部训练记录与模型 |
 | 推理 | 仅 `model_id`，不支持 `training_run_id` | 在当前训练聚合记录的模型中选择；指定历史模型不会自动查找历史轮次 |
-| 优化提交 | JSON `training_run_id`，必须是训练轮次 | 默认使用最近完成的训练轮次；未传 `model_id` 时优先使用逐输出最优组合模型 |
+| 优化提交 | JSON `training_run_id`，必须是训练轮次 | 默认使用最近完成的训练轮次；`target_model_ids` 必须覆盖该轮次全部输出 |
 | 优化中止 | 仅使用 `id`，不支持 `run_id` | 请求中止当前优化 |
 | 优化查询 | 仅 query `id`，不支持 query `run_id` | 返回当前状态及全部 `history`，客户端按 `history[].run_id` 选历史结果 |
 | 优化过程 | query `run_id`，必须是优化轮次 | 使用 `current_run_id`；为空时回退到最后一条历史轮次 |
@@ -693,7 +694,7 @@ DOE 的 `training` 目录落盘为无表头 TSV。`all_var_list`、`input_var_co
 | `evaluation` | object | 否 | 模型评价配置 |
 | `evaluation.enabled` | boolean | 否 | 是否执行评价，默认 `true` |
 | `evaluation.method` | string | 否 | 当前仅支持 `k_fold`，默认 `k_fold` |
-| `evaluation.n_splits` | integer | 否 | 评价折数，范围为1到样本总数，默认5；传1表示一次80%训练、20%测试的留出法评价 |
+| `evaluation.n_splits` | integer | 否 | 评价划分数，范围为1到样本总数，默认5；传1表示一次80%训练、20%测试的留出法评价 |
 | `evaluation.random_state` | integer | 否 | 评价随机种子，默认42 |
 | `evaluation.max_workers` | integer or string | 否 | 不同输出目标的并发线程数，可取1～64或`auto`，默认`auto` |
 
@@ -1166,7 +1167,7 @@ GET /api/v1/hust/doe/train/progress?id=doe_20260622_001&run_id=train_1a2b3c4d5e6
 | `data.model_configs[].param_overrides` | object | 调用方显式提交的覆盖项；界面据此恢复用户设置，空对象表示全部使用默认值 |
 | `data.models` | object array | 已完成训练或正在累计的模型记录 |
 | `data.models[].hyper_params` | object | 生成模型快照和交叉验证时共同使用的完整有效参数 |
-| `data.models[].model_id` | string | 当前 DOE 下唯一的代理模型标识，可用于推理和优化接口 |
+| `data.models[].model_id` | string | 当前 DOE 下唯一的代理模型标识，可用于推理，或作为优化 `target_model_ids` 中某个输出的值 |
 | `data.models[].model_index` | integer or null | 后端代理模型类型编号；逐输出组合模型为 `null` |
 | `data.models[].model_family` | string | `PRG`、`SVR`、`RF`、`KM`、`DNN`，或服务端生成的 `MIXED` |
 | `data.models[].is_composite` | boolean | 是否为逐输出选择最佳候选后生成的组合模型 |
@@ -1182,7 +1183,7 @@ GET /api/v1/hust/doe/train/progress?id=doe_20260622_001&run_id=train_1a2b3c4d5e6
 | `data.models[].evaluation[].model_name` | string | 本项评价对应的代理模型类型 |
 | `data.models[].evaluation[].target_index` | integer | 输出目标从0开始的索引 |
 | `data.models[].evaluation[].target_name` | string | 输出目标名称 |
-| `data.models[].evaluation[].n_splits` | integer | 评价折数；1表示一次80%训练、20%测试的留出法评价 |
+| `data.models[].evaluation[].n_splits` | integer | 评价划分数；1表示一次80%训练、20%测试的留出法评价，不小于2时表示 K 折交叉验证 |
 | `data.models[].evaluation[].n_samples` | integer | 参与模型评价的数据集样本数 |
 | `data.models[].evaluation[].r2_mean` | number | R² 决定系数；单折时为20%测试集 R²，多折时为各折平均值 |
 | `data.models[].evaluation[].r2_std` | number | R² 标准差；单折时固定为0 |
@@ -1398,10 +1399,10 @@ DOE 尚无可用模型或指定的 `model_id` 不属于当前 DOE 时返回 HTTP
 
 **POST /api/v1/hust/doe/optimize/start**
 
-接口支持标准化加权单目标、Pareto 多目标和 PPO 强化学习三种模式。调用方只提交
-目标、约束和设计变量，后端从 DOE 训练记录推导完整字段顺序和变量下标。
-不指定 `model_id` 时，在所选训练轮次中优先选择逐输出组合模型；该轮没有组合模型时选择平均
-评价分最高的普通模型。
+接口支持标准化加权单目标、Pareto 多目标和 PPO 强化学习三种模式。调用方提交
+目标、约束、设计变量和 `target_model_ids`，后端从 DOE 训练记录推导完整字段顺序和变量下标。
+`target_model_ids` 必须为该训练轮次的每个输出显式选择一个候选模型；优化时每个输出
+分别加载所选模型及其 X/Y 标准化器和超参数。`model_id` 不再用于优化提交。
 下列示例显式指定 `training_run_id`，其值来自第4节训练提交响应的 `data.run_id`；
 省略时自动绑定本 DOE 最近完成的训练轮次。
 
@@ -1414,6 +1415,7 @@ DOE 尚无可用模型或指定的 `model_id` 不属于当前 DOE 时返回 HTTP
   "id": "doe_20260622_001",
   "mode": "single",
   "training_run_id": "train_1a2b3c4d5e6f",
+  "target_model_ids": {"Y1": "tr_y1_rf", "Y2": "tr_y2_svr", "Y3": "tr_y3_km", "Y4": "tr_y4_rf", "Y6": "tr_y6_dnn"},
   "objectives": [
     {"name": "Y1", "direction": "min", "weight": 0.7},
     {"name": "Y2", "direction": "max", "weight": 0.3}
@@ -1450,6 +1452,7 @@ Pareto 多目标使用 NSGA-II，各目标不传 `weight`：
   "id": "doe_20260622_001",
   "mode": "multi",
   "training_run_id": "train_1a2b3c4d5e6f",
+  "target_model_ids": {"Y1": "tr_y1_rf", "Y2": "tr_y2_svr", "Y3": "tr_y3_km", "Y4": "tr_y4_rf", "Y6": "tr_y6_dnn"},
   "objectives": [
     {"name": "Y1", "direction": "min"},
     {"name": "Y2", "direction": "min"},
@@ -1482,6 +1485,7 @@ Pareto 多目标使用 NSGA-II，各目标不传 `weight`：
   "id": "doe_20260622_001",
   "mode": "reinforcement_learning",
   "training_run_id": "train_1a2b3c4d5e6f",
+  "target_model_ids": {"Y1": "tr_y1_rf", "Y2": "tr_y2_svr", "Y3": "tr_y3_km", "Y4": "tr_y4_rf", "Y6": "tr_y6_dnn"},
   "objectives": [
     {"name": "Y1", "direction": "min", "weight": 0.6},
     {"name": "Y6", "direction": "max", "weight": 0.4}
@@ -1517,7 +1521,7 @@ PPO 的观测是当前设计变量，动作是相对于变量范围的增量。�
 |---|---|---:|---|
 | `id` | string | 是 | 已完成代理模型训练的 DOE 唯一标识 |
 | `training_run_id` | string | 否 | 指定本 DOE 下已经完成的训练轮次；不传或空字符串使用最近完成的训练轮次 |
-| `model_id` | string | 否 | 指定所选训练轮次内的模型；省略时优先选择该轮逐输出组合模型，否则选择评分最高普通模型 |
+| `target_model_ids` | object | 是 | 键为该训练轮次的全部输出字段，值为各输出选用的候选 `model_id`；不得缺失、多传或引用其他轮次模型 |
 | `mode` | string | 是 | `single`、`multi` 或 `reinforcement_learning` |
 | `objectives` | object array | 是 | 优化目标配置，名称必须是所选模型的输出字段 |
 | `objectives[].name` | string | 是 | 输出目标名称 |
@@ -1573,7 +1577,7 @@ PPO 的观测是当前设计变量，动作是相对于变量范围的增量。�
     "progress": 0,
     "mode": "reinforcement_learning",
     "algorithm": "ppo",
-    "model_id": "tr_doe_20260622_001_2_a1b2c3",
+    "target_model_ids": {"Y1": "tr_y1_rf", "Y2": "tr_y2_svr", "Y3": "tr_y3_km", "Y4": "tr_y4_rf", "Y6": "tr_y6_dnn"},
     "objectives": ["Y1", "Y6"]
   }
 }
@@ -1590,7 +1594,7 @@ PPO 的观测是当前设计变量，动作是相对于变量范围的增量。�
 | `data.progress` | integer | 初始进度，固定为0 |
 | `data.mode` | string | 本次优化模式 |
 | `data.algorithm` | string | 实际使用的 `nsga2` 或 `ppo` |
-| `data.model_id` | string | 实际使用的代理模型标识 |
+| `data.target_model_ids` | object | 本次各输出实际绑定的代理模型标识 |
 | `data.objectives` | string array | 本次优化目标名称 |
 
 HTTP 202 只表示任务已接受。算法完成、失败或中止状态通过优化查询接口获取。
@@ -1622,12 +1626,12 @@ DOE 不存在返回 HTTP 404：
 }
 ```
 
-DOE 没有可用代理模型或优化已在运行时返回 HTTP 409：
+DOE 所选模型产物不可用或优化已在运行时返回 HTTP 409：
 
 ```json
 {
   "code": 409,
-  "message": "没有可用的已训练代理模型",
+  "message": "输出 Y1 所选模型缺少模型目录",
   "data": {}
 }
 ```
@@ -1798,7 +1802,7 @@ GET /api/v1/hust/doe/optimize/getById?id=doe_20260622_001
 {
   "optimization_id": "opt_doe_20260622_001_a1b2c3",
   "task_info": {
-    "model_id": "tr_doe_20260622_001_2_a1b2c3",
+    "target_model_ids": {"Y1": "tr_y1_rf", "Y2": "tr_y2_svr"},
     "optimizer": "nsga2",
     "mode": "multi",
     "decision_var_names": ["X1", "X2"],
@@ -1856,7 +1860,7 @@ GET /api/v1/hust/doe/optimize/getById?id=doe_20260622_001
 | `request` 字段 | 类型 | 含义 |
 |---|---|---|
 | `training_run_id` | string或null | 实际绑定的训练轮次，历史兼容记录可能为空 |
-| `model_id` | string | 实际选用的模型标识 |
+| `target_model_ids` | object | 各输出字段与实际选用模型标识的映射 |
 | `requested_mode` | string | 客户端请求的 `single/multi/reinforcement_learning`，界面应使用它恢复模式 |
 | `mode` | string | 内部目标组合方式，仅为 `single/multi`；强化学习此字段为 `single` |
 | `optimizer` | string | 内部算法名 `nsga2/rl`，其中 `rl` 对应提交接口的 `ppo` |
@@ -1882,7 +1886,7 @@ GET /api/v1/hust/doe/optimize/getById?id=doe_20260622_001
   "progress": 100,
   "request": {
     "training_run_id": "train_1a2b3c4d5e6f",
-    "model_id": "tr_doe_20260622_001_2_a1b2c3",
+    "target_model_ids": {"Y1": "tr_y1_rf", "Y2": "tr_y2_svr"},
     "requested_mode": "multi",
     "mode": "multi",
     "objective_names": ["Y1", "Y2"],
@@ -1904,7 +1908,7 @@ GET /api/v1/hust/doe/optimize/getById?id=doe_20260622_001
   "result": {
     "optimization_id": "opt_doe_20260622_001_a1b2c3",
     "task_info": {
-      "model_id": "tr_doe_20260622_001_2_a1b2c3",
+      "target_model_ids": {"Y1": "tr_y1_rf", "Y2": "tr_y2_svr"},
       "optimizer": "nsga2",
       "mode": "multi",
       "decision_var_names": ["X1", "X2"],
@@ -2467,7 +2471,7 @@ GET /api/v1/hust/doe/train/hyperparameters
 2. 保存真实数据集或生成演示数据集，保存 `resource_id` 和字段顺序
 3. 提交训练，保存 `data.run_id` 为客户端的 `training_run_id`
 4. 使用 `GET /api/v1/hust/doe/train/progress?id=<id>&run_id=<training_run_id>` 轮询，完成后读取模型及评价
-5. 提交优化时传 `training_run_id`，可选 `model_id`，保存响应的 `data.run_id` 为客户端的 `optimization_run_id`
+5. 提交优化时传 `training_run_id` 和覆盖全部输出的 `target_model_ids`，保存响应的 `data.run_id` 为客户端的 `optimization_run_id`
 6. 使用 `GET /api/v1/hust/doe/optimize/getById?id=<id>` 查询状态，在history中匹配 `optimization_run_id`
 7. 使用 `GET /api/v1/hust/doe/optimize/process?id=<id>&run_id=<optimization_run_id>` 查询该轮单条x/y曲线
 8. 完成后取该轮 `result.resource_id`，按第2节获取工艺参数、目标值和feasible，不能用run_id替代resource_id

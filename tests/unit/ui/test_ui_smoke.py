@@ -375,7 +375,7 @@ def test_running_training_uses_active_button_and_model_hint(monkeypatch):
 
     assert page.start_button.text() == "正在训练…"
     assert not page.start_button.isEnabled()
-    assert page.training_record_hint.text() == "正在进行交叉验证：DNN（5/5）。"
+    assert page.training_record_hint.text() == "正在进行模型评价：DNN（5/5）。"
     assert "尚未开始训练" not in page.training_record_hint.text()
     app.processEvents()
 
@@ -1224,7 +1224,9 @@ def test_model_page_status_and_dataset_requests_have_timeouts(monkeypatch):
     app.processEvents()
 
 
-def test_model_score_chart_shows_values_and_full_score_tooltip(monkeypatch):
+def test_model_score_chart_drills_from_targets_into_models_and_switches_metric(
+    monkeypatch,
+):
     pytest.importorskip("PySide6")
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtCore import QPointF
@@ -1233,33 +1235,117 @@ def test_model_score_chart_shows_values_and_full_score_tooltip(monkeypatch):
     module = importlib.import_module("work_platform.mobo_ui.app")
     app = QApplication.instance() or QApplication([])
     page = module.ModelPage(module.QThreadPool.globalInstance(), lambda: None)
-    page.update_score_chart([
-        {"model_family": "PRG", "score": 0.860123},
-        {"model_family": "SVR", "score": 0.842567},
-    ])
+    models = [
+        {
+            "model_family": "PRG", "score": 0.81, "target_names": ["载荷"],
+            "evaluation": [{
+                "model_name": "PRG", "target_name": "载荷",
+                "score": 0.81, "r2_mean": 0.91, "nmae_mean": 1.2,
+            }],
+        },
+        {
+            "model_family": "RF", "score": 0.86, "target_names": ["载荷"],
+            "evaluation": [{
+                "model_name": "RF", "target_name": "载荷",
+                "score": 0.86, "r2_mean": 0.95, "nmae_mean": 1.1,
+            }],
+        },
+        {
+            "model_family": "PRG", "score": 0.88, "target_names": ["晶粒"],
+            "evaluation": [{
+                "model_name": "PRG", "target_name": "晶粒",
+                "score": 0.88, "r2_mean": 0.93, "nmae_mean": 1.0,
+            }],
+        },
+        {
+            "model_family": "RF", "score": 0.84, "target_names": ["晶粒"],
+            "evaluation": [{
+                "model_name": "RF", "target_name": "晶粒",
+                "score": 0.84, "r2_mean": 0.96, "nmae_mean": 1.3,
+            }],
+        },
+        {
+            "model_family": "MIXED", "score": 0.99,
+            "target_names": ["载荷", "晶粒"], "is_composite": True,
+        },
+    ]
+    page.update_score_chart(models)
 
     series = page.score_chart.chart().series()[0]
     values = series.barSets()[0]
-    assert series.isLabelsVisible()
-    assert series.labelsPrecision() == 3
-    assert series.labelsPosition() == module.QAbstractBarSeries.LabelsPosition.LabelsInsideEnd
+    assert not series.isLabelsVisible()
+    assert [entry["target"] for entry in page.score_entries] == ["载荷", "晶粒"]
+    assert [entry["model"] for entry in page.score_entries] == ["RF", "PRG"]
+    assert page.score_back_button.isHidden()
     values.hovered.emit(True, 0)
-    assert page.score_detail.text() == "当前模型  PRG：0.860123"
+    assert page.score_detail.text() == "当前  载荷 / RF · 综合评价分数：0.860000"
     values.hovered.emit(False, 0)
-    assert "悬停或点击" in page.score_detail.text()
+    assert "点击输出变量" in page.score_detail.text()
+    values.clicked.emit(0)
+    assert page.score_detail_target == "载荷"
+    assert [entry["model"] for entry in page.score_entries] == ["PRG", "RF"]
+
+    page.score_metric.setCurrentIndex(page.score_metric.findData("r2_mean"))
+    assert [entry["value"] for entry in page.score_entries] == [0.91, 0.95]
+    assert "决定系数 R²" in page.score_chart.chart().title()
     page.resize(1100, 760)
     page.show()
     app.processEvents()
+    assert not page.score_back_button.isHidden()
+    series = page.score_chart.chart().series()[0]
     hover_position = page.score_chart.chart().mapToPosition(
         QPointF(0.5, 0.4), series
     )
     page._score_chart_mouse_moved(hover_position)
     app.processEvents()
-    assert page.score_detail.text() == "当前模型  PRG：0.860123"
-    values.clicked.emit(1)
-    assert page.score_detail.text() == "已选择  SVR：0.842567"
-    values.hovered.emit(False, 1)
-    assert page.score_detail.text() == "已选择  SVR：0.842567"
+    assert page.score_detail.text() == "当前  载荷 / PRG · 决定系数 R²：0.910000"
+    page.score_chart.chart().series()[0].barSets()[0].clicked.emit(1)
+    assert page.score_detail.text() == "已选择  载荷 / RF · 决定系数 R²：0.950000"
+    page._show_score_overview()
+    assert page.score_back_button.isHidden()
+    assert [entry["model"] for entry in page.score_entries] == ["RF", "RF"]
+
+    page.score_metric.setCurrentIndex(page.score_metric.findData("nmae_score"))
+    assert page.score_entries[0]["value"] == pytest.approx(1 / 2.1)
+    app.processEvents()
+
+
+def test_model_status_summary_distinguishes_single_and_multi_output(monkeypatch):
+    pytest.importorskip("PySide6")
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    module = importlib.import_module("work_platform.mobo_ui.app")
+    app = QApplication.instance() or QApplication([])
+    page = module.ModelPage(module.QThreadPool.globalInstance(), lambda: None)
+    page._update_model_summary(
+        [{
+            "model_family": "MIXED", "is_composite": True,
+            "target_models": {
+                "载荷": {"model_family": "RF", "r2_mean": 0.95},
+                "晶粒": {"model_family": "SVR", "r2_mean": 0.93},
+                "圆度": {"model_family": "RF", "r2_mean": 0.91},
+            },
+        }],
+        ["载荷", "晶粒", "圆度"],
+    )
+
+    assert page.best_model_title.text() == "逐输出推荐模型"
+    assert page.best_model.text() == "3 个输出已选模"
+    assert "SVR×1" in page.best_model_detail.text()
+    assert "RF×2" in page.best_model_detail.text()
+    assert "按各输出 R² 选择" in page.best_model_detail.text()
+
+    page._update_model_summary(
+        [{
+            "model_family": "RF",
+            "evaluation": [{"target_name": "载荷", "r2_mean": 0.956}],
+        }],
+        ["载荷"],
+    )
+    assert page.best_model_title.text() == "最佳模型"
+    assert page.best_model.text() == "RF · R² 0.956"
+    assert page.best_model_detail.text() == "载荷 · 按该输出的 R² 选择"
     app.processEvents()
 
 
@@ -1513,6 +1599,8 @@ def test_training_and_optimization_buttons_follow_runtime_state(monkeypatch):
     optimization_page.doe_id.addItem("任务", "doe-1")
     optimization_page.doe_id.setCurrentIndex(0)
     optimization_page.current_training_run_id = "train-1"
+    optimization_page.target_model_options = {"load": [{"model_id": "rf"}]}
+    optimization_page.target_model_ids = {"load": "rf"}
     optimization_page.set_schema({
         "inputs": [{"name": "temperature", "lower": 900, "upper": 1100}],
         "outputs": ["load"],
@@ -1611,12 +1699,20 @@ def test_training_history_is_selectable_in_model_and_optimization_pages(monkeypa
         {
             "run_id": "train-old", "status": "finished",
             "updated_at": "2026-09-24T10:00:00+08:00",
-            "models": [{"model_id": "rf-old", "model_family": "RF", "score": 0.8}],
+            "models": [{
+                "model_id": "rf-old", "model_family": "RF", "score": 0.8,
+                "target_names": ["y"],
+                "evaluation": [{"target_name": "y", "r2_mean": 0.8}],
+            }],
         },
         {
             "run_id": "train-new", "status": "finished",
             "updated_at": "2026-09-24T11:00:00+08:00",
-            "models": [{"model_id": "rf-new", "model_family": "RF", "score": 0.9}],
+            "models": [{
+                "model_id": "rf-new", "model_family": "RF", "score": 0.9,
+                "target_names": ["y"],
+                "evaluation": [{"target_name": "y", "r2_mean": 0.9}],
+            }],
         },
     ]
     pool = module.QThreadPool.globalInstance()
@@ -1641,9 +1737,61 @@ def test_training_history_is_selectable_in_model_and_optimization_pages(monkeypa
     })
     assert optimization_page.training_run.count() == 2
     assert optimization_page.current_training_run_id == "train-new"
-    assert optimization_page.model_selector.count() == 2
-    assert optimization_page.model_selector.currentData() == ""
-    assert "RF" in optimization_page.model_selector.itemText(1)
+    assert optimization_page.target_model_ids == {"y": "rf-new"}
+    assert optimization_page.model_selection_button.isEnabled()
+    assert optimization_page.model_selection_button.text() == "配置逐输出模型（1/1）"
+    app.processEvents()
+
+
+def test_optimization_page_presents_per_output_selection_and_context_help(monkeypatch):
+    pytest.importorskip("PySide6")
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication, QToolButton
+
+    module = importlib.import_module("work_platform.mobo_ui.app")
+    app = QApplication.instance() or QApplication([])
+    page = module.OptimizationPage(module.QThreadPool.globalInstance(), lambda: None)
+    page._populate_optimization_models({
+        "target_names": ["load", "grain"],
+        "models": [
+            {
+                "model_id": "load-rf", "model_family": "RF",
+                "target_names": ["load"], "score": 0.95,
+                "evaluation": [{"target_name": "load", "r2_mean": 0.95}],
+            },
+            {
+                "model_id": "grain-svr", "model_family": "SVR",
+                "target_names": ["grain"], "score": 0.94,
+                "evaluation": [{"target_name": "grain", "r2_mean": 0.94}],
+            },
+            {
+                "model_id": "mixed", "model_family": "MIXED",
+                "target_names": ["load", "grain"], "is_composite": True,
+                "target_models": {
+                    "load": {"model_family": "RF", "r2_mean": 0.95},
+                    "grain": {"model_family": "SVR", "r2_mean": 0.94},
+                },
+            },
+            {
+                "model_id": "legacy-km", "model_family": "KM",
+                "target_names": ["load", "grain"], "score": 0.91,
+            },
+        ],
+    })
+
+    assert page.target_model_ids == {"load": "load-rf", "grain": "grain-svr"}
+    assert page.model_selection_button.text() == "配置逐输出模型（2/2）"
+    assert page.model_selection_hint.text() == "已配置 2/2 个输出：SVR×1 · RF×1"
+    assert "load：RF · R² 0.950" in page.optimization_model_help.help_message
+    dialog = module.OptimizationModelSelectionDialog(
+        page.target_model_options, page.target_model_ids,
+    )
+    assert dialog.selectors["load"].count() == 2
+    assert dialog.selectors["grain"].count() == 2
+    dialog.close()
+    assert len(page.findChildren(QToolButton, "Help")) >= 7
+    assert page.ga_population.toolTip()
+    assert page.ppo_constraint_penalty.toolTip()
     app.processEvents()
 
 
@@ -1704,12 +1852,20 @@ def test_ga_and_ppo_have_separate_parameter_panels_and_payloads(monkeypatch):
     page.doe_id.addItem("任务", "doe-1")
     page.doe_id.setCurrentIndex(0)
     page.current_training_run_id = "train-1"
-    page._populate_optimization_models({"models": [
-        {"model_id": "model-rf", "model_family": "RF", "score": 0.91},
-        {"model_id": "model-svr", "model_family": "SVR", "score": 0.85},
+    page._populate_optimization_models({"target_names": ["load"], "models": [
+        {
+            "model_id": "model-rf", "model_family": "RF", "score": 0.91,
+            "target_names": ["load"],
+            "evaluation": [{"target_name": "load", "r2_mean": 0.91}],
+        },
+        {
+            "model_id": "model-svr", "model_family": "SVR", "score": 0.85,
+            "target_names": ["load"],
+            "evaluation": [{"target_name": "load", "r2_mean": 0.85}],
+        },
     ]})
-    page.model_selector.setCurrentIndex(page.model_selector.findData("model-svr"))
-    page._optimization_model_selected(page.model_selector.currentIndex())
+    page.target_model_ids["load"] = "model-svr"
+    page._refresh_optimization_model_hint()
     page.set_schema({
         "inputs": [{"name": "temperature", "lower": 900, "upper": 1100}],
         "outputs": ["load"],
@@ -1727,7 +1883,7 @@ def test_ga_and_ppo_have_separate_parameter_panels_and_payloads(monkeypatch):
     assert page.start_button.text() == "正在优化…"
     assert not page.start_button.isEnabled()
     assert ga_payload["training_run_id"] == "train-1"
-    assert ga_payload["model_id"] == "model-svr"
+    assert ga_payload["target_model_ids"] == {"load": "model-svr"}
     assert ga_payload["algorithm"]["params"]["pop_size"] == 80
     assert ga_payload["algorithm"]["params"]["n_offsprings"] == 30
 

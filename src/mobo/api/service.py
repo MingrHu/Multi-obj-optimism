@@ -1294,7 +1294,7 @@ def start_optimization(payload: dict[str, Any]) -> dict[str, Any]:
     state = store.load(doe_id)
     if registry.running(doe_id, "optimization"):
         raise ConflictError("optimization 已在运行")
-    # 归一化算法别名并绑定指定模型或当前评分最高的模型
+    # 归一化算法别名并绑定同一训练轮次的逐输出模型
     request = _normalize_optimization(payload, state)
     run_id = f"run_{uuid.uuid4().hex[:12]}"
     response = {
@@ -1302,7 +1302,8 @@ def start_optimization(payload: dict[str, Any]) -> dict[str, Any]:
         "run_id": run_id,
         "mode": request["requested_mode"],
         "algorithm": "ppo" if request["optimizer"] == "rl" else "nsga2",
-        "model_id": request["model_id"], "objectives": request["objective_names"],
+        "target_model_ids": request["target_model_ids"],
+        "objectives": request["objective_names"],
     }
     store.update(doe_id, status="running", stage="optimization", progress=5)
     optimization = state.get("optimization") or {}
@@ -1367,10 +1368,10 @@ def _normalize_optimization(payload, state) -> dict[str, Any]:
     selected_training_run_id = (
         training.get("run_id") or state.get("training", {}).get("current_run_id")
     )
-    model = _select_model(
-        state, payload.get("model_id"), selected_training_run_id,
-    )
     input_names, output_names = all_names[:input_count], all_names[input_count:]
+    target_model_ids, target_model_dirs = _normalize_target_model_selection(
+        payload.get("target_model_ids"), training, output_names,
+    )
     objective_names, objective_config = _normalize_optimization_objectives(
         payload.get("objectives"), output_names, mode
     )
@@ -1382,11 +1383,9 @@ def _normalize_optimization(payload, state) -> dict[str, Any]:
         payload.get("decision_variables"), input_names
     )
     optimizer, config = _normalize_optimizer(payload.get("algorithm"), mode)
-    required_targets = {*objective_names, *[item["target_obj"] for item in constraints]}
-    if not required_targets <= set(model.get("target_names") or []):
-        raise ApiError("目标或约束字段不在所选代理模型的输出字段中")
     return {
-        "model_id": model["model_id"], "model_dir": model.get("model_dir"),
+        "target_model_ids": target_model_ids,
+        "target_model_dirs": target_model_dirs,
         "training_run_id": selected_training_run_id,
         "mode": "single" if mode != "multi" else "multi",
         "objective_names": objective_names, "objective_config": objective_config,
@@ -1397,6 +1396,41 @@ def _normalize_optimization(payload, state) -> dict[str, Any]:
         "optimizer_config": config, "output_config": {}, "optimizer": optimizer,
         "requested_mode": mode,
     }
+
+
+def _normalize_target_model_selection(value, training, output_names):
+    if not isinstance(value, dict) or not value:
+        raise ApiError("target_model_ids 必须是逐输出模型映射")
+    if set(value) != set(output_names):
+        missing = [name for name in output_names if name not in value]
+        extra = [name for name in value if name not in output_names]
+        details = []
+        if missing:
+            details.append("缺少：" + "、".join(missing))
+        if extra:
+            details.append("未知：" + "、".join(extra))
+        raise ApiError("target_model_ids 必须覆盖全部输出（" + "；".join(details) + "）")
+    models_by_id = {
+        str(item.get("model_id")): item
+        for item in training.get("models") or []
+        if item.get("model_id") and not item.get("is_composite")
+    }
+    selected_ids, selected_dirs = {}, {}
+    for target in output_names:
+        model_id = value[target]
+        if not isinstance(model_id, str) or not model_id.strip():
+            raise ApiError(f"target_model_ids.{target} 必须是非空字符串")
+        model = models_by_id.get(model_id)
+        if model is None:
+            raise ApiError(f"输出 {target} 所选模型不属于当前训练轮次")
+        if target not in (model.get("target_names") or []):
+            raise ApiError(f"所选模型不包含输出字段：{target}")
+        model_dir = model.get("model_dir")
+        if not isinstance(model_dir, str) or not model_dir:
+            raise ConflictError(f"输出 {target} 所选模型缺少模型目录")
+        selected_ids[target] = model_id
+        selected_dirs[target] = model_dir
+    return selected_ids, selected_dirs
 
 
 def _normalize_optimization_objectives(value, output_names, mode):
@@ -1677,11 +1711,12 @@ def get_optimization(doe_id: str) -> dict[str, Any]:
     request = None if raw_request is None else dict(raw_request)
     if request is not None:
         request.pop("model_dir", None)
+        request.pop("target_model_dirs", None)
     for run in history:
         if isinstance(run.get("request"), dict):
             run["request"] = {
                 key: value for key, value in run["request"].items()
-                if key != "model_dir"
+                if key not in {"model_dir", "target_model_dirs"}
             }
     return {
         "id": doe_id,

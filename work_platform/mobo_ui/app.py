@@ -10,7 +10,6 @@ from pathlib import Path
 from typing import Any, Callable
 
 from PySide6.QtCharts import (
-    QAbstractBarSeries,
     QBarCategoryAxis,
     QBarSeries,
     QBarSet,
@@ -98,7 +97,9 @@ from .theme import (
 from .ui_helpers import HelpButton, configure_scrollable_tabs
 
 
-def card(title: str | None = None) -> tuple[QFrame, QVBoxLayout]:
+def card(
+    title: str | None = None, help_text: str | None = None,
+) -> tuple[QFrame, QVBoxLayout]:
     frame = QFrame()
     frame.setObjectName("Card")
     layout = QVBoxLayout(frame)
@@ -107,7 +108,14 @@ def card(title: str | None = None) -> tuple[QFrame, QVBoxLayout]:
     if title:
         label = QLabel(title)
         label.setObjectName("Section")
-        layout.addWidget(label)
+        if help_text:
+            heading = QHBoxLayout()
+            heading.addWidget(label)
+            heading.addWidget(HelpButton(title, help_text, frame))
+            heading.addStretch()
+            layout.addLayout(heading)
+        else:
+            layout.addWidget(label)
     return frame, layout
 
 
@@ -675,6 +683,78 @@ class ModelHyperparameterDialog(QDialog):
         for key, invalid, operator in checks:
             if key in spec and invalid:
                 raise ValueError(f"{name} 必须 {operator} {spec[key]}")
+
+
+class OptimizationModelSelectionDialog(QDialog):
+    """为每个输出选择同一训练轮次内的一个候选模型。"""
+
+    def __init__(
+        self,
+        options: dict[str, list[dict[str, Any]]],
+        selected: dict[str, str],
+        parent: QWidget | None = None,
+    ):
+        super().__init__(parent)
+        self.options = options
+        self.selectors: dict[str, QComboBox] = {}
+        self.setWindowTitle("逐输出选择代理模型")
+        self.resize(760, min(680, 190 + max(1, len(options)) * 48))
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(22, 20, 22, 18)
+        hint = QLabel(
+            "每个输出可独立选择该训练轮次中的候选模型。"
+            "列表默认按该输出的 R² 从高到低排列。"
+        )
+        hint.setObjectName("Caption")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+        table = QTableWidget(len(options), 2)
+        table.setHorizontalHeaderLabels(["输出变量", "代理模型"])
+        table.verticalHeader().setVisible(False)
+        table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        for row, (target, models) in enumerate(options.items()):
+            table.setItem(row, 0, QTableWidgetItem(target))
+            selector = QComboBox()
+            for model in models:
+                model_id = str(model["model_id"])
+                family = str(model.get("model_family") or "模型")
+                score = self._target_r2(model, target)
+                suffix = f"R² {score:.3f}" if score is not None else "暂无 R²"
+                selector.addItem(f"{family} · {suffix} · {model_id}", model_id)
+            index = selector.findData(selected.get(target))
+            selector.setCurrentIndex(index if index >= 0 else 0)
+            selector.setEnabled(bool(models))
+            table.setCellWidget(row, 1, selector)
+            self.selectors[target] = selector
+        table.resizeRowsToContents()
+        layout.addWidget(table, 1)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    @staticmethod
+    def _target_r2(model: dict[str, Any], target: str) -> float | None:
+        detail = next(
+            (
+                item for item in model.get("evaluation") or []
+                if item.get("target_name") == target
+            ),
+            {},
+        )
+        return finite_float(detail.get("r2_mean"))
+
+    def selection(self) -> dict[str, str]:
+        return {
+            target: str(selector.currentData() or "")
+            for target, selector in self.selectors.items()
+            if selector.currentData()
+        }
 
 
 class AlgorithmParameterDialog(QDialog):
@@ -1572,7 +1652,9 @@ class ModelPage(QWidget, AsyncMixin):
         self.dataset_request_key = ""
         self.loaded_dataset_key = ""
         self.dataset_source_name = ""
-        self.score_entries: list[tuple[str, float]] = []
+        self.score_models: list[dict[str, Any]] = []
+        self.score_entries: list[dict[str, Any]] = []
+        self.score_detail_target = ""
         self.selected_score_index: int | None = None
         self.hovered_score_index: int | None = None
         self.score_series: QBarSeries | None = None
@@ -1603,7 +1685,7 @@ class ModelPage(QWidget, AsyncMixin):
         layout = QVBoxLayout(body)
         layout.setContentsMargins(28, 24, 28, 24)
         layout.setSpacing(16)
-        layout.addLayout(page_header("代理模型工作台", "选择训练数据与模型族，后台训练并对比交叉验证评分。"))
+        layout.addLayout(page_header("代理模型工作台", "选择训练数据与模型族，后台训练并对比模型评价结果。"))
 
         split = QHBoxLayout()
         config, config_layout = card("训练配置")
@@ -1673,7 +1755,7 @@ class ModelPage(QWidget, AsyncMixin):
         input_row.addWidget(QLabel("默认输入列数"))
         input_row.addWidget(self.input_count)
         input_row.addSpacing(12)
-        input_row.addWidget(QLabel("评价折数"))
+        input_row.addWidget(QLabel("评价划分数"))
         input_row.addWidget(self.folds)
         self.edit_fields_button = QPushButton("编辑字段名称与角色")
         self.edit_fields_button.clicked.connect(self.edit_fields)
@@ -1682,8 +1764,10 @@ class ModelPage(QWidget, AsyncMixin):
             "字段与评价设置",
             "“默认输入列数”会把前 N 列设为输入，也可通过"
             "“编辑字段名称与角色”逐列调整。\n\n"
-            "评价折数为 1 时，使用固定随机种子的 80% 训练集和 "
-            "20% 测试集；不小于 2 时使用 K 折交叉验证。",
+            "评价划分数为 1 时，执行一次固定随机种子的留出评价："
+            "80% 样本训练，20% 样本测试。\n\n"
+            "评价划分数不小于 2 时，执行 K 折交叉验证：每次使用 1 折测试，"
+            "其余 K-1 折训练，最后对 K 次评价指标取平均。",
             self,
         ))
         input_row.addStretch()
@@ -1751,10 +1835,16 @@ class ModelPage(QWidget, AsyncMixin):
         status_layout.addWidget(self.updated_label)
         status_layout.addWidget(self.training_record_hint)
         status_layout.addWidget(self.progress)
+        self.best_model_title = QLabel("训练结果")
         self.best_model = QLabel("—")
         self.best_model.setObjectName("Metric")
-        status_layout.addWidget(QLabel("当前最佳模型"))
+        self.best_model.setWordWrap(True)
+        self.best_model_detail = QLabel("")
+        self.best_model_detail.setObjectName("Caption")
+        self.best_model_detail.setWordWrap(True)
+        status_layout.addWidget(self.best_model_title)
         status_layout.addWidget(self.best_model)
+        status_layout.addWidget(self.best_model_detail)
         status_layout.addStretch()
         split.addWidget(status, 3)
         layout.addLayout(split)
@@ -1766,6 +1856,30 @@ class ModelPage(QWidget, AsyncMixin):
         tabs.addTab(self.preview, "数据预览")
         score_widget = QWidget()
         score_layout = QVBoxLayout(score_widget)
+        score_controls = QHBoxLayout()
+        score_controls.addWidget(QLabel("评价指标"))
+        self.score_metric = QComboBox()
+        self.score_metric.addItem("综合评价分数", "score")
+        self.score_metric.addItem("决定系数 R²", "r2_mean")
+        self.score_metric.addItem("归一化误差得分", "nmae_score")
+        self.score_metric.setToolTip("切换模型评价图使用的指标")
+        self.score_metric.currentIndexChanged.connect(self._score_metric_changed)
+        score_controls.addWidget(self.score_metric)
+        score_controls.addWidget(HelpButton(
+            "模型评价指标",
+            "综合评价分数：结合 R² 与训练效率的综合分数，默认显示。\n\n"
+            "决定系数 R²：划分数为 1 时显示留出测试集 R²；"
+            "不小于 2 时显示 K 折评价的平均 R²。\n\n"
+            "归一化误差得分：由 1/(1+NMAE) 转换得到，用于在不同量纲"
+            "的输出之间统一比较。三项指标均为越高越好。",
+            score_widget,
+        ))
+        score_controls.addStretch()
+        self.score_back_button = QPushButton("返回输出总览")
+        self.score_back_button.clicked.connect(self._show_score_overview)
+        self.score_back_button.hide()
+        score_controls.addWidget(self.score_back_button)
+        score_layout.addLayout(score_controls)
         self.score_chart = QChartView()
         self.score_chart.setRenderHint(QPainter.RenderHint.Antialiasing)
         self.score_chart.setMinimumHeight(280)
@@ -1773,7 +1887,7 @@ class ModelPage(QWidget, AsyncMixin):
         self.score_chart.viewport().setMouseTracking(True)
         self.score_chart.viewport().installEventFilter(self)
         score_layout.addWidget(self.score_chart)
-        self.score_detail = QLabel("悬停或点击柱子可查看模型名称与完整分数")
+        self.score_detail = QLabel("悬停查看分数；点击输出变量查看各模型对比")
         self.score_detail.setObjectName("Caption")
         self.score_detail.setAlignment(Qt.AlignmentFlag.AlignCenter)
         score_layout.addWidget(self.score_detail)
@@ -2161,7 +2275,7 @@ class ModelPage(QWidget, AsyncMixin):
             self.stage_label.setText("阶段：未开始")
             self.updated_label.setText("最近更新：—")
             self.progress.setValue(0)
-            self.best_model.setText("—")
+            self._update_model_summary([], [])
             self.update_score_chart([])
         self.training_record_hint.setText(f"DOE“{task_name}”已删除。")
         self._refresh_training_actions()
@@ -2723,7 +2837,7 @@ class ModelPage(QWidget, AsyncMixin):
                 if current_index and total_models:
                     model_detail += f"（{current_index}/{total_models}）"
             if str(data.get("stage")) == "evaluating":
-                self.training_record_hint.setText(f"正在进行交叉验证{model_detail}。")
+                self.training_record_hint.setText(f"正在进行模型评价{model_detail}。")
             else:
                 self.training_record_hint.setText(f"正在训练代理模型{model_detail}。")
         elif state == "stopping":
@@ -2747,14 +2861,86 @@ class ModelPage(QWidget, AsyncMixin):
                 ]),
                 "outputs": list(data["target_names"]),
             })
-        scored = [item for item in models if item.get("score") is not None]
-        if scored:
-            best = max(scored, key=lambda item: item["score"])
-            self.best_model.setText(f"{best.get('model_family')}  {best['score']:.3f}")
+        self._update_model_summary(models, list(data.get("target_names") or []))
         self.update_score_chart(models)
         if state in {"finished", "failed", "stopped", "not_started"}:
             self.timer.stop()
         self._refresh_training_actions()
+
+    def _update_model_summary(
+        self, models: list[dict[str, Any]], target_names: list[str],
+    ) -> None:
+        selected: dict[str, tuple[str, float | None]] = {}
+        composite = next(
+            (
+                model for model in models
+                if model.get("model_family") == "MIXED" or model.get("is_composite")
+            ),
+            None,
+        )
+        if composite and isinstance(composite.get("target_models"), dict):
+            for target, detail in composite["target_models"].items():
+                if not isinstance(detail, dict):
+                    continue
+                family = str(detail.get("model_family") or "").strip()
+                if family:
+                    selected[str(target)] = (
+                        family, finite_float(detail.get("r2_mean")),
+                    )
+        if not selected:
+            for model in models:
+                if model.get("model_family") == "MIXED" or model.get("is_composite"):
+                    continue
+                family = str(model.get("model_family") or "").strip()
+                for summary in model.get("evaluation") or []:
+                    target = str(summary.get("target_name") or "").strip()
+                    r2 = finite_float(summary.get("r2_mean"))
+                    if not family or not target or r2 is None:
+                        continue
+                    current = selected.get(target)
+                    if current is None or current[1] is None or r2 > current[1]:
+                        selected[target] = (family, r2)
+
+        targets = list(dict.fromkeys(target_names or selected.keys()))
+        if not targets and not selected:
+            self.best_model_title.setText("训练结果")
+            self.best_model.setText("—")
+            self.best_model_detail.clear()
+            return
+        if len(targets) <= 1:
+            target = targets[0] if targets else next(iter(selected))
+            family, r2 = selected.get(target, ("—", None))
+            self.best_model_title.setText("最佳模型")
+            self.best_model.setText(
+                f"{family} · R² {r2:.3f}" if r2 is not None else family
+            )
+            self.best_model_detail.setText(
+                f"{target} · 按该输出的 R² 选择"
+                if family != "—" else "正在生成评价结果…"
+            )
+            return
+
+        self.best_model_title.setText("逐输出推荐模型")
+        selected_count = len(selected)
+        total_count = len(targets)
+        self.best_model.setText(
+            f"{selected_count} 个输出已选模"
+            if selected_count == total_count
+            else f"{selected_count}/{total_count} 个输出已选模"
+        )
+        family_counts = {
+            family: sum(1 for selected_family, _r2 in selected.values()
+                        if selected_family == family)
+            for family in self.model_families
+        }
+        distribution = " · ".join(
+            f"{family}×{count}"
+            for family, count in family_counts.items() if count
+        )
+        self.best_model_detail.setText(
+            f"{distribution}\n按各输出 R² 选择；详情见下方模型评分对比。"
+            if distribution else "正在生成逐输出评价结果…"
+        )
 
     def _populate_training_history(self, data: dict[str, Any]) -> None:
         history = list(data.get("history") or [])
@@ -2930,60 +3116,153 @@ class ModelPage(QWidget, AsyncMixin):
         self._refresh_training_actions()
 
     def update_score_chart(self, models: list[dict[str, Any]]) -> None:
+        self.score_models = list(models)
+        available_targets = {
+            entry["target"] for entry in self._score_candidates()
+        }
+        if self.score_detail_target not in available_targets:
+            self.score_detail_target = ""
+        self._render_score_chart()
+
+    def _score_metric_changed(self, _index: int) -> None:
+        self._render_score_chart()
+
+    def _show_score_overview(self) -> None:
+        self.score_detail_target = ""
+        self._render_score_chart()
+
+    def _score_metric_info(self) -> tuple[str, str]:
+        key = str(self.score_metric.currentData() or "score")
+        labels = {
+            "score": "综合评价分数",
+            "r2_mean": "决定系数 R²",
+            "nmae_score": "归一化误差得分",
+        }
+        return key, labels.get(key, labels["score"])
+
+    def _score_metric_value(
+        self, summary: dict[str, Any], model: dict[str, Any], metric: str,
+    ) -> float | None:
+        if metric == "nmae_score":
+            nmae = finite_float(summary.get("nmae_mean"))
+            return 1.0 / (1.0 + nmae) if nmae is not None and nmae >= 0 else None
+        value = finite_float(summary.get(metric))
+        if value is None and metric == "score":
+            value = finite_float(model.get("score"))
+        return value
+
+    def _score_candidates(self) -> list[dict[str, Any]]:
+        metric, _label = self._score_metric_info()
+        candidates = []
+        for model in self.score_models:
+            family = str(model.get("model_family") or model.get("model_id") or "模型")
+            if family == "MIXED" or model.get("is_composite"):
+                continue
+            summaries = list(model.get("evaluation") or [])
+            if not summaries:
+                targets = list(model.get("target_names") or [])
+                summaries = [{
+                    "target_name": targets[0] if len(targets) == 1 else family,
+                    "model_name": family,
+                }]
+            for summary in summaries:
+                value = self._score_metric_value(summary, model, metric)
+                target = str(summary.get("target_name") or "").strip()
+                if value is None or not target:
+                    continue
+                candidates.append({
+                    "target": target,
+                    "model": str(summary.get("model_name") or family),
+                    "value": value,
+                })
+        return candidates
+
+    def _visible_score_entries(self) -> list[dict[str, Any]]:
+        candidates = self._score_candidates()
+        if self.score_detail_target:
+            model_order = {
+                family: index for index, family in enumerate(self.model_families)
+            }
+            return sorted(
+                (
+                    entry for entry in candidates
+                    if entry["target"] == self.score_detail_target
+                ),
+                key=lambda entry: (
+                    model_order.get(entry["model"], len(model_order)),
+                    entry["model"],
+                ),
+            )
+        best_by_target: dict[str, dict[str, Any]] = {}
+        for entry in candidates:
+            current = best_by_target.get(entry["target"])
+            if current is None or entry["value"] > current["value"]:
+                best_by_target[entry["target"]] = entry
+        return list(best_by_target.values())
+
+    def _render_score_chart(self) -> None:
         chart = QChart()
         chart.setBackgroundBrush(QColor("#111d31"))
         chart.setPlotAreaBackgroundBrush(QColor("#0d1829"))
         chart.setPlotAreaBackgroundVisible(True)
-        chart.setTitle("交叉验证平均评分（越高越好）")
+        _metric, metric_label = self._score_metric_info()
+        if self.score_detail_target:
+            chart.setTitle(
+                f"{self.score_detail_target} · 各模型{metric_label}（越高越好）"
+            )
+        else:
+            chart.setTitle(f"各输出最佳模型的{metric_label}（越高越好）")
         chart.setTitleBrush(QColor("#dce7f5"))
         series = QBarSeries()
-        values = QBarSet("综合评分")
+        values = QBarSet(metric_label)
         values.setColor(QColor("#4dc9d3"))
         values.setLabelColor(QColor("#f4f8ff"))
-        categories = []
-        self.score_entries = []
+        self.score_entries = self._visible_score_entries()
+        categories = [
+            entry["model"] if self.score_detail_target else entry["target"]
+            for entry in self.score_entries
+        ]
+        for entry in self.score_entries:
+            values.append(entry["value"])
         self.selected_score_index = None
         self.hovered_score_index = None
-        self.score_detail.setText("悬停或点击柱子可查看模型名称与完整分数")
-        for model in models:
-            if model.get("score") is not None:
-                name = str(model.get("model_family", model.get("model_id", "model")))
-                targets = list(model.get("target_names") or [])
-                if len(targets) == 1 and name != "MIXED":
-                    name = f"{targets[0]} / {name}"
-                score = float(model["score"])
-                categories.append(name)
-                self.score_entries.append((name, score))
-                values.append(score)
+        self.score_back_button.setVisible(bool(self.score_detail_target))
+        if self.score_detail_target:
+            self.score_detail.setText(
+                f"正在查看“{self.score_detail_target}”；悬停查看完整分数"
+            )
+        else:
+            self.score_detail.setText(
+                "悬停查看最佳模型与分数；点击输出变量查看各模型对比"
+            )
         series.append(values)
         self.score_series = series
-        series.setLabelsVisible(True)
-        series.setLabelsFormat("@value")
-        series.setLabelsPrecision(3)
-        series.setLabelsPosition(QAbstractBarSeries.LabelsPosition.LabelsInsideEnd)
+        series.setLabelsVisible(False)
         values.clicked.connect(self._score_bar_clicked)
         values.hovered.connect(self._score_bar_hovered)
         chart.addSeries(series)
         axis_x = QBarCategoryAxis()
         axis_x.append(categories or ["暂无评分"])
+        if len(categories) > 6:
+            axis_x.setLabelsAngle(-25)
         axis_x.setLabelsColor(QColor("#a9bad0"))
         chart.addAxis(axis_x, Qt.AlignmentFlag.AlignBottom)
         series.attachAxis(axis_x)
         axis_y = QValueAxis()
-        axis_y.setRange(min(0.0, min((float(model["score"]) for model in models if model.get("score") is not None), default=0.0)), 1.0)
+        displayed_values = [entry["value"] for entry in self.score_entries]
+        axis_y.setRange(
+            min(0.0, min(displayed_values, default=0.0)),
+            max(1.0, max(displayed_values, default=1.0)),
+        )
         axis_y.setLabelsColor(QColor("#a9bad0"))
         chart.addAxis(axis_y, Qt.AlignmentFlag.AlignLeft)
         series.attachAxis(axis_y)
         chart.legend().setLabelColor(QColor("#a9bad0"))
-        style_chart(chart)
+        style_chart(chart, hide_legend=True)
         self.score_chart.setChart(chart)
 
     def apply_display_mode(self) -> None:
-        models = [
-            {"model_family": name, "score": score}
-            for name, score in self.score_entries
-        ]
-        self.update_score_chart(models)
+        self._render_score_chart()
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         if watched is self.score_chart.viewport():
@@ -3002,7 +3281,10 @@ class ModelPage(QWidget, AsyncMixin):
             return
         value = chart.mapToValue(position, series)
         index = int(value.x())
-        score = self.score_entries[index][1] if 0 <= index < len(self.score_entries) else 0.0
+        score = (
+            self.score_entries[index]["value"]
+            if 0 <= index < len(self.score_entries) else 0.0
+        )
         half_width = max(0.05, float(series.barWidth()) / 2.0)
         inside_x = (
             0 <= index < len(self.score_entries)
@@ -3020,24 +3302,44 @@ class ModelPage(QWidget, AsyncMixin):
     def _score_bar_hovered(self, hovered: bool, index: int) -> None:
         if hovered and 0 <= index < len(self.score_entries):
             self.hovered_score_index = index
-            name, score = self.score_entries[index]
-            message = f"{name}：{score:.6f}"
-            self.score_detail.setText(f"当前模型  {message}")
+            message = self._score_entry_message(self.score_entries[index])
+            self.score_detail.setText(f"当前  {message}")
             QToolTip.showText(QCursor.pos(), message, self.score_chart)
         else:
             self.hovered_score_index = None
             QToolTip.hideText()
             if self.selected_score_index is None:
-                self.score_detail.setText("悬停或点击柱子可查看模型名称与完整分数")
+                if self.score_detail_target:
+                    self.score_detail.setText(
+                        f"正在查看“{self.score_detail_target}”；悬停查看完整分数"
+                    )
+                else:
+                    self.score_detail.setText(
+                        "悬停查看最佳模型与分数；"
+                        "点击输出变量查看各模型对比"
+                    )
             else:
-                name, score = self.score_entries[self.selected_score_index]
-                self.score_detail.setText(f"已选择  {name}：{score:.6f}")
+                message = self._score_entry_message(
+                    self.score_entries[self.selected_score_index]
+                )
+                self.score_detail.setText(f"已选择  {message}")
+
+    def _score_entry_message(self, entry: dict[str, Any]) -> str:
+        _metric, metric_label = self._score_metric_info()
+        return (
+            f"{entry['target']} / {entry['model']} · "
+            f"{metric_label}：{entry['value']:.6f}"
+        )
 
     def _score_bar_clicked(self, index: int) -> None:
         if 0 <= index < len(self.score_entries):
-            name, score = self.score_entries[index]
+            entry = self.score_entries[index]
+            if not self.score_detail_target:
+                self.score_detail_target = entry["target"]
+                self._render_score_chart()
+                return
             self.selected_score_index = index
-            message = f"{name}：{score:.6f}"
+            message = self._score_entry_message(entry)
             self.score_detail.setText(f"已选择  {message}")
             QToolTip.showText(QCursor.pos(), message, self.score_chart)
 
@@ -3053,6 +3355,7 @@ class OptimizationPage(QWidget, AsyncMixin):
         self.timer.setInterval(1500)
         self.timer.timeout.connect(self.poll)
         self.has_completed_optimization = False
+        self.model_families = ("PRG", "SVR", "RF", "KM", "DNN")
         self.training_bounds: dict[str, tuple[float, float]] = {}
         self.configuration_valid = False
         self.schema_ready_for_optimization = False
@@ -3060,7 +3363,8 @@ class OptimizationPage(QWidget, AsyncMixin):
         self.selection_revision = 0
         self.doe_refresh_in_flight = False
         self.current_training_run_id = ""
-        self.current_model_id = ""
+        self.target_model_options: dict[str, list[dict[str, Any]]] = {}
+        self.target_model_ids: dict[str, str] = {}
         self.current_optimization_run_id = ""
         self.convergence_request_in_flight = False
         self.convergence_dialog: ConvergenceDialog | None = None
@@ -3089,26 +3393,63 @@ class OptimizationPage(QWidget, AsyncMixin):
         self.training_run = QComboBox()
         self.training_run.setPlaceholderText("请选择已完成训练轮次")
         self.training_run.activated.connect(self._optimization_training_run_selected)
-        self.model_selector = QComboBox()
-        self.model_selector.setPlaceholderText("请先选择训练轮次")
-        self.model_selector.setEnabled(False)
-        self.model_selector.activated.connect(self._optimization_model_selected)
+        self.model_selection_button = QPushButton("请先选择训练轮次")
+        self.model_selection_button.setEnabled(False)
+        self.model_selection_button.clicked.connect(self.open_optimization_model_selection)
         form.addWidget(QLabel("优化任务 / DOE"), 0, 0)
         form.addWidget(self.doe_id, 0, 1)
         form.addWidget(self.refresh_doe_button, 0, 2)
         form.addWidget(QLabel("训练轮次"), 1, 0)
         form.addWidget(self.training_run, 1, 1, 1, 2)
-        form.addWidget(QLabel("代理模型"), 2, 0)
-        form.addWidget(self.model_selector, 2, 1, 1, 2)
+        form.addWidget(HelpButton(
+            "训练轮次",
+            "选择某次已完成的训练记录。优化使用的数据字段、"
+            "代理模型和输入边界都来自该轮次。",
+            self,
+        ), 1, 3)
+        form.addWidget(QLabel("代理模型配置"), 2, 0)
+        form.addWidget(self.model_selection_button, 2, 1, 1, 2)
+        self.optimization_model_help = HelpButton(
+            "代理模型配置",
+            "点击配置后，为每个输出变量独立选择当前训练轮次中的"
+            "候选模型。优化时会分别加载它们各自的模型、X/Y 标准化器和参数。",
+            self,
+        )
+        form.addWidget(self.optimization_model_help, 2, 3)
         form.addWidget(QLabel("优化模式"), 3, 0)
         form.addWidget(self.mode, 3, 1)
+        form.addWidget(HelpButton(
+            "优化模式",
+            "多目标优化保留 Pareto 折中解；单目标优化按权重合成"
+            "一个目标；强化学习使用 PPO 在代理模型环境中搜索。",
+            self,
+        ), 3, 3)
         form.addWidget(QLabel("优化算法"), 4, 0)
         form.addWidget(self.algorithm, 4, 1)
+        form.addWidget(HelpButton(
+            "优化算法",
+            "NSGA-II 用于单目标和多目标遗传优化；"
+            "选择强化学习模式时自动使用 PPO。",
+            self,
+        ), 4, 3)
         self.algorithm_parameter_button = QPushButton("设置参数（默认）")
         self.algorithm_parameter_button.clicked.connect(self.open_algorithm_parameters)
         form.addWidget(QLabel("算法参数"), 5, 0)
         form.addWidget(self.algorithm_parameter_button, 5, 1)
+        form.addWidget(HelpButton(
+            "算法参数",
+            "NSGA-II：种群规模控制每代保留的候选数，子代数量控制"
+            "每代新生成的解，迭代代数控制搜索轮数。\n\n"
+            "PPO：训练时间步控制总交互量，每回合步数控制单回合长度，"
+            "评估回合数控制最终评估量，学习率控制参数更新幅度，"
+            "约束惩罚系数控制超出约束时的奖励扣减。",
+            self,
+        ), 5, 3)
         config_layout.addLayout(form)
+        self.model_selection_hint = QLabel("")
+        self.model_selection_hint.setObjectName("Caption")
+        self.model_selection_hint.setWordWrap(True)
+        config_layout.addWidget(self.model_selection_hint)
         self.algorithm_parameter_hint = QLabel()
         self.algorithm_parameter_hint.setObjectName("Caption")
         self.algorithm_parameter_hint.setWordWrap(True)
@@ -3129,6 +3470,9 @@ class OptimizationPage(QWidget, AsyncMixin):
         self.ga_generations = QSpinBox()
         self.ga_generations.setRange(1, 1000000)
         self.ga_generations.setValue(200)
+        self.ga_population.setToolTip("每代保留的候选解数量")
+        self.ga_offspring.setToolTip("每代通过交叉和变异新生成的解数量")
+        self.ga_generations.setToolTip("遗传算法的总迭代代数")
         ga_form.addRow("种群规模", self.ga_population)
         ga_form.addRow("子代数量", self.ga_offspring)
         ga_form.addRow("迭代代数", self.ga_generations)
@@ -3156,6 +3500,11 @@ class OptimizationPage(QWidget, AsyncMixin):
         self.ppo_constraint_penalty.setDecimals(4)
         self.ppo_constraint_penalty.setRange(0.001, 1_000_000.0)
         self.ppo_constraint_penalty.setValue(5.0)
+        self.ppo_timesteps.setToolTip("PPO 与代理模型环境交互的总时间步")
+        self.ppo_episode_steps.setToolTip("单个训练回合允许的最大交互步数")
+        self.ppo_evaluation_episodes.setToolTip("训练完成后用于评估策略的回合数")
+        self.ppo_learning_rate.setToolTip("PPO 网络参数每次更新的步长")
+        self.ppo_constraint_penalty.setToolTip("设计解违反输出约束时的奖励惩罚强度")
         for label, widget in (
             ("训练时间步", self.ppo_timesteps),
             ("每回合步数", self.ppo_episode_steps),
@@ -3225,7 +3574,11 @@ class OptimizationPage(QWidget, AsyncMixin):
         layout.addLayout(top)
 
         tables = QHBoxLayout()
-        objective_card, objective_layout = card("目标函数")
+        objective_card, objective_layout = card(
+            "目标函数",
+            "名称必须是所选代理模型的输出字段。方向决定最小化或"
+            "最大化；权重用于单目标和强化学习模式下的目标聚合。",
+        )
         self.objectives = DataTable()
         self.objectives.enable_wide_columns()
         self.objectives.setItemDelegateForColumn(
@@ -3248,7 +3601,11 @@ class OptimizationPage(QWidget, AsyncMixin):
         objective_buttons.addStretch()
         objective_layout.addLayout(objective_buttons)
         tables.addWidget(objective_card, 1)
-        variable_card, variable_layout = card("设计变量与边界")
+        variable_card, variable_layout = card(
+            "设计变量与边界",
+            "设计变量必须是训练时的输入字段。上下界默认来自该训练"
+            "轮次的数据范围；为避免代理模型外推失真，建议不要超出训练范围。",
+        )
         self.variables = DataTable()
         self.variables.enable_wide_columns()
         self.variables.setItemDelegateForColumn(
@@ -3356,13 +3713,15 @@ class OptimizationPage(QWidget, AsyncMixin):
         revision = self.selection_revision
         doe_id = str(self.doe_id.currentData() or "").strip()
         self.current_training_run_id = ""
-        self.current_model_id = ""
+        self.target_model_options = {}
+        self.target_model_ids = {}
         self.current_optimization_run_id = ""
         self.convergence_request_in_flight = False
         self.convergence_button.setText("查看收敛曲线")
         self.training_run.clear()
-        self.model_selector.clear()
-        self.model_selector.setEnabled(False)
+        self.model_selection_button.setText("请先选择训练轮次")
+        self.model_selection_button.setEnabled(False)
+        self.model_selection_hint.clear()
         if self.convergence_dialog is not None:
             self.convergence_dialog.close()
         if not doe_id:
@@ -3452,41 +3811,89 @@ class OptimizationPage(QWidget, AsyncMixin):
         self.training_run.setEnabled(bool(history))
 
     def _populate_optimization_models(self, data: dict[str, Any]) -> None:
-        models = [item for item in data.get("models") or [] if item.get("model_id")]
-        selected = self.current_model_id
-        scored = [item for item in models if item.get("score") is not None]
-        best = max(scored, key=lambda item: float(item["score"])) if scored else None
-        automatic = "自动选择最高分"
-        if best is not None:
-            automatic += (
-                f"（{best.get('model_family', '模型')} · {float(best['score']):.3f}）"
+        models = [
+            item for item in data.get("models") or []
+            if item.get("model_id") and not item.get("is_composite")
+            and item.get("model_family") in self.model_families
+        ]
+        target_names = list(data.get("target_names") or [])
+        previous = dict(self.target_model_ids)
+        self.target_model_options = {}
+        self.target_model_ids = {}
+        for target in target_names:
+            candidates = [
+                model for model in models if target in (model.get("target_names") or [])
+            ]
+            candidates.sort(
+                key=lambda model: (
+                    OptimizationModelSelectionDialog._target_r2(model, target)
+                    if OptimizationModelSelectionDialog._target_r2(model, target) is not None
+                    else -1e99
+                ),
+                reverse=True,
             )
-        self.model_selector.blockSignals(True)
-        self.model_selector.clear()
-        self.model_selector.addItem(automatic, "")
-        self.model_selector.setItemData(
-            0, "不指定 model_id，由后端选择当前训练轮次中平均评分最高的模型",
-            Qt.ItemDataRole.ToolTipRole,
-        )
-        for model in models:
-            model_id = str(model["model_id"])
-            family = str(model.get("model_family") or "模型")
-            score = model.get("score")
-            score_text = f"综合评分 {float(score):.3f}" if score is not None else "尚无评分"
-            self.model_selector.addItem(f"{family} · {score_text} · {model_id}", model_id)
-            self.model_selector.setItemData(
-                self.model_selector.count() - 1,
-                f"模型 ID：{model_id}",
-                Qt.ItemDataRole.ToolTipRole,
-            )
-        index = self.model_selector.findData(selected)
-        self.model_selector.setCurrentIndex(index if index >= 0 else 0)
-        self.current_model_id = str(self.model_selector.currentData() or "")
-        self.model_selector.blockSignals(False)
-        self.model_selector.setEnabled(bool(models))
+            self.target_model_options[target] = candidates
+            candidate_ids = {str(model["model_id"]) for model in candidates}
+            if previous.get(target) in candidate_ids:
+                self.target_model_ids[target] = previous[target]
+            elif candidates:
+                self.target_model_ids[target] = str(candidates[0]["model_id"])
+        ready = bool(target_names) and all(self.target_model_options.values())
+        self.model_selection_button.setEnabled(ready)
+        self._refresh_optimization_model_hint()
 
-    def _optimization_model_selected(self, _index: int) -> None:
-        self.current_model_id = str(self.model_selector.currentData() or "")
+    def _refresh_optimization_model_hint(self) -> None:
+        targets = list(self.target_model_options)
+        if not targets:
+            self.model_selection_hint.setText(
+                "当前训练轮次没有可用的逐输出模型。"
+            )
+            self.model_selection_button.setText("无可用模型")
+            return
+        configured = sum(bool(self.target_model_ids.get(target)) for target in targets)
+        self.model_selection_button.setText(
+            f"配置逐输出模型（{configured}/{len(targets)}）"
+        )
+        summaries = []
+        help_lines = []
+        for target in targets:
+            selected_id = self.target_model_ids.get(target)
+            model = next(
+                (
+                    item for item in self.target_model_options[target]
+                    if str(item["model_id"]) == selected_id
+                ),
+                None,
+            )
+            if model is None:
+                continue
+            family = str(model.get("model_family") or "模型")
+            summaries.append(family)
+            r2 = OptimizationModelSelectionDialog._target_r2(model, target)
+            suffix = f" · R² {r2:.3f}" if r2 is not None else ""
+            help_lines.append(f"{target}：{family}{suffix}")
+        distribution = " · ".join(
+            f"{family}×{summaries.count(family)}"
+            for family in self.model_families if family in summaries
+        )
+        self.model_selection_hint.setText(
+            f"已配置 {configured}/{len(targets)} 个输出"
+            + (f"：{distribution}" if distribution else "")
+        )
+        self.optimization_model_help.help_message = (
+            "每个输出独立绑定一个候选模型，优化时各自使用其模型、"
+            "X/Y 标准化器和超参数。\n\n当前配置：\n"
+            + "\n".join(help_lines)
+        )
+
+    def open_optimization_model_selection(self) -> None:
+        dialog = OptimizationModelSelectionDialog(
+            self.target_model_options, self.target_model_ids, self,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        self.target_model_ids = dialog.selection()
+        self._refresh_optimization_model_hint()
         self.validate_configuration()
 
     def _optimization_training_run_selected(self, _index: int) -> None:
@@ -3495,9 +3902,11 @@ class OptimizationPage(QWidget, AsyncMixin):
         if not doe_id or not run_id:
             return
         self.current_training_run_id = run_id
-        self.current_model_id = ""
-        self.model_selector.clear()
-        self.model_selector.setEnabled(False)
+        self.target_model_options = {}
+        self.target_model_ids = {}
+        self.model_selection_button.setText("正在加载候选模型…")
+        self.model_selection_button.setEnabled(False)
+        self.model_selection_hint.clear()
         revision = self.selection_revision
         self.optimization_state = "loading"
         self.schema_hint.setText(f"正在加载训练轮次 {run_id}…")
@@ -3712,6 +4121,8 @@ class OptimizationPage(QWidget, AsyncMixin):
             and self.current_training_run_id
             and self.schema_ready_for_optimization
             and self.configuration_valid
+            and self.target_model_options
+            and len(self.target_model_ids) == len(self.target_model_options)
         )
         if self.optimization_state in {"queued", "running"}:
             self.start_button.setText("正在优化…")
@@ -3756,6 +4167,12 @@ class OptimizationPage(QWidget, AsyncMixin):
         doe_id = str(self.doe_id.currentData() or self.doe_id.currentText()).strip()
         if not doe_id:
             self.show_error("请选择 DOE")
+            return
+        if (
+            not self.target_model_options
+            or len(self.target_model_ids) != len(self.target_model_options)
+        ):
+            self.show_error("请先为每个输出选择代理模型")
             return
         if not self.validate_configuration():
             self.show_error(self.validation_hint.text())
@@ -3807,14 +4224,13 @@ class OptimizationPage(QWidget, AsyncMixin):
         payload = {
             "id": doe_id,
             "training_run_id": self.current_training_run_id or None,
+            "target_model_ids": dict(self.target_model_ids),
             "mode": mode,
             "objectives": objectives,
             "constraints": [],
             "decision_variables": variables,
             "algorithm": {"name": self.algorithm.currentData(), "params": params},
         }
-        if self.current_model_id:
-            payload["model_id"] = self.current_model_id
         self.start_button.setEnabled(False)
         self.has_completed_optimization = False
         self.optimization_state = "queued"

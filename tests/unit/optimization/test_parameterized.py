@@ -164,3 +164,45 @@ def test_run_weighted_single_nsga2_exports_raw_objectives(tmp_path):
     assert multi_curve["x"] == [1, 2]
     assert all(value > 0 for value in multi_curve["y"])
     assert multi_curve["hv_config"]["objective_names"] == ["y1", "y2"]
+
+
+def test_nsga2_loads_each_output_from_its_selected_model_directory(tmp_path):
+    raw_x = np.array([[0.0], [1.0], [2.0], [3.0]])
+    target_dirs = {}
+    for index, (name, values) in enumerate((("y1", 2 * raw_x), ("y2", 5 - raw_x))):
+        model_dir = tmp_path / name
+        model_dir.mkdir()
+        scaler_x = StandardScaler().fit(raw_x)
+        scaler_y = StandardScaler().fit(values)
+        model = LinearRegression().fit(
+            scaler_x.transform(raw_x), scaler_y.transform(values).ravel()
+        )
+        joblib.dump(model, model_dir / f"{name}_model.pkl")
+        joblib.dump(
+            {"scaler_X": scaler_x, f"scaler_y_{index}": scaler_y},
+            model_dir / f"{name}_scalers.pkl",
+        )
+        target_dirs[name] = str(model_dir)
+    output = tmp_path / "per_target.tsv"
+    request = {
+        "mode": "multi", "objective_names": ["y1", "y2"],
+        "all_var_list": ["x", "y1", "y2"], "input_var_count": 1,
+        "target_model_dirs": target_dirs,
+        "objective_config": [
+            {"name": "y1", "minimize": True, "weight": None},
+            {"name": "y2", "minimize": True, "weight": None},
+        ],
+        "constraints": [], "decision_bounds": [{"lower": 0.0, "upper": 3.0}],
+        "decision_var_indices": [0], "decision_var_names": ["x"],
+        "optimizer_config": {
+            "pop_size": 10, "n_offsprings": 10, "eliminate_duplicates": True,
+            "n_gen": 2, "seed": 42,
+        },
+    }
+
+    summary = run_parameterized_nsga2(
+        request, model_dir=None, output_path=str(output),
+    )
+
+    assert summary["columns"] == ["x", "y1", "y2", "feasible"]
+    assert summary["solution_count"] >= 1

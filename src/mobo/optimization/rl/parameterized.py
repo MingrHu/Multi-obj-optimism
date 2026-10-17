@@ -17,7 +17,7 @@ from mobo.optimization.convergence import rl_callback
 
 
 class SurrogatePPOEnv(gym.Env):
-    def __init__(self, request: dict[str, Any], model_dir: str):
+    def __init__(self, request: dict[str, Any], model_dir: str | None):
         super().__init__()
         self.request = request
         self.objectives = request["objective_config"]
@@ -34,12 +34,28 @@ class SurrogatePPOEnv(gym.Env):
             *[item["target_obj"] for item in self.constraints if isinstance(item["target_obj"], str)],
         ]))
         first_target = request["objective_names"][0]
-        self.scalers = joblib.load(Path(model_dir) / f"{first_target}_scalers.pkl")
+        target_model_dirs = request.get("target_model_dirs") or {}
+
+        def directory_for(name: str) -> str:
+            directory = target_model_dirs.get(name, model_dir)
+            if not directory:
+                raise ValueError(f"输出 {name} 未配置代理模型目录")
+            return str(directory)
+
+        first_model_dir = directory_for(first_target)
+        self.scalers = joblib.load(Path(first_model_dir) / f"{first_target}_scalers.pkl")
         self.scaler_x = self.scalers["scaler_X"]
-        self.models = {name: _load_model(model_dir, name) for name in target_names}
+        self.models = {
+            name: _load_model(directory_for(name), name) for name in target_names
+        }
         self.output_indices = {name: output_names.index(name) for name in target_names}
         self.target_scalers = {
-            name: _load_scalers(model_dir, name, first_target) for name in target_names
+            name: _load_scalers(
+                directory_for(name),
+                name,
+                first_target if directory_for(name) == first_model_dir else name,
+            )
+            for name in target_names
         }
         self.base = np.asarray(self.scaler_x.mean_, dtype=float).reshape(-1)
         config = request["optimizer_config"]
@@ -125,7 +141,9 @@ def _write_rl_solutions(records, output_path: Path, request) -> dict[str, Any]:
     }
 
 
-def run_parameterized_rl(request: dict[str, Any], *, model_dir: str, output_path: str) -> dict[str, Any]:
+def run_parameterized_rl(
+    request: dict[str, Any], *, model_dir: str | None, output_path: str,
+) -> dict[str, Any]:
     from stable_baselines3 import PPO
 
     env = SurrogatePPOEnv(request, model_dir)

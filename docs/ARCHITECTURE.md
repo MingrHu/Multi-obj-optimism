@@ -105,7 +105,7 @@ DOE 聚合服务。路由层位于 `api.handler`，实际处理层位于 `api.se
                                             ▼
                     doe_tasks/<doe_id>/training/runs/<run_id>/models/*
                                             │
-           (逐输出选择最高 R² 模型并保留各自 X/Y 标准化器)
+           (用户逐输出选择候选模型并保留各自 X/Y 标准化器)
                                             │
                     (optimization: GA / RL 加载组合模型做多目标寻优)
                                             ▼

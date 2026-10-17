@@ -1,7 +1,7 @@
 """多目标优化服务层。
 
 按 ``interface_protocol.md`` 的协议，对外提供以 ``task_id``（opt_ 前缀）为主键的优化
-接口：优化前落盘请求参数（含代理模型 ``model_id`` 溯源），优化后把响应（输出文件路径、
+接口：优化前落盘请求参数（含逐输出 ``target_model_ids`` 溯源），优化后把响应（输出文件路径、
 任务信息）写入 ``TASKS_DIR/<task_id>/state.json``。
 
 历史 :func:`~mobo.optimization.ga.run.NSGA2_run` 与
@@ -30,13 +30,19 @@ _KIND = "optimization"
 _REQUIRED_OPT_KEYS = ("optimizer",)
 
 _PARAMETERIZED_NSGA2_KEYS = (
-    "model_id", "objective_names", "input_var_count", "all_var_list",
+    "objective_names", "input_var_count", "all_var_list",
     "decision_var_indices", "decision_var_names", "decision_bounds",
     "constraints", "objective_config", "optimizer_config", "output_config",
 )
 
 
-def _resolve_model_dir(resolved: Dict[str, Any]) -> str:
+def _resolve_model_dir(resolved: Dict[str, Any]) -> str | None:
+    target_dirs = resolved.get("target_model_dirs")
+    if isinstance(target_dirs, dict) and target_dirs:
+        missing = [path for path in target_dirs.values() if not Path(path).is_dir()]
+        if missing:
+            raise ValueError("逐输出代理模型目录不存在")
+        return None
     configured = resolved.get("model_dir")
     if configured and Path(configured).is_dir():
         return str(Path(configured))
@@ -71,7 +77,7 @@ def run_optimization(
     输入参数走三路解析：优先用 ``task_id`` 记录里的 req，缺失时用本次传入值并
     回填记录，两者都没有则报错。
 
-    :param req: 协议输入参数（model_id/objective_names/constraints 等，用于溯源）
+    :param req: 协议输入参数（target_model_ids/objective_names/constraints 等）
     :param optimizer: ``"nsga2"``（GA）或 ``"rl"``（PPO）
     :param task_id: 复用已有 task_id（None 则新建）
     :return: 协议 resp 字典（code/msg/task_id/data）
@@ -123,7 +129,14 @@ def run_optimization(
 
         data = {
             "task_info": {
-                "model_id": resolved.get("model_id"),
+                **(
+                    {"model_id": resolved["model_id"]}
+                    if resolved.get("model_id") else {}
+                ),
+                **(
+                    {"target_model_ids": resolved["target_model_ids"]}
+                    if resolved.get("target_model_ids") else {}
+                ),
                 "optimizer": optimizer,
                 "mode": resolved.get("mode"),
                 "decision_var_names": resolved.get("decision_var_names"),

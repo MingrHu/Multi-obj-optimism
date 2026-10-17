@@ -58,12 +58,13 @@ def test_parameterized_rl_environment_uses_requested_model_and_constraints(tmp_p
 
 
 def test_parameterized_rl_uses_target_specific_scalers(tmp_path):
-    model_dir = tmp_path / "mixed_models"
-    model_dir.mkdir()
     raw_x = np.array([[0.0], [1.0], [2.0], [3.0]])
+    target_dirs = {}
     for index, (name, factor, offset) in enumerate((
         ("y1", 2.0, 0.0), ("limit", 3.0, 10.0),
     )):
+        model_dir = tmp_path / name
+        model_dir.mkdir()
         scaler_x = StandardScaler().fit(raw_x + offset)
         values = factor * raw_x
         scaler_y = StandardScaler().fit(values)
@@ -75,8 +76,11 @@ def test_parameterized_rl_uses_target_specific_scalers(tmp_path):
             {"scaler_X": scaler_x, f"scaler_y_{index}": scaler_y},
             model_dir / f"{name}_scalers.pkl",
         )
+        target_dirs[name] = str(model_dir)
 
-    env = SurrogatePPOEnv(_request(), str(model_dir))
+    request = _request()
+    request["target_model_dirs"] = target_dirs
+    env = SurrogatePPOEnv(request, None)
     raw, _ = env._predict(np.array([1.0]))
 
     np.testing.assert_allclose(raw["y1"], 2.0)
