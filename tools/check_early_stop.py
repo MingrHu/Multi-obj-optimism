@@ -31,7 +31,7 @@ def main():
 
     change_rate = calculate_change_rate(values)
     print(f"变化率：{change_rate:.6%}")
-    if change_rate < THRESHOLD:
+    if change_rate <= THRESHOLD:
         print("满足停止条件")
     else:
         print("不满足停止条件")

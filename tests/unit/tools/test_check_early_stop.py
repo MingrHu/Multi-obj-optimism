@@ -28,11 +28,11 @@ def test_reports_satisfied_when_change_rate_is_below_five_percent(monkeypatch, c
     assert output.out == "变化率：4.000000%\n满足停止条件\n"
 
 
-def test_five_percent_exactly_does_not_satisfy_condition(monkeypatch, capsys):
+def test_five_percent_exactly_satisfies_condition(monkeypatch, capsys):
     code, output = _run(monkeypatch, capsys, "2\n100\n95\n")
 
     assert code == 0
-    assert output.out == "变化率：5.000000%\n不满足停止条件\n"
+    assert output.out == "变化率：5.000000%\n满足停止条件\n"
 
 
 def test_rejects_incorrect_value_count(monkeypatch, capsys):

@@ -81,6 +81,22 @@ def test_single_curve_stops_when_trailing_change_is_below_threshold(tmp_path):
     assert early["change_rate"] < 0.05
 
 
+def test_single_curve_stops_when_change_rate_equals_threshold(tmp_path):
+    path = tmp_path / "single_equal_threshold.json"
+    request = {"optimizer_config": {
+        "early_stop_enabled": True, "early_stop_threshold": 0.05,
+        "early_stop_window": 2, "early_stop_min_points": 2,
+    }}
+    with record_convergence(path, "single", []):
+        observe = ga_callback(request)
+        observe(_algorithm(1, [[100.0]], [True]))
+        algorithm = _algorithm(2, [[95.0]], [True])
+        observe(algorithm)
+
+    assert algorithm.termination.force_termination
+    assert json.loads(path.read_text())["early_stopping"]["change_rate"] == pytest.approx(0.05)
+
+
 def test_multi_curve_uses_hypervolume_for_early_stopping(tmp_path):
     path = tmp_path / "multi_early_stop.json"
     problem = SimpleNamespace(

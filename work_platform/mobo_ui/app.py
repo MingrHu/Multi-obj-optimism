@@ -3456,7 +3456,7 @@ class OptimizationPage(QWidget, AsyncMixin):
             "PPO：训练时间步控制总交互量，每回合步数控制单回合长度，"
             "评估回合数控制最终评估量，学习率控制参数更新幅度，"
             "约束惩罚系数控制超出约束时的奖励扣减。\n\n"
-            "早停会检查收敛曲线末端窗口；窗口内相对波动率低于阈值"
+            "早停会检查收敛曲线末端窗口；窗口内相对波动率不高于阈值"
             "且达到最少观察点数时提前结束，默认阈值为 5%。",
             self,
         ), 5, 3)
@@ -3504,7 +3504,7 @@ class OptimizationPage(QWidget, AsyncMixin):
         self.ga_population.setToolTip("每代保留的候选解数量")
         self.ga_offspring.setToolTip("每代通过交叉和变异新生成的解数量")
         self.ga_generations.setToolTip("遗传算法的总迭代代数")
-        self.ga_early_threshold.setToolTip("末端窗口相对波动率低于该比例时触发早停")
+        self.ga_early_threshold.setToolTip("末端窗口相对波动率不高于该比例时触发早停")
         self.ga_early_window.setToolTip("用于判断末端变化率的连续代数")
         self.ga_early_min_points.setToolTip("至少完成这些代数后才允许早停")
         ga_form.addRow("种群规模", self.ga_population)
@@ -3559,7 +3559,7 @@ class OptimizationPage(QWidget, AsyncMixin):
         self.ppo_evaluation_episodes.setToolTip("训练完成后用于评估策略的回合数")
         self.ppo_learning_rate.setToolTip("PPO 网络参数每次更新的步长")
         self.ppo_constraint_penalty.setToolTip("设计解违反输出约束时的奖励惩罚强度")
-        self.ppo_early_threshold.setToolTip("奖励曲线末端窗口相对波动率低于该比例时触发早停")
+        self.ppo_early_threshold.setToolTip("奖励曲线末端窗口相对波动率不高于该比例时触发早停")
         self.ppo_early_window.setToolTip("用于判断末端变化率的连续训练回合数")
         self.ppo_early_min_points.setToolTip("至少完成这些训练回合后才允许早停")
         for label, widget in (

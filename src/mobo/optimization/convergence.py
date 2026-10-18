@@ -107,7 +107,7 @@ class EarlyStoppingMonitor:
         if self.point_count < self.min_points or len(self.values) < self.window:
             return False
         self.change_rate = calculate_change_rate(self.values)
-        if self.change_rate >= self.threshold:
+        if self.change_rate > self.threshold:
             return False
         self.stopped = True
         self.stop_point = int(point)
