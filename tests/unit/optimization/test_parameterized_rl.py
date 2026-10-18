@@ -94,7 +94,7 @@ def test_parameterized_rl_writes_headerless_tsv(monkeypatch, tmp_path):
         def __init__(self, policy, env, **kwargs):
             self.env = env
 
-        def learn(self, total_timesteps):
+        def learn(self, total_timesteps, **_kwargs):
             return self
 
         def predict(self, observation, deterministic=True):

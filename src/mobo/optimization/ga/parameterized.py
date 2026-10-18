@@ -181,6 +181,7 @@ def run_parameterized_nsga2(
         mutation=PM(eta=20),
         eliminate_duplicates=config["eliminate_duplicates"],
     )
+    callback = ga_callback(request)
     result = minimize(
         problem,
         algorithm,
@@ -188,7 +189,7 @@ def run_parameterized_nsga2(
         seed=config["seed"],
         verbose=False,
         save_history=False,
-        callback=ga_callback(request),
+        callback=callback,
     )
 
     x_values = np.empty((0, len(request["decision_var_names"])), dtype=float)
@@ -204,6 +205,8 @@ def run_parameterized_nsga2(
     )
     return {
         "solution_txt_path": str(Path(output_path).resolve()),
+        "early_stopped": callback.early_stopping.stopped,
+        "early_stop_point": callback.early_stopping.stop_point,
         **summary,
     }
 

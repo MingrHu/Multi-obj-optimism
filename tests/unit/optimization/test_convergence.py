@@ -6,12 +6,30 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from mobo.optimization.convergence import ga_callback, read_curve, record_convergence, rl_callback
+from mobo.optimization.convergence import (
+    calculate_change_rate,
+    ga_callback,
+    read_curve,
+    record_convergence,
+    rl_callback,
+)
 
 
 def _algorithm(generation, f, feasible):
     values = {"F": np.asarray(f), "FEAS": np.asarray(feasible)}
-    return SimpleNamespace(n_gen=generation, pop=SimpleNamespace(get=values.get))
+    termination = SimpleNamespace(force_termination=False)
+    termination.terminate = lambda: setattr(termination, "force_termination", True)
+    return SimpleNamespace(
+        n_gen=generation, pop=SimpleNamespace(get=values.get),
+        termination=termination,
+    )
+
+
+def test_calculate_change_rate_matches_early_stopping_formula():
+    assert calculate_change_rate([100, 99, 96]) == pytest.approx(0.04)
+    assert calculate_change_rate([0, 0, 0]) == 0
+    with pytest.raises(ValueError, match="values不能为空"):
+        calculate_change_rate([])
 
 
 def test_single_observes_feasible_historical_best(tmp_path):
@@ -41,6 +59,65 @@ def test_rl_records_completed_training_episode_rewards_only(tmp_path):
     curve = json.loads(path.read_text())
     assert curve["x"] == [1, 2]
     assert curve["y"] == [6, 2]
+
+
+def test_single_curve_stops_when_trailing_change_is_below_threshold(tmp_path):
+    path = tmp_path / "single_early_stop.json"
+    request = {"optimizer_config": {
+        "early_stop_enabled": True, "early_stop_threshold": 0.05,
+        "early_stop_window": 3, "early_stop_min_points": 4,
+    }}
+    with record_convergence(path, "single", []):
+        observe = ga_callback(request)
+        algorithms = []
+        for generation, value in enumerate((10.0, 9.0, 8.1, 8.0, 7.95), start=1):
+            algorithm = _algorithm(generation, [[value]], [True])
+            algorithms.append(algorithm)
+            observe(algorithm)
+    assert not algorithms[-2].termination.force_termination
+    assert algorithms[-1].termination.force_termination
+    early = json.loads(path.read_text())["early_stopping"]
+    assert early["stopped_early"] and early["stop_point"] == 5
+    assert early["change_rate"] < 0.05
+
+
+def test_multi_curve_uses_hypervolume_for_early_stopping(tmp_path):
+    path = tmp_path / "multi_early_stop.json"
+    problem = SimpleNamespace(
+        objectives=[SimpleNamespace(name="a", minimize=True, y_index=0)],
+        scalers={"scaler_y_0": SimpleNamespace(mean_=[0], scale_=[1])},
+    )
+    request = {"optimizer_config": {
+        "early_stop_enabled": True, "early_stop_threshold": 0.05,
+        "early_stop_window": 3, "early_stop_min_points": 3,
+    }}
+    with record_convergence(path, "multi", []):
+        observe = ga_callback(request)
+        algorithms = []
+        for generation in range(1, 4):
+            algorithm = _algorithm(generation, [[1.0]], [True])
+            algorithm.problem = problem
+            algorithms.append(algorithm)
+            observe(algorithm)
+    assert algorithms[-1].termination.force_termination
+    assert json.loads(path.read_text())["early_stopping"]["stopped_early"]
+
+
+def test_rl_curve_returns_false_to_stop_learning(tmp_path):
+    path = tmp_path / "rl_early_stop.json"
+    request = {"optimizer_config": {
+        "early_stop_enabled": True, "early_stop_threshold": 0.05,
+        "early_stop_window": 3, "early_stop_min_points": 3,
+    }}
+    with record_convergence(path, "reinforcement_learning", []):
+        callback = rl_callback(request)
+        decisions = []
+        for step in range(1, 4):
+            callback.num_timesteps = step
+            callback.locals = {"rewards": np.array([1.0]), "dones": np.array([True])}
+            decisions.append(callback._on_step())
+    assert decisions == [True, True, False]
+    assert json.loads(path.read_text())["early_stopping"]["stopped_early"]
 
 
 def test_context_is_reset_on_failure_and_keeps_partial_curve(tmp_path):

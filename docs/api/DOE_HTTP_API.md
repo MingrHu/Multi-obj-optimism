@@ -1435,6 +1435,10 @@ DOE 尚无可用模型或指定的 `model_id` 不属于当前 DOE 时返回 HTTP
       "pop_size": 100,
       "n_offsprings": 100,
       "n_gen": 200,
+      "early_stop_enabled": true,
+      "early_stop_threshold": 0.05,
+      "early_stop_window": 10,
+      "early_stop_min_points": 20,
       "seed": 42,
       "eliminate_duplicates": true
     }
@@ -1471,6 +1475,10 @@ Pareto 多目标使用 NSGA-II，各目标不传 `weight`：
       "pop_size": 100,
       "n_offsprings": 100,
       "n_gen": 200,
+      "early_stop_enabled": true,
+      "early_stop_threshold": 0.05,
+      "early_stop_window": 10,
+      "early_stop_min_points": 20,
       "seed": 42,
       "eliminate_duplicates": true
     }
@@ -1507,6 +1515,10 @@ Pareto 多目标使用 NSGA-II，各目标不传 `weight`：
       "learning_rate": 0.001,
       "constraint_penalty": 5.0,
       "evaluation_episodes": 10,
+      "early_stop_enabled": true,
+      "early_stop_threshold": 0.05,
+      "early_stop_window": 10,
+      "early_stop_min_points": 20,
       "seed": 42
     }
   }
@@ -1556,6 +1568,40 @@ PPO 的观测是当前设计变量，动作是相对于变量范围的增量。�
 | `evaluation_episodes` | ppo | 10 | 正整数，训练后评价回合数，不写入训练收敛曲线 |
 | `action_step_ratio` | ppo | 0.05 | 大于0且不超过1，动作相对变量范围的步长比例 |
 | `max_solutions` | ppo | 100 | 正整数，最多保留的结果数量 |
+| `early_stop_enabled` | 两种算法 | true | boolean，是否根据运行中的收敛曲线启用早停 |
+| `early_stop_threshold` | 两种算法 | 0.05 | 大于0且小于1；末端窗口相对波动率阈值，0.05表示5% |
+| `early_stop_window` | 两种算法 | 10 | 正整数，计算末端变化率使用的连续有效记录点数 |
+| `early_stop_min_points` | 两种算法 | 20 | 正整数且不小于窗口；至少观察这些有效点后才允许早停 |
+
+早停使用当前模式实时生成的同一条收敛曲线。设末端窗口内的有限值为 `W`，变化率为：
+
+```text
+(max(W) - min(W)) / max(max(abs(W)), 浮点数最小正尺度)
+```
+
+当有效记录点数达到 `early_stop_min_points`，且上述变化率严格小于
+`early_stop_threshold` 时终止。单目标使用历史最佳可行加权目标，多目标使用当前可行前沿HV，
+PPO使用最近100个已完成训练回合的平均累计奖励。NSGA-II 尚无可行解时不会把该代计入早停观察点。
+
+例如，将NSGA-II最大迭代轮次设为100代，并在末端变化率低于10%时早停：
+
+```json
+{
+  "algorithm": {
+    "name": "nsga2",
+    "params": {
+      "n_gen": 100,
+      "early_stop_enabled": true,
+      "early_stop_threshold": 0.10,
+      "early_stop_window": 10,
+      "early_stop_min_points": 20
+    }
+  }
+}
+```
+
+UI中的“早停阈值”按百分数输入，因此输入 `10` 等价于HTTP请求中的
+`early_stop_threshold: 0.10`；“最大迭代代数”对应HTTP字段 `n_gen`。
 
 无约束时省略 `constraints` 或传 `[]`；也可只传需要约束的部分目标。
 `lower=0, upper=0` 表示要求该目标等于0，不表示未设置约束。
@@ -1810,6 +1856,8 @@ GET /api/v1/hust/doe/optimize/getById?id=doe_20260622_001
     "result_columns": ["X1", "X2", "Y1", "Y2", "feasible"],
     "total_generation": 200,
     "pop_size": 100,
+    "early_stopped": true,
+    "early_stop_point": 37,
     "run_time_sec": 12.5
   },
   "resource_id": "tos-d4e5f60718293a4b5c6d",
@@ -1832,6 +1880,8 @@ GET /api/v1/hust/doe/optimize/getById?id=doe_20260622_001
 | `data.progress` | integer | 当前优化进度，范围0到100 |
 | `data.request` | object或null | 后端归一化后的本次优化请求，尚未提交时为 `null` |
 | `data.result` | object或null | 优化完成后的结果索引，未完成或失败时为 `null` |
+| `data.result.task_info.early_stopped` | boolean | 是否因收敛曲线满足阈值而提前结束 |
+| `data.result.task_info.early_stop_point` | integer或null | 实际触发早停的代数或已完成训练回合数；未早停为null |
 | `data.current_run_id` | string或null | 最近一次提交的优化轮次，来自提交响应的 `data.run_id`；服务重启收敛中断状态后可为空，不表示历史被清空 |
 | `data.history` | object array | 按提交顺序保存的全部优化轮次，尚未提交时为空数组 |
 | `data.history[].run_id` | string | 优化轮次，用于定位该条记录及查询第12节曲线 |
@@ -2011,6 +2061,15 @@ GET 参数放在 URL query 中，不使用 JSON 请求体。`run_id` 取自优�
     "x": [1, 2, 3],
     "y": [0.0, 12.5, 15.2],
     "direction": "max",
+    "early_stopping": {
+      "enabled": true,
+      "threshold": 0.05,
+      "window": 10,
+      "min_points": 20,
+      "stopped_early": false,
+      "stop_point": null,
+      "change_rate": null
+    },
     "hv_config": {
       "objective_names": ["grain", "strength"],
       "offset": [15.0, -650.0],
@@ -2067,6 +2126,10 @@ GET 参数放在 URL query 中，不使用 JSON 请求体。`run_id` 取自优�
 | `data.x` | integer array | 横轴点，按记录顺序递增 |
 | `data.y` | number或null array | 单条曲线的一维纵轴数组，长度与x一致 |
 | `data.direction` | string或null | 曲线优化方向，`min` 越小越好，`max` 越大越好，尚未提交时为null |
+| `data.early_stopping` | object或null | 本轮早停配置和实时结果；旧轮次可能为null |
+| `data.early_stopping.stopped_early` | boolean | 是否已经由收敛早停终止 |
+| `data.early_stopping.stop_point` | integer或null | 触发早停的代数或回合数 |
+| `data.early_stopping.change_rate` | number或null | 触发时末端窗口的相对波动率 |
 | `data.hv_config` | object或null | 多目标HV的固定计算尺度和参考点，第一代记录前及其他模式为null |
 | `data.hv_config.objective_names` | string array | HV所用目标名称与坐标顺序 |
 | `data.hv_config.offset` | number array | 固定中心值，最小化目标使用训练均值，最大化目标使用训练均值的负值 |

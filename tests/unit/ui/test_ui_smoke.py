@@ -1872,7 +1872,8 @@ def test_ga_and_ppo_have_separate_parameter_panels_and_payloads(monkeypatch):
     })
     page.ga_population.setValue(80)
     page.ga_offspring.setValue(30)
-    page.ga_generations.setValue(60)
+    page.ga_generations.setValue(100)
+    page.ga_early_threshold.setValue(10.0)
     assert page.parameter_stack.parent() is page.algorithm_parameter_dialog
     assert page.ga_population.minimumWidth() >= 300
     assert "已设置" in page.algorithm_parameter_button.text()
@@ -1886,6 +1887,11 @@ def test_ga_and_ppo_have_separate_parameter_panels_and_payloads(monkeypatch):
     assert ga_payload["target_model_ids"] == {"load": "model-svr"}
     assert ga_payload["algorithm"]["params"]["pop_size"] == 80
     assert ga_payload["algorithm"]["params"]["n_offsprings"] == 30
+    assert ga_payload["algorithm"]["params"]["n_gen"] == 100
+    assert ga_payload["algorithm"]["params"]["early_stop_enabled"] is True
+    assert ga_payload["algorithm"]["params"]["early_stop_threshold"] == 0.10
+    assert ga_payload["algorithm"]["params"]["early_stop_window"] == 10
+    assert ga_payload["algorithm"]["params"]["early_stop_min_points"] == 20
 
     captured.clear()
     page.optimization_state = "not_started"
@@ -1899,6 +1905,8 @@ def test_ga_and_ppo_have_separate_parameter_panels_and_payloads(monkeypatch):
     ppo_payload = captured[0]
     assert ppo_payload["algorithm"]["params"]["total_timesteps"] == 1234
     assert ppo_payload["algorithm"]["params"]["episode_steps"] == 55
+    assert ppo_payload["algorithm"]["params"]["early_stop_enabled"] is True
+    assert ppo_payload["algorithm"]["params"]["early_stop_threshold"] == 0.05
     assert "pop_size" not in ppo_payload["algorithm"]["params"]
     page._reset_current_algorithm_parameters()
     assert page.ppo_timesteps.value() == 20000

@@ -769,8 +769,8 @@ class AlgorithmParameterDialog(QDialog):
         super().__init__(parent)
         self.parameter_stack = parameter_stack
         self.setModal(True)
-        self.resize(560, 390)
-        self.setMinimumSize(500, 340)
+        self.resize(600, 610)
+        self.setMinimumSize(540, 520)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(22, 20, 22, 18)
         layout.setSpacing(14)
@@ -894,8 +894,21 @@ class ConvergenceDialog(QDialog):
         status = status_view(str(data.get("status") or "not_started")).text
         point_count = int(data.get("point_count") or len(x_values))
         if data.get("available"):
-            self.summary.setText(f"运行版本：{run_id}　状态：{status}　记录点：{point_count}")
-            self.hint.setText("曲线运行中会自动刷新；滚轮或框选可缩放，双击可重置视图。")
+            early = data.get("early_stopping") or {}
+            suffix = ""
+            if early.get("stopped_early"):
+                rate = finite_float(early.get("change_rate"))
+                suffix = (
+                    f"　已早停：第 {early.get('stop_point')} 个记录点，"
+                    f"末端变化率 {(rate or 0.0) * 100:.2f}%"
+                )
+            self.summary.setText(
+                f"运行版本：{run_id}　状态：{status}　记录点：{point_count}{suffix}"
+            )
+            self.hint.setText(
+                "曲线运行中会自动刷新；早停按末端窗口相对波动率判断。"
+                "滚轮或框选可缩放，双击可重置视图。"
+            )
         else:
             self.summary.setText(f"运行版本：{run_id}　状态：{status}")
             self.hint.setText("当前轮次尚无收敛数据；优化开始产生迭代记录后可刷新查看。")
@@ -3442,7 +3455,9 @@ class OptimizationPage(QWidget, AsyncMixin):
             "每代新生成的解，迭代代数控制搜索轮数。\n\n"
             "PPO：训练时间步控制总交互量，每回合步数控制单回合长度，"
             "评估回合数控制最终评估量，学习率控制参数更新幅度，"
-            "约束惩罚系数控制超出约束时的奖励扣减。",
+            "约束惩罚系数控制超出约束时的奖励扣减。\n\n"
+            "早停会检查收敛曲线末端窗口；窗口内相对波动率低于阈值"
+            "且达到最少观察点数时提前结束，默认阈值为 5%。",
             self,
         ), 5, 3)
         config_layout.addLayout(form)
@@ -3470,12 +3485,35 @@ class OptimizationPage(QWidget, AsyncMixin):
         self.ga_generations = QSpinBox()
         self.ga_generations.setRange(1, 1000000)
         self.ga_generations.setValue(200)
+        self.ga_early_stop = QCheckBox("启用")
+        self.ga_early_stop.setChecked(True)
+        self.ga_early_threshold = QDoubleSpinBox()
+        self.ga_early_threshold.setRange(0.01, 99.99)
+        self.ga_early_threshold.setDecimals(2)
+        self.ga_early_threshold.setSuffix(" %")
+        self.ga_early_threshold.setValue(5.0)
+        self.ga_early_window = QSpinBox()
+        self.ga_early_window.setRange(2, 10000)
+        self.ga_early_window.setValue(10)
+        self.ga_early_min_points = QSpinBox()
+        self.ga_early_min_points.setRange(2, 1000000)
+        self.ga_early_min_points.setValue(20)
+        self.ga_early_window.valueChanged.connect(
+            self.ga_early_min_points.setMinimum
+        )
         self.ga_population.setToolTip("每代保留的候选解数量")
         self.ga_offspring.setToolTip("每代通过交叉和变异新生成的解数量")
         self.ga_generations.setToolTip("遗传算法的总迭代代数")
+        self.ga_early_threshold.setToolTip("末端窗口相对波动率低于该比例时触发早停")
+        self.ga_early_window.setToolTip("用于判断末端变化率的连续代数")
+        self.ga_early_min_points.setToolTip("至少完成这些代数后才允许早停")
         ga_form.addRow("种群规模", self.ga_population)
         ga_form.addRow("子代数量", self.ga_offspring)
         ga_form.addRow("迭代代数", self.ga_generations)
+        ga_form.addRow("收敛早停", self.ga_early_stop)
+        ga_form.addRow("变化率阈值", self.ga_early_threshold)
+        ga_form.addRow("末端窗口", self.ga_early_window)
+        ga_form.addRow("最少观察代数", self.ga_early_min_points)
         self.parameter_stack.addWidget(ga_parameters)
         ppo_parameters = QWidget()
         ppo_form = QFormLayout(ppo_parameters)
@@ -3500,17 +3538,40 @@ class OptimizationPage(QWidget, AsyncMixin):
         self.ppo_constraint_penalty.setDecimals(4)
         self.ppo_constraint_penalty.setRange(0.001, 1_000_000.0)
         self.ppo_constraint_penalty.setValue(5.0)
+        self.ppo_early_stop = QCheckBox("启用")
+        self.ppo_early_stop.setChecked(True)
+        self.ppo_early_threshold = QDoubleSpinBox()
+        self.ppo_early_threshold.setRange(0.01, 99.99)
+        self.ppo_early_threshold.setDecimals(2)
+        self.ppo_early_threshold.setSuffix(" %")
+        self.ppo_early_threshold.setValue(5.0)
+        self.ppo_early_window = QSpinBox()
+        self.ppo_early_window.setRange(2, 10000)
+        self.ppo_early_window.setValue(10)
+        self.ppo_early_min_points = QSpinBox()
+        self.ppo_early_min_points.setRange(2, 1000000)
+        self.ppo_early_min_points.setValue(20)
+        self.ppo_early_window.valueChanged.connect(
+            self.ppo_early_min_points.setMinimum
+        )
         self.ppo_timesteps.setToolTip("PPO 与代理模型环境交互的总时间步")
         self.ppo_episode_steps.setToolTip("单个训练回合允许的最大交互步数")
         self.ppo_evaluation_episodes.setToolTip("训练完成后用于评估策略的回合数")
         self.ppo_learning_rate.setToolTip("PPO 网络参数每次更新的步长")
         self.ppo_constraint_penalty.setToolTip("设计解违反输出约束时的奖励惩罚强度")
+        self.ppo_early_threshold.setToolTip("奖励曲线末端窗口相对波动率低于该比例时触发早停")
+        self.ppo_early_window.setToolTip("用于判断末端变化率的连续训练回合数")
+        self.ppo_early_min_points.setToolTip("至少完成这些训练回合后才允许早停")
         for label, widget in (
             ("训练时间步", self.ppo_timesteps),
             ("每回合步数", self.ppo_episode_steps),
             ("评估回合数", self.ppo_evaluation_episodes),
             ("学习率", self.ppo_learning_rate),
             ("约束惩罚系数", self.ppo_constraint_penalty),
+            ("收敛早停", self.ppo_early_stop),
+            ("变化率阈值", self.ppo_early_threshold),
+            ("末端窗口", self.ppo_early_window),
+            ("最少观察回合", self.ppo_early_min_points),
         ):
             ppo_form.addRow(label, widget)
         self.parameter_stack.addWidget(ppo_parameters)
@@ -3518,17 +3579,25 @@ class OptimizationPage(QWidget, AsyncMixin):
             self.ga_population,
             self.ga_offspring,
             self.ga_generations,
+            self.ga_early_threshold,
+            self.ga_early_window,
+            self.ga_early_min_points,
             self.ppo_timesteps,
             self.ppo_episode_steps,
             self.ppo_evaluation_episodes,
             self.ppo_learning_rate,
             self.ppo_constraint_penalty,
+            self.ppo_early_threshold,
+            self.ppo_early_window,
+            self.ppo_early_min_points,
         )
         for editor in parameter_editors:
             editor.setMinimumWidth(300)
             editor.setMinimumHeight(34)
             editor.setKeyboardTracking(False)
             editor.valueChanged.connect(self._refresh_algorithm_parameter_summary)
+        self.ga_early_stop.stateChanged.connect(self._refresh_algorithm_parameter_summary)
+        self.ppo_early_stop.stateChanged.connect(self._refresh_algorithm_parameter_summary)
         self.algorithm_parameter_dialog = AlgorithmParameterDialog(
             self.parameter_stack, self._reset_current_algorithm_parameters, self
         )
@@ -3932,11 +4001,19 @@ class OptimizationPage(QWidget, AsyncMixin):
             self.ga_population.value(),
             self.ga_offspring.value(),
             self.ga_generations.value(),
+            self.ga_early_stop.isChecked(),
+            self.ga_early_threshold.value(),
+            self.ga_early_window.value(),
+            self.ga_early_min_points.value(),
             self.ppo_timesteps.value(),
             self.ppo_episode_steps.value(),
             self.ppo_evaluation_episodes.value(),
             self.ppo_learning_rate.value(),
             self.ppo_constraint_penalty.value(),
+            self.ppo_early_stop.isChecked(),
+            self.ppo_early_threshold.value(),
+            self.ppo_early_window.value(),
+            self.ppo_early_min_points.value(),
         )
 
     def _restore_algorithm_parameter_snapshot(
@@ -3946,30 +4023,52 @@ class OptimizationPage(QWidget, AsyncMixin):
             self.ga_population,
             self.ga_offspring,
             self.ga_generations,
+            self.ga_early_stop,
+            self.ga_early_threshold,
+            self.ga_early_window,
+            self.ga_early_min_points,
             self.ppo_timesteps,
             self.ppo_episode_steps,
             self.ppo_evaluation_episodes,
             self.ppo_learning_rate,
             self.ppo_constraint_penalty,
+            self.ppo_early_stop,
+            self.ppo_early_threshold,
+            self.ppo_early_window,
+            self.ppo_early_min_points,
         )
         for editor, value in zip(editors, values, strict=True):
-            editor.setValue(value)
+            if isinstance(editor, QCheckBox):
+                editor.setChecked(bool(value))
+            else:
+                editor.setValue(value)
 
     def _reset_current_algorithm_parameters(self) -> None:
         if self.mode.currentData() == "reinforcement_learning":
-            defaults = (20000, 100, 10, 0.001, 5.0)
+            defaults = (20000, 100, 10, 0.001, 5.0, True, 5.0, 10, 20)
             editors = (
                 self.ppo_timesteps,
                 self.ppo_episode_steps,
                 self.ppo_evaluation_episodes,
                 self.ppo_learning_rate,
                 self.ppo_constraint_penalty,
+                self.ppo_early_stop,
+                self.ppo_early_threshold,
+                self.ppo_early_window,
+                self.ppo_early_min_points,
             )
         else:
-            defaults = (100, 50, 200)
-            editors = (self.ga_population, self.ga_offspring, self.ga_generations)
+            defaults = (100, 50, 200, True, 5.0, 10, 20)
+            editors = (
+                self.ga_population, self.ga_offspring, self.ga_generations,
+                self.ga_early_stop, self.ga_early_threshold,
+                self.ga_early_window, self.ga_early_min_points,
+            )
         for editor, value in zip(editors, defaults, strict=True):
-            editor.setValue(value)
+            if isinstance(editor, QCheckBox):
+                editor.setChecked(bool(value))
+            else:
+                editor.setValue(value)
         self._refresh_algorithm_parameter_summary()
 
     def _refresh_algorithm_parameter_summary(self, _value=None) -> None:
@@ -3980,21 +4079,31 @@ class OptimizationPage(QWidget, AsyncMixin):
                 self.ppo_evaluation_episodes.value(),
                 self.ppo_learning_rate.value(),
                 self.ppo_constraint_penalty.value(),
+                self.ppo_early_stop.isChecked(),
+                self.ppo_early_threshold.value(),
+                self.ppo_early_window.value(),
+                self.ppo_early_min_points.value(),
             )
-            defaults = (20000, 100, 10, 0.001, 5.0)
+            defaults = (20000, 100, 10, 0.001, 5.0, True, 5.0, 10, 20)
             summary = (
                 f"PPO：训练时间步 {values[0]:,}，每回合 {values[1]:,} 步，"
-                f"评估 {values[2]} 回合，学习率 {values[3]:g}，约束惩罚 {values[4]:g}。"
+                f"评估 {values[2]} 回合，学习率 {values[3]:g}，约束惩罚 {values[4]:g}；"
+                + (f"早停 {values[6]:g}% / {values[7]} 回合窗口。" if values[5] else "早停关闭。")
             )
         else:
             values = (
                 self.ga_population.value(),
                 self.ga_offspring.value(),
                 self.ga_generations.value(),
+                self.ga_early_stop.isChecked(),
+                self.ga_early_threshold.value(),
+                self.ga_early_window.value(),
+                self.ga_early_min_points.value(),
             )
-            defaults = (100, 50, 200)
+            defaults = (100, 50, 200, True, 5.0, 10, 20)
             summary = (
-                f"NSGA-II：种群 {values[0]}，子代 {values[1]}，迭代 {values[2]} 代。"
+                f"NSGA-II：种群 {values[0]}，子代 {values[1]}，迭代 {values[2]} 代；"
+                + (f"早停 {values[4]:g}% / {values[5]} 代窗口。" if values[3] else "早停关闭。")
             )
         state = "默认" if values == defaults else "已设置"
         self.algorithm_parameter_button.setText(f"设置参数（{state}）")
@@ -4211,6 +4320,10 @@ class OptimizationPage(QWidget, AsyncMixin):
                 "evaluation_episodes": self.ppo_evaluation_episodes.value(),
                 "learning_rate": self.ppo_learning_rate.value(),
                 "constraint_penalty": self.ppo_constraint_penalty.value(),
+                "early_stop_enabled": self.ppo_early_stop.isChecked(),
+                "early_stop_threshold": self.ppo_early_threshold.value() / 100.0,
+                "early_stop_window": self.ppo_early_window.value(),
+                "early_stop_min_points": self.ppo_early_min_points.value(),
                 "seed": 42,
             }
         else:
@@ -4219,6 +4332,10 @@ class OptimizationPage(QWidget, AsyncMixin):
                 "n_offsprings": self.ga_offspring.value(),
                 "eliminate_duplicates": True,
                 "n_gen": self.ga_generations.value(),
+                "early_stop_enabled": self.ga_early_stop.isChecked(),
+                "early_stop_threshold": self.ga_early_threshold.value() / 100.0,
+                "early_stop_window": self.ga_early_window.value(),
+                "early_stop_min_points": self.ga_early_min_points.value(),
                 "seed": 42,
             }
         payload = {

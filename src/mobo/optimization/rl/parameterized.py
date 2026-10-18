@@ -153,7 +153,7 @@ def run_parameterized_rl(
         learning_rate=float(config.get("learning_rate", 0.001)),
         seed=int(config.get("seed", 42)),
     )
-    callback = rl_callback()
+    callback = rl_callback(request)
     learn_options = {} if callback is None else {"callback": callback}
     model.learn(total_timesteps=int(config.get("total_timesteps", 20000)), **learn_options)
     records = []
@@ -167,7 +167,14 @@ def run_parameterized_rl(
             done = terminated or truncated
     output = Path(output_path)
     summary = _write_rl_solutions(records, output, request)
-    return {"solution_txt_path": str(output.resolve()), **summary}
+    return {
+        "solution_txt_path": str(output.resolve()),
+        "early_stopped": bool(callback and callback.early_stopping.stopped),
+        "early_stop_point": (
+            callback.early_stopping.stop_point if callback is not None else None
+        ),
+        **summary,
+    }
 
 
 __all__ = ["SurrogatePPOEnv", "run_parameterized_rl"]

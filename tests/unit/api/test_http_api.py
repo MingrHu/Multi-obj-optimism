@@ -997,7 +997,14 @@ def test_optimization_accepts_multi_and_weighted_single(monkeypatch, tmp_path):
             {"name": "x1", "lower": 0, "upper": 1},
             {"name": "x2", "lower": 10, "upper": 20},
         ],
-        "algorithm": {"name": "nsga2", "params": {"pop_size": 10, "n_gen": 2}},
+        "algorithm": {
+            "name": "nsga2",
+            "params": {
+                "pop_size": 10,
+                "n_gen": 100,
+                "early_stop_threshold": 0.10,
+            },
+        },
     })
     _prepare_optimization_doe("single_opt")
     single = client.post("/api/v1/hust/doe/optimize/start", json={
@@ -1016,6 +1023,11 @@ def test_optimization_accepts_multi_and_weighted_single(monkeypatch, tmp_path):
     assert multi.json["data"]["mode"] == "multi"
     assert multi.json["data"]["algorithm"] == "nsga2"
     request = store.load("multi_opt")["optimization"]["request"]
+    assert request["optimizer_config"]["n_gen"] == 100
+    assert request["optimizer_config"]["early_stop_enabled"] is True
+    assert request["optimizer_config"]["early_stop_threshold"] == 0.10
+    assert request["optimizer_config"]["early_stop_window"] == 10
+    assert request["optimizer_config"]["early_stop_min_points"] == 20
     assert request["decision_var_indices"] == [0, 1]
     assert request["constraints"] == [
         {"target_obj": "limit", "constraint_kind": "lower", "limit_value": 1.0},
@@ -1024,6 +1036,30 @@ def test_optimization_accepts_multi_and_weighted_single(monkeypatch, tmp_path):
     assert single.status_code == 202
     assert store.load("single_opt")["optimization"]["request"]["objective_config"][0]["weight"] == 0.7
     assert captured == [("multi_opt", "optimization"), ("single_opt", "optimization")]
+
+
+@pytest.mark.parametrize("params", [
+    {"early_stop_enabled": "yes"},
+    {"early_stop_threshold": 0},
+    {"early_stop_threshold": 1},
+    {"early_stop_window": 0},
+    {"early_stop_window": 10, "early_stop_min_points": 5},
+])
+def test_optimization_rejects_invalid_early_stopping(monkeypatch, tmp_path, params):
+    from mobo.api import service
+
+    client = _client(monkeypatch, tmp_path)
+    monkeypatch.setattr(service.registry, "start", lambda *args: None)
+    _prepare_optimization_doe("invalid_early_stop")
+    response = client.post("/api/v1/hust/doe/optimize/start", json={
+        "id": "invalid_early_stop", "mode": "multi",
+        "target_model_ids": _optimization_target_models("invalid_early_stop"),
+        "objectives": [{"name": "y1", "direction": "min"}],
+        "decision_variables": [{"name": "x1", "lower": 0, "upper": 1}],
+        "algorithm": {"name": "nsga2", "params": params},
+    })
+    assert response.status_code == 400
+    assert "early_stop" in response.json["message"]
 
 
 def test_reoptimization_appends_unique_run_history(monkeypatch, tmp_path):

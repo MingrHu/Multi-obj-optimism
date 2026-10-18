@@ -96,6 +96,7 @@ def run_optimization(
     try:
         started = time.time()
         constraint_check = None
+        result: dict[str, Any] = {}
         if optimizer in {"nsga2", "rl"} and all(
             key in resolved for key in _PARAMETERIZED_NSGA2_KEYS
         ):
@@ -145,6 +146,8 @@ def run_optimization(
                 "total_generation": (resolved.get("optimizer_config") or {}).get("n_gen"),
                 "pop_size": (resolved.get("optimizer_config") or {}).get("pop_size"),
                 "run_time_sec": cost,
+                "early_stopped": result.get("early_stopped", False),
+                "early_stop_point": result.get("early_stop_point"),
             },
             "file_resource": file_resource,
         }

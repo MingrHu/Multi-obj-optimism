@@ -11,6 +11,15 @@ import numpy as np
 _RECORDER = ContextVar("optimization_convergence", default=None)
 
 
+def calculate_change_rate(values):
+    """计算收敛窗口的相对变化率。"""
+    values = np.asarray(values, dtype=float)
+    if values.size == 0:
+        raise ValueError("values不能为空")
+    scale = max(float(np.max(np.abs(values))), np.finfo(float).eps)
+    return float((np.max(values) - np.min(values)) / scale)
+
+
 def empty_curve(mode, objectives):
     if mode is None:
         direction, x_label, metric = None, None, None
@@ -23,6 +32,7 @@ def empty_curve(mode, objectives):
     return {
         "mode": mode, "metric": metric, "x_label": x_label, "x": [],
         "y": [], "direction": direction, "hv_config": None,
+        "early_stopping": None,
     }
 
 
@@ -59,6 +69,54 @@ class CurveRecorder:
         temporary.replace(self.path)
 
 
+class EarlyStoppingMonitor:
+    """Stop when the relative spread of the trailing convergence window is small."""
+
+    def __init__(self, request, recorder):
+        config = request.get("optimizer_config") or {}
+        self.enabled = bool(config.get("early_stop_enabled", True))
+        self.threshold = float(config.get("early_stop_threshold", 0.05))
+        self.window = int(config.get("early_stop_window", 10))
+        self.min_points = int(config.get("early_stop_min_points", 20))
+        self.values = deque(maxlen=self.window)
+        self.point_count = 0
+        self.stopped = False
+        self.stop_point = None
+        self.change_rate = None
+        self.recorder = recorder
+        if recorder is not None:
+            recorder.data["early_stopping"] = self.as_dict()
+            recorder.save()
+
+    def as_dict(self):
+        return {
+            "enabled": self.enabled,
+            "threshold": self.threshold,
+            "window": self.window,
+            "min_points": self.min_points,
+            "stopped_early": self.stopped,
+            "stop_point": self.stop_point,
+            "change_rate": self.change_rate,
+        }
+
+    def update(self, point, value):
+        self.point_count += 1
+        if not self.enabled or value is None or not np.isfinite(value):
+            return False
+        self.values.append(float(value))
+        if self.point_count < self.min_points or len(self.values) < self.window:
+            return False
+        self.change_rate = calculate_change_rate(self.values)
+        if self.change_rate >= self.threshold:
+            return False
+        self.stopped = True
+        self.stop_point = int(point)
+        if self.recorder is not None:
+            self.recorder.data["early_stopping"] = self.as_dict()
+            self.recorder.save()
+        return True
+
+
 @contextmanager
 def record_convergence(path, mode, objectives):
     token = _RECORDER.set(CurveRecorder(path, mode, objectives))
@@ -73,7 +131,11 @@ class HypervolumeCurve:
         from pymoo.indicators.hv import HV
 
         objectives = problem.objectives
-        scalers = [problem.scalers[f"scaler_y_{item.y_index}"] for item in objectives]
+        scalers = [
+            getattr(item, "scaler_y", None)
+            or problem.scalers[f"scaler_y_{item.y_index}"]
+            for item in objectives
+        ]
         signs = np.array([1 if item.minimize else -1 for item in objectives])
         self.offset = signs * np.array([float(scaler.mean_[0]) for scaler in scalers])
         self.scale = np.array([float(scaler.scale_[0]) for scaler in scalers])
@@ -83,11 +145,12 @@ class HypervolumeCurve:
         worst = np.max(finite, axis=0) if len(finite) else np.full(len(objectives), 3.0)
         self.reference = np.maximum(worst, 3.0) + 1.0
         self.indicator = HV(ref_point=self.reference)
-        recorder.data["hv_config"] = {
-            "objective_names": [item.name for item in objectives],
-            "offset": self.offset.tolist(), "scale": self.scale.tolist(),
-            "reference_point": self.reference.tolist(),
-        }
+        if recorder is not None:
+            recorder.data["hv_config"] = {
+                "objective_names": [item.name for item in objectives],
+                "offset": self.offset.tolist(), "scale": self.scale.tolist(),
+                "reference_point": self.reference.tolist(),
+            }
 
     def normalize(self, values):
         return (values - self.offset) / self.scale
@@ -105,17 +168,17 @@ class HypervolumeCurve:
 
 def ga_callback(request):
     recorder = _RECORDER.get()
+    mode = recorder.data["mode"] if recorder is not None else request.get("mode", "multi")
     best = None
     hypervolume = None
+    monitor = EarlyStoppingMonitor(request, recorder)
 
     def observe(algorithm):
         nonlocal best, hypervolume
-        if recorder is None:
-            return
         values = np.asarray(algorithm.pop.get("F"), dtype=float)
         feasible = np.asarray(algorithm.pop.get("FEAS"), dtype=bool).reshape(-1)
         selected = values[feasible & np.isfinite(values).all(axis=1)]
-        if recorder.data["mode"] == "single":
+        if mode == "single":
             current = float(np.min(selected)) if len(selected) else np.inf
             best = current if best is None else min(best, current)
             value = best
@@ -123,15 +186,20 @@ def ga_callback(request):
             if hypervolume is None:
                 hypervolume = HypervolumeCurve(algorithm.problem, values, recorder)
             value = hypervolume.value(selected)
-        recorder.append(algorithm.n_gen, value)
+        if recorder is not None:
+            recorder.append(algorithm.n_gen, value)
+        if len(selected) and monitor.update(algorithm.n_gen, value):
+            algorithm.termination.terminate()
 
+    observe.early_stopping = monitor
     return observe
 
 
-def rl_callback():
+def rl_callback(request=None):
     recorder = _RECORDER.get()
-    if recorder is None:
+    if recorder is None and request is None:
         return None
+    monitor = EarlyStoppingMonitor(request or {}, recorder)
     from stable_baselines3.common.callbacks import BaseCallback
 
     class RewardCallback(BaseCallback):
@@ -151,7 +219,13 @@ def rl_callback():
                 self.completed.append(float(self.returns[index]))
                 self.returns[index] = 0
                 self.episodes += 1
-                recorder.append(self.episodes, np.mean(self.completed))
+                value = float(np.mean(self.completed))
+                if recorder is not None:
+                    recorder.append(self.episodes, value)
+                if monitor.update(self.episodes, value):
+                    return False
             return True
 
-    return RewardCallback()
+    callback = RewardCallback()
+    callback.early_stopping = monitor
+    return callback

@@ -1512,10 +1512,14 @@ def _normalize_optimizer(value, mode):
         raise ApiError("algorithm.params 必须是JSON对象")
     defaults = (
         {"total_timesteps": 20000, "episode_steps": 100, "learning_rate": 0.001,
-         "constraint_penalty": 5.0, "evaluation_episodes": 10, "seed": 42}
+         "constraint_penalty": 5.0, "evaluation_episodes": 10, "seed": 42,
+         "early_stop_enabled": True, "early_stop_threshold": 0.05,
+         "early_stop_window": 10, "early_stop_min_points": 20}
         if name == "ppo" else
         {"pop_size": 100, "n_offsprings": 100, "eliminate_duplicates": True,
-         "n_gen": 200, "seed": 42}
+         "n_gen": 200, "seed": 42, "early_stop_enabled": True,
+         "early_stop_threshold": 0.05, "early_stop_window": 10,
+         "early_stop_min_points": 20}
     )
     defaults.update(params)
     _validate_optimizer_config(name, defaults)
@@ -1524,8 +1528,11 @@ def _normalize_optimizer(value, mode):
 
 def _validate_optimizer_config(name, config):
     integer_fields = (
-        ("total_timesteps", "episode_steps", "evaluation_episodes", "seed")
-        if name == "ppo" else ("pop_size", "n_offsprings", "n_gen", "seed")
+        ("total_timesteps", "episode_steps", "evaluation_episodes", "seed",
+         "early_stop_window", "early_stop_min_points")
+        if name == "ppo" else
+        ("pop_size", "n_offsprings", "n_gen", "seed",
+         "early_stop_window", "early_stop_min_points")
     )
     for field in integer_fields:
         value = config.get(field)
@@ -1546,6 +1553,19 @@ def _validate_optimizer_config(name, config):
         config.setdefault("max_solutions", 100)
     elif not isinstance(config.get("eliminate_duplicates"), bool):
         raise ApiError("algorithm.params.eliminate_duplicates 必须是布尔值")
+    if not isinstance(config.get("early_stop_enabled"), bool):
+        raise ApiError("algorithm.params.early_stop_enabled 必须是布尔值")
+    threshold = config.get("early_stop_threshold")
+    if (
+        isinstance(threshold, bool)
+        or not isinstance(threshold, (int, float))
+        or not 0 < threshold < 1
+    ):
+        raise ApiError("algorithm.params.early_stop_threshold 必须是0到1之间的数值")
+    if config["early_stop_min_points"] < config["early_stop_window"]:
+        raise ApiError(
+            "algorithm.params.early_stop_min_points 必须大于等于 early_stop_window"
+        )
 
 
 def _run_optimization(
