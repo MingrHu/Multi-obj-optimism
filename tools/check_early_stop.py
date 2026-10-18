@@ -19,8 +19,14 @@ def main():
         print("错误：n必须是正整数。", file=sys.stderr)
         return 2
 
-    tokens = sys.stdin.read().split()
-    if len(tokens) != count:
+    tokens = []
+    while len(tokens) < count:
+        line = sys.stdin.readline()
+        if not line:
+            print(f"错误：需要输入{count}个数值，实际输入{len(tokens)}个。", file=sys.stderr)
+            return 2
+        tokens.extend(line.split())
+    if len(tokens) > count:
         print(f"错误：需要输入{count}个数值，实际输入{len(tokens)}个。", file=sys.stderr)
         return 2
     try:

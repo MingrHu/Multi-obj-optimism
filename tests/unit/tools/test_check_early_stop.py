@@ -22,7 +22,7 @@ def _run(monkeypatch, capsys, text):
 
 
 def test_reports_satisfied_when_change_rate_is_below_five_percent(monkeypatch, capsys):
-    code, output = _run(monkeypatch, capsys, "3\n100 99 96\n")
+    code, output = _run(monkeypatch, capsys, "3\n100 99 96\n不会被继续读取")
 
     assert code == 0
     assert output.out == "变化率：4.000000%\n满足停止条件\n"
