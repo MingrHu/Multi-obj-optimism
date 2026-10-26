@@ -257,6 +257,11 @@ class ApiClient:
     def stop_training(self, doe_id: str) -> dict[str, Any]:
         return self.request("POST", "/api/v1/hust/doe/train/stop", payload={"id": doe_id})
 
+    def start_inference(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self.request(
+            "POST", "/api/v1/hust/doe/inference/startInference", payload=payload,
+        )
+
     def start_optimization(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self.request("POST", "/api/v1/hust/doe/optimize/start", payload=payload)
 

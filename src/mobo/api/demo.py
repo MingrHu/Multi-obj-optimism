@@ -167,6 +167,7 @@ def main() -> None:
     # 9 推理测试 只返回 grain
     inference = call("POST", "/api/v1/hust/doe/inference/startInference", json={
         "id": doe_id,
+        "training_run_id": training["data"]["selected_run_id"],
         "inputs": {
             "temperature": [1000],
             "speed": [30]

@@ -7,6 +7,7 @@ import os
 import sys
 from functools import lru_cache, partial
 from pathlib import Path
+from time import perf_counter
 from typing import Any, Callable
 
 from PySide6.QtCharts import (
@@ -1687,6 +1688,10 @@ class ModelPage(QWidget, AsyncMixin):
         self.hyperparameters_loading = False
         self.hyperparameters_error = ""
         self.pending_model_configuration: tuple[str, str] | None = None
+        self.inference_running = False
+        self.inference_training_run_id = ""
+        self.inference_input_names: list[str] = []
+        self.inference_models: list[dict[str, Any]] = []
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -1863,6 +1868,7 @@ class ModelPage(QWidget, AsyncMixin):
         layout.addLayout(split)
 
         tabs = configure_scrollable_tabs(QTabWidget())
+        self.result_tabs = tabs
         self.preview = DataTable()
         self.preview.enable_wide_columns()
         self.preview.setToolTip("字段较多时可横向滚动；拖动表头分隔线可调整列宽。")
@@ -1905,6 +1911,61 @@ class ModelPage(QWidget, AsyncMixin):
         self.score_detail.setAlignment(Qt.AlignmentFlag.AlignCenter)
         score_layout.addWidget(self.score_detail)
         tabs.addTab(score_widget, "模型评分对比")
+
+        inference_widget = QWidget()
+        inference_layout = QVBoxLayout(inference_widget)
+        inference_layout.setContentsMargins(12, 12, 12, 12)
+        inference_layout.setSpacing(10)
+        inference_controls = QHBoxLayout()
+        inference_controls.addWidget(QLabel("代理模型"))
+        self.inference_model = QComboBox()
+        self.inference_model.setPlaceholderText("请先选择已完成的训练轮次")
+        self.inference_model.setEnabled(False)
+        self.inference_model.currentIndexChanged.connect(self._inference_model_changed)
+        inference_controls.addWidget(self.inference_model, 1)
+        inference_controls.addWidget(HelpButton(
+            "代理模型预测测试",
+            "从当前选中的训练轮次中选择一个代理模型，输入一条或多条样本后执行预测。\n\n"
+            "性能区分服务端总耗时、模型与标准化器加载耗时、纯模型预测耗时和包含网络通信的端到端耗时。"
+            "第一次调用通常包含磁盘读取和模型初始化，因此可能明显慢于后续调用。",
+            inference_widget,
+        ))
+        inference_layout.addLayout(inference_controls)
+        self.inference_context = QLabel("完成训练后可测试代理模型预测结果与性能。")
+        self.inference_context.setObjectName("Caption")
+        self.inference_context.setWordWrap(True)
+        inference_layout.addWidget(self.inference_context)
+        self.inference_inputs = DataTable()
+        self.inference_inputs.enable_wide_columns()
+        self.inference_inputs.setMinimumHeight(130)
+        self.inference_inputs.setToolTip("每行是一组输入样本；双击单元格编辑数值。")
+        inference_layout.addWidget(self.inference_inputs)
+        inference_actions = QHBoxLayout()
+        self.inference_add_button = QPushButton("添加样本")
+        self.inference_add_button.clicked.connect(self._add_inference_row)
+        self.inference_delete_button = QPushButton("删除选中样本")
+        self.inference_delete_button.clicked.connect(self._delete_inference_rows)
+        self.inference_first_row_button = QPushButton("使用训练数据首行")
+        self.inference_first_row_button.clicked.connect(self._use_first_training_row)
+        self.inference_button = QPushButton("开始预测")
+        self.inference_button.setObjectName("Primary")
+        self.inference_button.clicked.connect(self.start_inference)
+        inference_actions.addWidget(self.inference_add_button)
+        inference_actions.addWidget(self.inference_delete_button)
+        inference_actions.addWidget(self.inference_first_row_button)
+        inference_actions.addStretch()
+        inference_actions.addWidget(self.inference_button)
+        inference_layout.addLayout(inference_actions)
+        self.inference_timing = QLabel("尚未执行预测")
+        self.inference_timing.setObjectName("Caption")
+        self.inference_timing.setWordWrap(True)
+        inference_layout.addWidget(self.inference_timing)
+        self.inference_results = DataTable()
+        self.inference_results.enable_wide_columns()
+        self.inference_results.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.inference_results.setMinimumHeight(170)
+        inference_layout.addWidget(self.inference_results, 1)
+        tabs.addTab(inference_widget, "模型预测")
         layout.addWidget(tabs, 1)
         scroll.setWidget(body)
         outer.addWidget(scroll)
@@ -2192,6 +2253,8 @@ class ModelPage(QWidget, AsyncMixin):
         if doe_id != self.selected_doe_id:
             self.selected_doe_id = doe_id
             self.viewing_training_run_id = ""
+            self.inference_running = False
+            self.inference_training_run_id = ""
             self.training_run.clear()
             self._clear_dataset_context()
         self.selection_revision += 1
@@ -2351,6 +2414,7 @@ class ModelPage(QWidget, AsyncMixin):
         self.schema_summary.setText("加载数据后可定义输入参数和输出目标")
         self.save_hint.setText("字段名称、输入/输出角色或数据变化后，请保存到当前 DOE。")
         self.save_button.setText("保存 DOE 配置")
+        self._populate_inference_panel([], [], [])
 
     def load_dataset(self, path: str) -> None:
         if not Path(path).is_file():
@@ -2502,6 +2566,19 @@ class ModelPage(QWidget, AsyncMixin):
             and not self.doe_refresh_in_flight
             and not self.doe_create_in_flight
             and not self.doe_delete_in_flight
+        )
+        inference_ready = bool(
+            self.current_doe_id()
+            and self.inference_training_run_id
+            and self.inference_model.currentData()
+            and self.inference_input_names
+        )
+        self.inference_button.setEnabled(inference_ready and not self.inference_running)
+        self.inference_button.setText("正在预测…" if self.inference_running else "开始预测")
+        self.inference_add_button.setEnabled(bool(self.inference_input_names) and not self.inference_running)
+        self.inference_delete_button.setEnabled(bool(self.inference_input_names) and not self.inference_running)
+        self.inference_first_row_button.setEnabled(
+            bool(self.inference_input_names and self.rows) and not self.inference_running
         )
 
     def _current_schema(self) -> dict[str, Any]:
@@ -2829,6 +2906,9 @@ class ModelPage(QWidget, AsyncMixin):
         self.updated_label.setToolTip(str(raw_updated_at or ""))
         self.progress.setValue(int(data.get("progress", 0)))
         models = data.get("models", [])
+        self.inference_training_run_id = str(
+            data.get("selected_run_id") or data.get("current_run_id") or ""
+        )
         self._populate_training_history(data)
         self._restore_model_parameters(data.get("model_configs"))
         self.has_completed_training = state == "finished" and bool(models)
@@ -2876,6 +2956,11 @@ class ModelPage(QWidget, AsyncMixin):
             })
         self._update_model_summary(models, list(data.get("target_names") or []))
         self.update_score_chart(models)
+        self._populate_inference_panel(
+            models,
+            list(data.get("input_names") or []),
+            list(data.get("input_bounds") or []),
+        )
         if state in {"finished", "failed", "stopped", "not_started"}:
             self.timer.stop()
         self._refresh_training_actions()
@@ -2976,12 +3061,232 @@ class ModelPage(QWidget, AsyncMixin):
         self.training_run.blockSignals(False)
         self.training_run.setEnabled(bool(history))
 
+    def _populate_inference_panel(
+        self,
+        models: list[dict[str, Any]],
+        input_names: list[str],
+        input_bounds: list[dict[str, Any]],
+    ) -> None:
+        available = [model for model in models if model.get("model_id")]
+        selected_model_id = str(self.inference_model.currentData() or "")
+        previous_inputs = list(self.inference_input_names)
+        self.inference_models = available
+        self.inference_input_names = [str(name) for name in input_names]
+        self.inference_model.blockSignals(True)
+        self.inference_model.clear()
+        for model in available:
+            model_id = str(model["model_id"])
+            family = str(model.get("model_family") or "模型")
+            targets = "、".join(str(name) for name in model.get("target_names") or [])
+            score = finite_float(model.get("score"))
+            score_text = f" · 评分 {score:.3f}" if score is not None else ""
+            composite_text = " · 逐输出组合" if model.get("is_composite") else ""
+            label = f"{family}{composite_text}{score_text} · {targets or '未记录输出'} · {model_id}"
+            self.inference_model.addItem(label, model_id)
+            self.inference_model.setItemData(
+                self.inference_model.count() - 1,
+                f"模型 ID：{model_id}\n输出：{targets or '未记录'}",
+                Qt.ItemDataRole.ToolTipRole,
+            )
+        selected_index = self.inference_model.findData(selected_model_id)
+        if selected_index < 0 and available:
+            composite_index = next(
+                (index for index, model in enumerate(available) if model.get("is_composite")),
+                -1,
+            )
+            if composite_index >= 0:
+                selected_index = composite_index
+            else:
+                selected_index = max(
+                    range(len(available)),
+                    key=lambda index: finite_float(available[index].get("score"))
+                    if finite_float(available[index].get("score")) is not None
+                    else float("-inf"),
+                )
+        self.inference_model.setCurrentIndex(selected_index)
+        self.inference_model.blockSignals(False)
+        self.inference_model.setEnabled(bool(available))
+
+        if self.inference_input_names != previous_inputs:
+            bounds_by_name = {
+                str(item.get("name")): item for item in input_bounds
+                if isinstance(item, dict) and item.get("name")
+            }
+            default_row = []
+            for name in self.inference_input_names:
+                bounds = bounds_by_name.get(name, {})
+                lower = finite_float(bounds.get("lower"))
+                upper = finite_float(bounds.get("upper"))
+                default_row.append(
+                    (lower + upper) / 2.0
+                    if lower is not None and upper is not None else 0.0
+                )
+            self.inference_inputs.set_data(
+                self.inference_input_names,
+                [default_row] if default_row else [],
+            )
+            self.inference_results.set_data([], [])
+            self.inference_timing.setText("尚未执行预测")
+
+        if available and self.inference_input_names:
+            self.inference_context.setText(
+                f"训练轮次：{self.inference_training_run_id} · "
+                f"输入字段：{len(self.inference_input_names)} 个 · 可用模型：{len(available)} 个"
+            )
+        else:
+            self.inference_context.setText("所选训练轮次没有可用于预测的模型或输入字段。")
+        self._refresh_training_actions()
+
+    def _inference_model_changed(self, _index: int) -> None:
+        self.inference_results.set_data([], [])
+        self.inference_timing.setText("模型已切换，请重新执行预测。")
+        self._refresh_training_actions()
+
+    def _add_inference_row(self) -> None:
+        if not self.inference_input_names:
+            return
+        row = self.inference_inputs.rowCount()
+        self.inference_inputs.insertRow(row)
+        previous = max(0, row - 1)
+        for column in range(len(self.inference_input_names)):
+            source = self.inference_inputs.item(previous, column) if row else None
+            self.inference_inputs.setItem(
+                row, column, QTableWidgetItem(source.text() if source else "0"),
+            )
+
+    def _delete_inference_rows(self) -> None:
+        selected = sorted(
+            {index.row() for index in self.inference_inputs.selectedIndexes()},
+            reverse=True,
+        )
+        for row in selected:
+            self.inference_inputs.removeRow(row)
+        if not self.inference_inputs.rowCount() and self.inference_input_names:
+            self._add_inference_row()
+
+    def _use_first_training_row(self) -> None:
+        if not self.rows or not self.inference_input_names:
+            return
+        indices = []
+        for name in self.inference_input_names:
+            if name not in self.headers:
+                self.show_error(f"当前训练数据中找不到输入字段：{name}")
+                return
+            indices.append(self.headers.index(name))
+        self.inference_inputs.set_data(
+            self.inference_input_names,
+            [[self.rows[0][index] for index in indices]],
+        )
+        self.inference_results.set_data([], [])
+        self.inference_timing.setText("已载入训练数据首行，尚未执行预测。")
+
+    def start_inference(self) -> None:
+        doe_id = self.current_doe_id()
+        training_run_id = self.inference_training_run_id
+        model_id = str(self.inference_model.currentData() or "")
+        if not doe_id or not training_run_id or not model_id:
+            self.show_error("请先选择已完成的训练轮次和代理模型")
+            return
+        rows: list[list[float]] = []
+        for row_index, row in enumerate(self.inference_inputs.rows(), 1):
+            parsed = [finite_float(value) for value in row]
+            if len(parsed) != len(self.inference_input_names) or any(
+                value is None for value in parsed
+            ):
+                self.show_error(f"第 {row_index} 行必须完整填写有限数值")
+                return
+            rows.append([float(value) for value in parsed if value is not None])
+        if not rows:
+            self.show_error("请至少填写一条输入样本")
+            return
+        payload = {
+            "id": doe_id,
+            "training_run_id": training_run_id,
+            "model_id": model_id,
+            "inputs": rows,
+        }
+        revision = self.selection_revision
+        self.inference_running = True
+        self.inference_timing.setText(f"正在预测 {len(rows)} 条样本…")
+        self._refresh_training_actions()
+
+        def request() -> dict[str, Any]:
+            started_at = perf_counter()
+            result = dict(self.client_provider().start_inference(payload))
+            result["client_elapsed_ms"] = (perf_counter() - started_at) * 1000.0
+            return result
+
+        self.run_async(
+            request,
+            lambda data: self._inference_finished(
+                doe_id, training_run_id, model_id, revision, data,
+            ),
+            lambda message: self._inference_failed(doe_id, revision, message),
+        )
+
+    def _inference_finished(
+        self,
+        doe_id: str,
+        training_run_id: str,
+        model_id: str,
+        revision: int,
+        data: dict[str, Any],
+    ) -> None:
+        if (
+            doe_id != self.current_doe_id()
+            or training_run_id != self.inference_training_run_id
+            or model_id != str(self.inference_model.currentData() or "")
+            or revision != self.selection_revision
+        ):
+            return
+        self.inference_running = False
+        predictions = data.get("predictions") if isinstance(data.get("predictions"), dict) else {}
+        fields = list(predictions)
+        row_count = max((len(values) for values in predictions.values()), default=0)
+        result_rows = [
+            [index + 1] + [
+                predictions[field][index] if index < len(predictions[field]) else ""
+                for field in fields
+            ]
+            for index in range(row_count)
+        ]
+        self.inference_results.set_data(["样本", *fields], result_rows)
+        timing = data.get("timing") if isinstance(data.get("timing"), dict) else {}
+        total = finite_float(timing.get("total_ms"))
+        loading = finite_float(timing.get("model_loading_ms"))
+        prediction = finite_float(timing.get("prediction_ms"))
+        per_sample = finite_float(timing.get("per_sample_ms"))
+        round_trip = finite_float(data.get("client_elapsed_ms"))
+        parts = [f"完成 {row_count} 条样本预测"]
+        for label, value in (
+            ("服务端总耗时", total),
+            ("模型加载", loading),
+            ("纯预测", prediction),
+            ("单样本", per_sample),
+            ("端到端", round_trip),
+        ):
+            if value is not None:
+                parts.append(f"{label} {value:.3f} ms")
+        self.inference_timing.setText(" · ".join(parts))
+        self._refresh_training_actions()
+
+    def _inference_failed(self, doe_id: str, revision: int, message: str) -> None:
+        if doe_id != self.current_doe_id() or revision != self.selection_revision:
+            return
+        self.inference_running = False
+        self.inference_timing.setText(f"预测失败：{message}")
+        self._refresh_training_actions()
+        self.show_error(message)
+
     def _training_run_selected(self, _index: int) -> None:
         run_id = str(self.training_run.currentData() or "")
         doe_id = self.current_doe_id()
         if not doe_id or not run_id:
             return
         self.viewing_training_run_id = run_id
+        self.inference_running = False
+        self.inference_training_run_id = ""
+        self._populate_inference_panel([], [], [])
         self.status_loading = True
         self.training_record_hint.setText(f"正在加载训练历史 {run_id}…")
         self._refresh_training_actions()
@@ -3381,7 +3686,13 @@ class OptimizationPage(QWidget, AsyncMixin):
         self.current_optimization_run_id = ""
         self.convergence_request_in_flight = False
         self.convergence_dialog: ConvergenceDialog | None = None
-        layout = QVBoxLayout(self)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        body = QWidget()
+        layout = QVBoxLayout(body)
         layout.setContentsMargins(28, 24, 28, 24)
         layout.setSpacing(16)
         layout.addLayout(page_header("优化中心", "配置单目标、多目标 NSGA-II 或强化学习 PPO，并跟踪执行状态。"))
@@ -3389,6 +3700,9 @@ class OptimizationPage(QWidget, AsyncMixin):
         top = QHBoxLayout()
         config, config_layout = card("优化配置")
         form = QGridLayout()
+        form.setHorizontalSpacing(12)
+        form.setVerticalSpacing(10)
+        form.setColumnStretch(1, 1)
         self.doe_id = QComboBox()
         self.doe_id.setObjectName("TaskSelector")
         self.doe_id.setEditable(False)
@@ -3702,6 +4016,8 @@ class OptimizationPage(QWidget, AsyncMixin):
         self.validation_hint.setObjectName("Caption")
         self.validation_hint.setWordWrap(True)
         layout.addWidget(self.validation_hint)
+        scroll.setWidget(body)
+        outer.addWidget(scroll)
         self._refresh_optimization_actions()
 
     def refresh_does(self) -> None:

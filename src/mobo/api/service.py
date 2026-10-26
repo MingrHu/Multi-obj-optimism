@@ -9,6 +9,7 @@ import uuid
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
+from time import perf_counter
 from typing import Any
 
 from mobo.common.logging import logger
@@ -1104,26 +1105,40 @@ def _mark_cancelled(
 
 
 def start_inference(payload: dict[str, Any]) -> dict[str, Any]:
+    started_at = perf_counter()
     # 推理相关依赖按请求加载 避免服务启动时加载全部模型框架
     import numpy as np
     from mobo.optimization.ga.run import _load_model, _load_scalers
 
     doe_id = _require_id(payload)
-    record = _select_model(store.load(doe_id), payload.get("model_id"))
     state = store.load(doe_id)
-    rows = _normalize_inference_inputs(payload.get("inputs"), state)
+    training_run_id = payload.get("training_run_id")
+    if training_run_id is not None and not isinstance(training_run_id, str):
+        raise ApiError("training_run_id 必须是字符串")
+    training = (
+        _select_training_run(state, training_run_id)
+        if training_run_id else state.get("training", {})
+    )
+    record = _select_model(state, payload.get("model_id"), training_run_id)
+    rows = _normalize_inference_inputs(payload.get("inputs"), training)
     fields = _normalize_fields(payload.get("fields"), record["target_names"])
     array = np.asarray(rows, dtype=float)
     if array.ndim == 1:
         array = array.reshape(1, -1)
     predictions = []
+    model_loading_seconds = 0.0
+    prediction_seconds = 0.0
     first_target = record["target_names"][0]
     for index, target in enumerate(record["target_names"]):
+        loading_started_at = perf_counter()
         scalers = _load_scalers(record["model_dir"], target, first_target)
         # 混合模型的每个输出必须复用自身训练时保存的输入和目标标准化器
         scaled = scalers["scaler_X"].transform(array)
         model = _load_model(record["model_dir"], target)
+        model_loading_seconds += perf_counter() - loading_started_at
+        prediction_started_at = perf_counter()
         values = np.asarray(model.predict(scaled)).reshape(-1, 1) # type: ignore
+        prediction_seconds += perf_counter() - prediction_started_at
         scaler_y = scalers.get(f"scaler_y_{index}", scalers.get("scaler_y_0"))
         predictions.append(scaler_y.inverse_transform(values).ravel())
     matrix = np.column_stack(predictions)
@@ -1134,18 +1149,33 @@ def start_inference(payload: dict[str, Any]) -> dict[str, Any]:
     resource = store.register_resource(
         doe_id, "inference", record["target_names"], values=all_results,
     )
+    selected_training_run_id = str(
+        training.get("run_id") or state.get("training", {}).get("current_run_id") or ""
+    )
+    total_seconds = perf_counter() - started_at
+    sample_count = len(rows)
+    timing = {
+        "sample_count": sample_count,
+        "total_ms": total_seconds * 1000.0,
+        "model_loading_ms": model_loading_seconds * 1000.0,
+        "prediction_ms": prediction_seconds * 1000.0,
+        "per_sample_ms": total_seconds * 1000.0 / sample_count,
+    }
     store.update_section(
         doe_id, "inference", model_id=record["model_id"],
-        values=all_results, **resource,
+        training_run_id=selected_training_run_id, values=all_results,
+        timing=timing, **resource,
     )
     return {
-        "id": doe_id, "model_id": record["model_id"], **resource,
+        "id": doe_id, "model_id": record["model_id"],
+        "training_run_id": selected_training_run_id, **resource,
         "predictions": {field: all_results[field] for field in fields},
+        "timing": timing,
     }
 
 
-def _normalize_inference_inputs(value: Any, state: dict[str, Any]) -> list[Any]:
-    request = state.get("training", {}).get("request") or {}
+def _normalize_inference_inputs(value: Any, training: dict[str, Any]) -> list[Any]:
+    request = training.get("request") or {}
     all_names = request.get("all_var_list") or []
     count = request.get("input_var_count", 0)
     input_names = all_names[:count]

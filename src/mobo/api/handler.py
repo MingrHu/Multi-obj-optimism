@@ -204,6 +204,7 @@ def start_training():
 #  @param  inputs 输入参数二维数值数组 必填 单个样本可使用一维数组
 #  @param  fields 需要返回的预测目标字段列表 可选 默认返回全部目标
 #  @param  model_id 指定代理模型标识 可选 未传入时自动选择评分最高模型
+#  @param  training_run_id 指定已完成训练轮次 可选
 #  @author Hu Mingrui
 #  @date   2026/08/25
 @doe_api.post("/api/v1/hust/doe/inference/startInference")

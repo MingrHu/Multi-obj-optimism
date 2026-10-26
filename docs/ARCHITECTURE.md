@@ -132,7 +132,8 @@ Flask/Gunicorn worker 在接受请求前通过 `api.readiness` 一次性加载�
 - 样本、演示训练数据集和参数化 NSGA-II 解集均以无表头 TSV 落盘。
 - `sample.columns`、`training.dataset.all_var_list` 和
   `optimization.result.task_info.result_columns` 分别记录文件列顺序。
-- 推理响应按请求的 `fields` 返回，同时在 `inference.values` 保存最近一次完整目标结果。
+- 推理可通过 `training_run_id` 与 `model_id` 精确选择历史模型；响应按请求的 `fields` 返回预测值和
+  服务端总耗时、模型加载耗时、纯预测耗时及单样本耗时，同时在 `inference.values` 保存最近一次完整目标结果。
 - `GET /api/v1/hust/doe/data/get` 根据 `id`、`resource_id` 和重复的 `fields` 参数读取指定列，
   `resource_id` 是服务端维护的 `tos-xxxxx` 不透明索引，端上无需访问或解析服务端文件路径。
 - HTTP 唯一协议入口是 [`DOE_HTTP_API.md`](api/DOE_HTTP_API.md)；Python 内部任务接口记录在

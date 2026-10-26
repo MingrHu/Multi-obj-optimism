@@ -1743,6 +1743,69 @@ def test_training_history_is_selectable_in_model_and_optimization_pages(monkeypa
     app.processEvents()
 
 
+def test_model_page_runs_historical_model_inference_and_shows_timing(monkeypatch):
+    pytest.importorskip("PySide6")
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication, QTableWidgetItem
+
+    module = importlib.import_module("work_platform.mobo_ui.app")
+    app = QApplication.instance() or QApplication([])
+    captured = {}
+
+    class FakeClient:
+        def start_inference(self, payload):
+            captured.update(payload)
+            return {
+                "model_id": payload["model_id"],
+                "training_run_id": payload["training_run_id"],
+                "predictions": {"载荷": [12.5], "晶粒": [4.2]},
+                "timing": {
+                    "sample_count": 1,
+                    "total_ms": 8.5,
+                    "model_loading_ms": 5.0,
+                    "prediction_ms": 1.2,
+                    "per_sample_ms": 8.5,
+                },
+            }
+
+    page = module.ModelPage(module.QThreadPool.globalInstance(), FakeClient)
+    page.run_async = lambda fn, done=None, failed=None: (done or (lambda _value: None))(fn())
+    page.doe_id.addItem("任务", "doe-1")
+    page.doe_id.setCurrentIndex(0)
+    page.update_progress({
+        "status": "finished", "stage": "finished", "progress": 100,
+        "current_run_id": "train-1", "selected_run_id": "train-1",
+        "history": [{"run_id": "train-1", "status": "finished"}],
+        "input_names": ["温度", "速度"],
+        "target_names": ["载荷", "晶粒"],
+        "input_bounds": [
+            {"name": "温度", "lower": 900.0, "upper": 1100.0},
+            {"name": "速度", "lower": 10.0, "upper": 30.0},
+        ],
+        "models": [{
+            "model_id": "mixed-1", "model_family": "MIXED",
+            "is_composite": True, "target_names": ["载荷", "晶粒"],
+        }],
+    })
+    page.inference_inputs.setItem(0, 0, QTableWidgetItem("1000"))
+    page.inference_inputs.setItem(0, 1, QTableWidgetItem("20"))
+
+    page.start_inference()
+
+    assert captured == {
+        "id": "doe-1", "training_run_id": "train-1",
+        "model_id": "mixed-1", "inputs": [[1000.0, 20.0]],
+    }
+    assert page.inference_results.rowCount() == 1
+    assert page.inference_results.horizontalHeaderItem(1).text() == "载荷"
+    assert page.inference_results.item(0, 1).text() == "12.5"
+    assert "服务端总耗时 8.500 ms" in page.inference_timing.text()
+    assert "纯预测 1.200 ms" in page.inference_timing.text()
+    assert "端到端" in page.inference_timing.text()
+    assert page.inference_button.text() == "开始预测"
+    app.processEvents()
+
+
 def test_optimization_page_presents_per_output_selection_and_context_help(monkeypatch):
     pytest.importorskip("PySide6")
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")

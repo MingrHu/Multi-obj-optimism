@@ -39,7 +39,7 @@ Docker 环境可执行 `docker compose up --build -d`，容器会自动使用 Gu
 | **`POST /api/v1/hust/doe/train/delete`** | **`id`** | **删除训练记录和代理模型** |
 | **`POST /api/v1/hust/doe/train/stop`** | **`id`** | **发出训练中止请求** |
 | **`POST /api/v1/hust/doe/train/startTrain`** | **见下文** | **后台训练并评价** |
-| **`POST /api/v1/hust/doe/inference/startInference`** | **`id`, `inputs`, `fields?`, `model_id?`** | **代理模型批量推理并按目标字段返回** |
+| **`POST /api/v1/hust/doe/inference/startInference`** | **`id`, `inputs`, `fields?`, `training_run_id?`, `model_id?`** | **指定训练轮次和模型进行批量推理，返回结果与耗时** |
 | **`POST /api/v1/hust/doe/optimize/start`** | **`id`, `training_run_id?`, `target_model_ids` 等，见第9节** | **按输出绑定模型后提交优化，返回新的优化 `run_id`** |
 | **`POST /api/v1/hust/doe/optimize/stop`** | **`id`** | **发出优化中止请求** |
 | **`GET /api/v1/hust/doe/optimize/getById`** | **`id`** | **查询当前优化状态及全部历史轮次的参数与结果索引** |
@@ -71,7 +71,7 @@ POST 参数使用 JSON 对象；GET 接口不读取请求体
 | 训练提交 | 不接收客户端指定的 `run_id` | 每次成功提交生成新的训练轮次 |
 | 训练进度 | query `run_id`，必须是训练轮次 | 返回当前训练聚合状态，并返回全部轮次摘要 |
 | 训练中止 / 删除 | 仅使用 `id`，不支持按轮次操作 | 中止当前训练；删除该 DOE 全部训练记录与模型 |
-| 推理 | 仅 `model_id`，不支持 `training_run_id` | 在当前训练聚合记录的模型中选择；指定历史模型不会自动查找历史轮次 |
+| 推理 | JSON `training_run_id`，必须是已完成训练轮次 | 使用当前训练聚合记录；指定历史模型时应同时传对应训练轮次 |
 | 优化提交 | JSON `training_run_id`，必须是训练轮次 | 默认使用最近完成的训练轮次；`target_model_ids` 必须覆盖该轮次全部输出 |
 | 优化中止 | 仅使用 `id`，不支持 `run_id` | 请求中止当前优化 |
 | 优化查询 | 仅 query `id`，不支持 query `run_id` | 返回当前状态及全部 `history`，客户端按 `history[].run_id` 选历史结果 |
@@ -1279,6 +1279,7 @@ DOE 不存在返回 HTTP 404：
 ```json
 {
   "id": "doe_20260622_001",
+  "training_run_id": "train_1a2b3c4d5e6f",
   "model_id": "tr_doe_20260622_001_2_a1b2c3",
   "inputs": [0.25, 18.6, 1120, 220, 240, 22.5, 18.3],
   "fields": ["Y1", "Y2"]
@@ -1306,14 +1307,15 @@ DOE 不存在返回 HTTP 404：
 普通模型；不传 `fields` 时返回该模型的全部输出目标。组合模型会为每个输出加载自己的代理模型、
 输入标准化器和目标标准化器。`inputs` 还支持二维数组形式，用于一次提交多个样本。
 
-本接口当前不读取 `training_run_id` 或 `run_id`，无法指定历史训练轮次。`model_id` 也只在
-当前训练记录中匹配；若重新训练清空了当前模型列表，旧模型不能仅凭历史 `model_id` 在本接口中加载。
-输入字段顺序取当前训练请求的 `input_names`，获取它们及模型标识使用第7节训练进度接口。
+传 `training_run_id` 时，服务端从该已完成训练轮次读取模型、输入字段及标准化器，可测试历史模型；
+`model_id` 必须属于同一训练轮次。不传 `training_run_id` 时保持兼容行为，从当前训练聚合记录中选择模型。
+输入字段顺序取所选训练轮次请求的 `input_names`，获取它们及模型标识使用第7节训练进度接口。
 
 | 请求字段 | 类型 | 必填 | 说明 |
 |---|---|---:|---|
 | `id` | string | 是 | 已完成代理模型训练的 DOE 唯一标识 |
-| `model_id` | string | 否 | 指定当前训练记录中的代理模型；不传时优先选择逐输出组合模型，否则选择评分最高普通模型 |
+| `training_run_id` | string | 否 | 指定已完成训练轮次；测试历史模型时应传入 |
+| `model_id` | string | 否 | 指定所选训练轮次中的代理模型；不传时优先选择逐输出组合模型，否则选择评分最高普通模型 |
 | `inputs` | `number[]`、`number[][]` 或 object | 是 | 单样本、批量样本或按输入字段组织的批量数据 |
 | `fields` | string array | 否 | 需要返回的输出目标，默认返回全部目标 |
 
@@ -1327,6 +1329,7 @@ DOE 不存在返回 HTTP 404：
   "message": "推理完成",
   "data": {
     "id": "doe_20260622_001",
+    "training_run_id": "train_1a2b3c4d5e6f",
     "model_id": "tr_doe_20260622_001_2_a1b2c3",
     "resource_id": "tos-c3d4e5f60718293a4b5c",
     "resource_type": "inference",
@@ -1334,6 +1337,13 @@ DOE 不存在返回 HTTP 404：
     "predictions": {
       "Y1": [1050.25],
       "Y2": [0.42]
+    },
+    "timing": {
+      "sample_count": 1,
+      "total_ms": 8.52,
+      "model_loading_ms": 5.31,
+      "prediction_ms": 1.08,
+      "per_sample_ms": 8.52
     }
   }
 }
@@ -1344,14 +1354,20 @@ DOE 不存在返回 HTTP 404：
 | `code` | integer | 成功固定为0 |
 | `message` | string | 成功为 `推理完成` |
 | `data.id` | string | DOE 唯一标识 |
+| `data.training_run_id` | string | 本次实际使用的训练轮次；旧聚合记录没有轮次时可为空字符串 |
 | `data.model_id` | string | 本次实际加载的代理模型标识 |
 | `data.resource_id` | string | 本次完整推理结果的资源索引 |
 | `data.resource_type` | string | 推理结果固定为 `inference` |
 | `data.columns` | string array | 该模型全部输出目标的字段顺序 |
 | `data.predictions` | object | 本次请求字段到预测结果数组的映射 |
 | `data.predictions.<field>` | number array | 对应目标的批量预测结果，顺序与输入样本一致 |
+| `data.timing.sample_count` | integer | 本次推理样本数量 |
+| `data.timing.total_ms` | number | 服务端从校验、加载模型到登记结果的总耗时（毫秒） |
+| `data.timing.model_loading_ms` | number | 加载标准化器、模型及输入标准化的累计耗时（毫秒） |
+| `data.timing.prediction_ms` | number | 各输出模型执行 `predict` 的累计耗时（毫秒） |
+| `data.timing.per_sample_ms` | number | 服务端总耗时除以样本数（毫秒/样本） |
 
-服务会在 DOE 状态的 `inference` 区块保存本次使用的 `model_id` 和全部输出目标结果。
+服务会在 DOE 状态的 `inference` 区块保存本次使用的 `training_run_id`、`model_id`、耗时和全部输出目标结果。
 本接口可以通过 `fields` 只返回部分目标，但之后仍可将 `data.resource_id` 传给按资源
 索引获取数据接口，读取本次推理的其他目标。新的推理结果会使上一次索引失效。
 

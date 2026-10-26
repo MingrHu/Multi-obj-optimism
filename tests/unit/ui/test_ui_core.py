@@ -138,6 +138,30 @@ def test_api_client_deletes_doe(monkeypatch):
     assert result == {"value": "doe-1"}
 
 
+def test_api_client_starts_inference(monkeypatch):
+    captured = {}
+
+    def fake_urlopen(request, timeout):
+        captured["url"] = request.full_url
+        captured["body"] = json.loads(request.data.decode("utf-8"))
+        return _Response({
+            "code": 0, "message": "ok",
+            "data": {"predictions": {"y": [2.0]}},
+        })
+
+    monkeypatch.setattr(core, "urlopen", fake_urlopen)
+    payload = {
+        "id": "doe-1", "training_run_id": "train-1",
+        "model_id": "rf-1", "inputs": [[1.0]],
+    }
+
+    result = core.ApiClient().start_inference(payload)
+
+    assert captured["url"].endswith("/api/v1/hust/doe/inference/startInference")
+    assert captured["body"] == payload
+    assert result == {"predictions": {"y": [2.0]}}
+
+
 def test_status_view_has_safe_fallback():
     assert core.status_view("finished").tone == "success"
     assert core.status_view("future_state").text == "future_state"

@@ -834,6 +834,11 @@ def test_inference_loads_best_scored_model(monkeypatch, tmp_path):
     })
     assert result["predictions"]["target"][0] == pytest.approx(25.0)
     assert result["resource_id"].startswith("tos-")
+    assert result["timing"]["sample_count"] == 1
+    assert result["timing"]["total_ms"] >= result["timing"]["prediction_ms"] >= 0
+    assert result["timing"]["per_sample_ms"] == pytest.approx(
+        result["timing"]["total_ms"]
+    )
     assert store.load("infer_1")["inference"]["model_id"] == "best"
 
 
@@ -959,6 +964,56 @@ def test_inference_returns_documented_failures(monkeypatch, tmp_path):
     assert unavailable.json["message"] == "没有可用的已训练代理模型"
     assert missing.status_code == 404
     assert missing.json["message"] == "DOE 任务不存在：missing_inference"
+
+
+def test_inference_selects_model_and_fields_from_historical_training_run(
+    monkeypatch, tmp_path,
+):
+    import joblib
+    import numpy as np
+    from sklearn.linear_model import LinearRegression
+    from sklearn.preprocessing import StandardScaler
+
+    from mobo.api import service
+
+    _client(monkeypatch, tmp_path)
+    store.create({"id": "historical_inference"})
+    model_dir = store.task_dir("historical_inference") / "historical_model"
+    model_dir.mkdir(parents=True)
+    x = np.array([[0.0], [1.0], [2.0]])
+    y = x * 4.0
+    scaler_x, scaler_y = StandardScaler().fit(x), StandardScaler().fit(y)
+    model = LinearRegression().fit(scaler_x.transform(x), scaler_y.transform(y).ravel())
+    joblib.dump(model, model_dir / "target_model.pkl")
+    joblib.dump(
+        {"scaler_X": scaler_x, "scaler_y_0": scaler_y},
+        model_dir / "target_scalers.pkl",
+    )
+    historical = {
+        "run_id": "train-old",
+        "status": "finished",
+        "request": {"all_var_list": ["x", "target"], "input_var_count": 1},
+        "models": [{
+            "model_id": "old-model", "model_dir": str(model_dir),
+            "target_names": ["target"], "score": 0.8,
+        }],
+    }
+    store.update_section(
+        "historical_inference", "training",
+        status="not_started", models=[], history=[historical],
+    )
+
+    result = service.start_inference({
+        "id": "historical_inference",
+        "training_run_id": "train-old",
+        "model_id": "old-model",
+        "inputs": {"x": [1.5]},
+    })
+
+    assert result["training_run_id"] == "train-old"
+    assert result["model_id"] == "old-model"
+    assert result["predictions"]["target"] == pytest.approx([6.0])
+    assert store.load("historical_inference")["inference"]["training_run_id"] == "train-old"
 
 
 def _prepare_optimization_doe(doe_id):

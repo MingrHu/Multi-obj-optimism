@@ -97,6 +97,7 @@ QToolButton#Help:hover { background: #1f5369; border-color: #62d4dc; color: #fff
 QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QTextEdit, QTableWidget, QTableView { background: #0d1829; color: #deebf8;
   border: 1px solid #2c4059; border-radius: 4px; padding: 6px; selection-background-color: #256d82; }
 QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus, QTextEdit:focus { border-color: #43bdc8; }
+QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox { min-height: 22px; }
 QComboBox { padding-right: 25px; }
 QComboBox::drop-down { subcontrol-origin: border; subcontrol-position: top right; width: 23px;
   background: #172740; border-left: 1px solid #304864; }
@@ -165,6 +166,7 @@ QToolButton#Help:hover { background: #c8dfec; border-color: #005b96; color: #003
 QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QTextEdit, QTableWidget, QTableView { background: #fbfbfb; color: #172433;
   border: 1px solid #7f8992; border-radius: 4px; padding: 6px; selection-background-color: #bad6e7; selection-color: #172433; }
 QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus, QTextEdit:focus { border: 1px solid #0078d4; }
+QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox { min-height: 22px; }
 QComboBox { padding-right: 25px; }
 QComboBox::drop-down { subcontrol-origin: border; subcontrol-position: top right; width: 23px;
   background: #dfe2e4; border-left: 1px solid #8b949b; }
