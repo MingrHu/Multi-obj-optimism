@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
     QFileDialog,
-    QFormLayout,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -46,6 +46,7 @@ class DefinitionTable(QTableWidget):
         self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.verticalHeader().setVisible(False)
+        self.verticalHeader().setDefaultSectionSize(34)
         self.horizontalHeader().setMinimumSectionSize(76)
         self.horizontalHeader().setDefaultSectionSize(132)
         self.horizontalHeader().setStretchLastSection(True)
@@ -106,13 +107,18 @@ class TaskDefinitionEditor(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(10)
 
-        identity = QFormLayout()
+        identity = QGridLayout()
+        identity.setHorizontalSpacing(12)
+        identity.setColumnStretch(1, 1)
+        identity.setColumnStretch(3, 2)
         self.task_id = QLineEdit()
         self.task_id.setPlaceholderText("英文、数字、点、下划线或短横线；用于任务状态目录")
         self.task_name = QLineEdit()
         self.task_name.setPlaceholderText("界面显示名称")
-        identity.addRow("任务 ID", self.task_id)
-        identity.addRow("任务名称", self.task_name)
+        identity.addWidget(QLabel("任务 ID"), 0, 0)
+        identity.addWidget(self.task_id, 0, 1)
+        identity.addWidget(QLabel("任务名称"), 0, 2)
+        identity.addWidget(self.task_name, 0, 3)
         layout.addLayout(identity)
 
         self.tabs = configure_scrollable_tabs(QTabWidget())
@@ -170,11 +176,7 @@ class TaskDefinitionEditor(QWidget):
         )
         layout.addWidget(self.tabs)
 
-        hint = QLabel(
-            "参数类型使用后端已注册的 KEY 替换名称；作用对象可填写一个对象，或用逗号分隔多个同步对象。"
-            "内置预设另存前需要填写新的任务 ID 和名称；用户模板可直接更新。"
-            "表格中的当前值会用于本次样本生成、KEY 生成和计算。"
-        )
+        hint = QLabel("上下限相同表示固定值；一个参数可同步作用于多个对象。内置预设请另存为用户模板后修改。")
         hint.setWordWrap(True)
         hint.setObjectName("Subtitle")
         layout.addWidget(hint)

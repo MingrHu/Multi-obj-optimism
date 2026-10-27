@@ -31,9 +31,10 @@ from PySide6.QtCore import (
     QTimer,
     QUrl,
     QSettings,
+    QSize,
     Signal,
 )
-from PySide6.QtGui import QColor, QCursor, QFont, QFontDatabase, QPainter, QPixmap
+from PySide6.QtGui import QIcon, QColor, QCursor, QFont, QFontDatabase, QPainter, QPixmap
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -106,19 +107,28 @@ def card(
     frame = QFrame()
     frame.setObjectName("Card")
     layout = QVBoxLayout(frame)
-    layout.setContentsMargins(18, 16, 18, 16)
+    layout.setContentsMargins(16, 14, 16, 14)
     layout.setSpacing(12)
     if title:
-        label = QLabel(title)
+        header = QFrame()
+        header.setObjectName("CardHeader")
+        header.setAccessibleName(title)
+        heading = QHBoxLayout(header)
+        heading.setContentsMargins(0, 0, 0, 10)
+        heading.setSpacing(9)
+        number, separator, caption = title.partition(" · ")
+        if separator and number.isdigit():
+            badge = QLabel(number.zfill(2))
+            badge.setObjectName("StepBadge")
+            badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            heading.addWidget(badge)
+        label = QLabel(caption if separator and number.isdigit() else title)
         label.setObjectName("Section")
+        heading.addWidget(label)
         if help_text:
-            heading = QHBoxLayout()
-            heading.addWidget(label)
             heading.addWidget(HelpButton(title, help_text, frame))
-            heading.addStretch()
-            layout.addLayout(heading)
-        else:
-            layout.addWidget(label)
+        heading.addStretch()
+        layout.addWidget(header)
     return frame, layout
 
 
@@ -140,7 +150,7 @@ def set_status(label: QLabel, state: str | None) -> None:
     bg, fg = status_colors(view.tone)
     label.setProperty("statusState", state or "not_started")
     label.setText(f"●  {view.text}")
-    label.setStyleSheet(f"background:{bg}; color:{fg}; padding:5px 10px; border-radius:9px;")
+    label.setStyleSheet(f"background:{bg}; color:{fg}; padding:4px 8px; border-radius:4px; font-size:12px;")
 
 
 class WorkerSignals(QObject):
@@ -1027,7 +1037,7 @@ class DashboardPage(QWidget, AsyncMixin):
         super().__init__()
         self.pool = pool
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(28, 24, 28, 24)
+        layout.setContentsMargins(22, 20, 22, 20)
         layout.setSpacing(18)
         layout.addLayout(page_header("工程工作台", "从样本设计到代理模型与多目标优化，在一个工作区中完成。"))
 
@@ -1061,6 +1071,7 @@ class DashboardPage(QWidget, AsyncMixin):
         for index, name, detail, target in steps:
             step = QFrame()
             step.setObjectName("StatCard")
+            step.setFixedHeight(180)
             box = QVBoxLayout(step)
             number = QLabel(index)
             number.setObjectName("StepNumber")
@@ -1107,7 +1118,7 @@ class AutomationPage(QWidget, AsyncMixin):
         self.timer.timeout.connect(self.refresh_progress)
 
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(28, 24, 28, 24)
+        outer.setContentsMargins(22, 20, 22, 20)
         outer.setSpacing(16)
         title = "多工步批处理" if multi else "单工步计算"
         detail = "统一采样、换模、检查点恢复与分片批处理。" if multi else "生成参数化 KEY，批量求解并增量提取目标数据。"
@@ -1123,6 +1134,9 @@ class AutomationPage(QWidget, AsyncMixin):
 
         setup, setup_layout = card("1 · 任务定义")
         grid = QGridLayout()
+        grid.setColumnStretch(1, 1)
+        grid.setHorizontalSpacing(12)
+        grid.setVerticalSpacing(9)
         self.definition = QComboBox()
         self.definition.currentIndexChanged.connect(self.load_definition)
         grid.addWidget(QLabel("配置预设"), 0, 0)
@@ -1147,7 +1161,7 @@ class AutomationPage(QWidget, AsyncMixin):
         self.template_label = QLabel("模板 KEY")
         grid.addWidget(self.template_label, 1, 0)
         grid.addWidget(self.template_path, 1, 1, 1, 3)
-        self.sample_path = PathPicker("样本 TSV 文件；也可在下方生成")
+        self.sample_path = PathPicker("导入 TXT / TSV 样本，或在下方生成")
         grid.addWidget(QLabel("样本文件"), 2, 0)
         grid.addWidget(self.sample_path, 2, 1, 1, 3)
         self.workspace_path = PathPicker("任务输出工作区", directory=True)
@@ -1828,7 +1842,7 @@ class ModelPage(QWidget, AsyncMixin):
         body = QWidget()
         body.setMinimumSize(850, 720)
         layout = QVBoxLayout(body)
-        layout.setContentsMargins(28, 24, 28, 24)
+        layout.setContentsMargins(22, 20, 22, 20)
         layout.setSpacing(16)
         layout.addLayout(page_header("代理模型工作台", "选择训练数据与模型族，后台训练并对比模型评价结果。"))
 
@@ -3820,7 +3834,7 @@ class OptimizationPage(QWidget, AsyncMixin):
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         body = QWidget()
         layout = QVBoxLayout(body)
-        layout.setContentsMargins(28, 24, 28, 24)
+        layout.setContentsMargins(22, 20, 22, 20)
         layout.setSpacing(16)
         layout.addLayout(page_header("优化中心", "配置单目标、多目标 NSGA-II 或强化学习 PPO，并跟踪执行状态。"))
 
@@ -4956,7 +4970,7 @@ class ResultsPage(QWidget, AsyncMixin):
         self.history_run_ids: list[str] = []
         self.selected_run_id = ""
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(28, 24, 28, 24)
+        layout.setContentsMargins(22, 20, 22, 20)
         layout.setSpacing(16)
         header = QHBoxLayout()
         header.addLayout(page_header("结果分析", "任意选择输入或输出字段，创建二维或三维图表并与原始数据对照。"), 1)
@@ -5768,7 +5782,7 @@ class MainWindow(QMainWindow):
     def _top_bar(self) -> QFrame:
         frame = QFrame()
         frame.setObjectName("TopBar")
-        frame.setFixedHeight(64)
+        frame.setFixedHeight(60)
         layout = QHBoxLayout(frame)
         layout.setContentsMargins(20, 0, 20, 0)
         self.brand = QLabel("MOBO")
@@ -5798,7 +5812,7 @@ class MainWindow(QMainWindow):
         self.hust_brand.setToolTip("华中科技大学官方视觉标识")
         self.hust_brand.hide()
         self.api_url = QLineEdit(os.environ.get("MOBO_API_URL", "http://127.0.0.1:5050"))
-        self.api_url.setFixedWidth(235)
+        self.api_url.setFixedWidth(205)
         self.api_url.setPlaceholderText("后端服务地址")
         self.connect_button = QPushButton("检测连接")
         self.connect_button.clicked.connect(self.check_connection)
@@ -5874,9 +5888,9 @@ class MainWindow(QMainWindow):
     def _sidebar(self) -> QFrame:
         frame = QFrame()
         frame.setObjectName("Sidebar")
-        frame.setFixedWidth(215)
+        frame.setFixedWidth(200)
         layout = QVBoxLayout(frame)
-        layout.setContentsMargins(12, 18, 12, 18)
+        layout.setContentsMargins(10, 16, 10, 16)
         layout.setSpacing(5)
         groups = [
             ("工作台", [
@@ -5890,6 +5904,7 @@ class MainWindow(QMainWindow):
                 (5, "结果分析"),
             ]),
         ]
+        nav_icons = ("dashboard", "single", "multi", "models", "optimization", "results")
         self.nav_buttons = []
         self.nav_group_buttons: list[QToolButton] = []
         self.nav_group_contents: list[QWidget] = []
@@ -5910,6 +5925,8 @@ class MainWindow(QMainWindow):
             for page_index, name in entries:
                 button = QPushButton(name)
                 button.setObjectName("Nav")
+                button.setIcon(QIcon(ui_asset_path(f"nav_{nav_icons[page_index]}.svg")))
+                button.setIconSize(QSize(18, 18))
                 button.setCheckable(True)
                 button.clicked.connect(partial(self.navigate, page_index))
                 group_layout.addWidget(button)
@@ -5922,7 +5939,7 @@ class MainWindow(QMainWindow):
             self.nav_group_buttons.append(group_button)
             self.nav_group_contents.append(group_content)
         layout.addStretch()
-        version = QLabel("MOBO Desktop\n后端协议 v1")
+        version = QLabel("MOBO Desktop\n工艺仿真与优化")
         version.setObjectName("Caption")
         layout.addWidget(version)
         return frame

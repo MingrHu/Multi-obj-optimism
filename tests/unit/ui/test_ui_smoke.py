@@ -148,7 +148,8 @@ def test_display_mode_switch_updates_widgets_and_all_chart_engines(monkeypatch):
     assert window.hust_brand.pixmap() is not None
     assert not window.hust_brand.pixmap().isNull()
     assert window.hust_brand.width() == 250
-    assert "#e4e6e8" in app.styleSheet()
+    from work_platform.mobo_ui.theme import THEMES
+    assert THEMES["publication"].window in app.styleSheet()
     assert "spin_up.svg" in app.styleSheet()
     assert "border-left: 3px solid #005b96" in app.styleSheet()
 
@@ -156,7 +157,7 @@ def test_display_mode_switch_updates_widgets_and_all_chart_engines(monkeypatch):
     model_page.update_score_chart(
         [{"model_family": "PRG", "score": 0.91}]
     )
-    assert model_page.score_chart.chart().backgroundBrush().color().name() == "#f2f3f4"
+    assert model_page.score_chart.chart().backgroundBrush().color().name() == THEMES["publication"].surface
     assert not model_page.score_chart.chart().isBackgroundVisible()
     assert model_page.score_chart.chart().plotAreaBackgroundBrush().color().name() == "#ffffff"
 
@@ -166,7 +167,7 @@ def test_display_mode_switch_updates_widgets_and_all_chart_engines(monkeypatch):
         [[900.0, 100.0, 48.2], [1000.0, 120.0, 49.1]],
     )
     results_page.update_chart()
-    assert results_page.chart.chart().backgroundBrush().color().name() == "#f2f3f4"
+    assert results_page.chart.chart().backgroundBrush().color().name() == THEMES["publication"].surface
     assert not results_page.chart.chart().isBackgroundVisible()
     assert results_page.chart.chart().plotAreaBackgroundBrush().color().name() == "#ffffff"
     results_page.style.setCurrentIndex(results_page.style.findData("scatter3d"))
@@ -178,8 +179,8 @@ def test_display_mode_switch_updates_widgets_and_all_chart_engines(monkeypatch):
     app.processEvents()
     assert window.hust_brand.isHidden()
     assert "spin_up_light.svg" in app.styleSheet()
-    assert results_page.chart.chart().backgroundBrush().color().name() == "#132139"
-    assert to_hex(results_page.scatter3d.figure.get_facecolor()) == "#0d1829"
+    assert results_page.chart.chart().backgroundBrush().color().name() == THEMES["engineering"].surface
+    assert to_hex(results_page.scatter3d.figure.get_facecolor()) == THEMES["engineering"].plot
     window.close()
     app.processEvents()
 
@@ -2005,3 +2006,38 @@ def test_doe_refresh_failures_are_visible_inline(monkeypatch):
     assert "连接超时" in optimization_page.schema_hint.text()
     assert "重试" in optimization_page.schema_hint.text()
     app.processEvents()
+
+
+def test_engineering_panels_remain_readable_in_both_modes_at_minimum_size(monkeypatch):
+    pytest.importorskip('PySide6')
+    monkeypatch.setenv('QT_QPA_PLATFORM', 'offscreen')
+    from PySide6.QtGui import QPalette
+    from PySide6.QtWidgets import QApplication
+    from work_platform.mobo_ui.app import MainWindow, configure_application
+
+    app = QApplication.instance() or QApplication([])
+    configure_application(app)
+    monkeypatch.setattr(MainWindow, 'check_connection', lambda self: None)
+    window = MainWindow()
+    try:
+        window.resize(1120, 720)
+        window.navigate(1)
+        window.show()
+        for mode in ('publication', 'engineering'):
+            window.apply_display_mode(mode, persist=False)
+            app.processEvents()
+            assert window.width() == 1120
+            assert all(not button.icon().isNull() for button in window.nav_buttons)
+            topbar = window.api_url.parentWidget()
+            assert window.connection.geometry().right() < topbar.width()
+            page = window.pages[1]
+            assert page.template_path.x() < page.template_path.parentWidget().width() / 4
+            table = page.task_editor.parameter_table
+            combo = table.cellWidget(0, 1)
+            # A transparent editor draws over the item's own text, producing doubled glyphs.
+            assert combo.palette().color(QPalette.ColorRole.Window).alpha() == 255
+            assert combo.height() >= combo.fontMetrics().height() + 4
+            assert combo.height() <= table.rowHeight(0)
+    finally:
+        window.close()
+        app.processEvents()
