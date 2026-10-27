@@ -25,7 +25,8 @@ def page(monkeypatch, tmp_path):
     widget.workspace_path.setText(str(tmp_path / "run"))
     template = tmp_path / "ring.KEY"
     template.write_text("".join(
-        [f"REFTMP {obj} 20\nNDTMP {obj} 0 150\n" for obj in range(1, 6)]
+        ["PDIE 3 0\nSMAX 0 14.5 0\nSTROKE 3 0 0 0\nTMAX 65\nNSTEP 10000\n"]
+        + [f"REFTMP {obj} 20\nNDTMP {obj} 0 150\n" for obj in range(1, 6)]
         + ["ANGMOV 2 1 0 1.2\nMOVCTL 3 1 2 0 1 0 5\n0 0\n10 0.6\n36.25 0.6\n46.25 0\n65 0\n"]
         + [f"FRCFAC 1 {obj} 1 0 0.7\nIHTCOF 1 {obj} 0 5\n" for obj in range(2, 6)]
     ))
@@ -191,3 +192,66 @@ def test_progress_shows_source_sample_numbers_and_changes_with_range(page, monke
     widget.sample_start.setValue(201)
     assert widget.batch_table.rowCount() == 0
     assert not errors
+
+
+def test_gh4169_solver_always_requires_terminal_stroke_even_without_incremental(page, monkeypatch, tmp_path):
+    from mobo.automation import pipeline, task_collection
+
+    widget, errors = page
+    monkeypatch.setattr(task_collection, "task_dir", lambda tid: tmp_path / "state" / tid)
+    sample = tmp_path / "one.tsv"
+    sample.write_text("1125\t300\t0.1\t1.5\t0.5\t4.5\n")
+    task = widget.current_definition().build(sample, workspace=tmp_path / "run", incremental=False)
+    task.generate_keys()
+    captured = []
+    monkeypatch.setattr(pipeline, "key_to_db_batch", lambda *args: None)
+
+    class CheckedSolver:
+        def __init__(self, **kwargs):
+            captured.append(kwargs["required_stroke"])
+
+        def run_all(self, dbs):
+            assert len(dbs) == 1
+
+    monkeypatch.setattr(pipeline, "DeformSolver", CheckedSolver)
+    task.run_solver()
+    assert captured == [("3", 1, 14.5)] and not errors
+
+
+def test_manual_extraction_reports_incomplete_stroke_as_failure(page, monkeypatch, tmp_path):
+    from mobo.automation import extract
+
+    widget, errors = page
+    sample = tmp_path / "short.tsv"
+    sample.write_text("1125\t300\t0.1\t1.5\t0.5\t4.5\n")
+    widget.sample_path.setText(str(sample))
+    widget.dry_run.setChecked(False)
+
+    def incomplete(db, required):
+        assert required == ("3", 1, 14.5)
+        raise RuntimeError("工况未完成目标行程")
+
+    monkeypatch.setattr(extract, "validate_db_stroke", incomplete)
+    widget.extract_results()
+    assert errors and "提取失败" in errors[0]
+    assert widget.stage_label.text() != "结果数据已生成"
+
+
+def test_batch_stop_button_cancels_workbench_and_allows_restart(page):
+    from mobo.automation.execution_control import BatchControl
+    widget, errors = page
+    first = BatchControl()
+    second = BatchControl()
+    widget._batch_control = first
+    widget.set_busy(True, 'running')
+    assert widget.stop_button.isEnabled()
+    assert not widget.run_button.isEnabled()
+    widget.stop_button.click()
+    assert first.event.is_set() and second.event.is_set()
+    assert not widget.stop_button.isEnabled()
+    assert widget.status_label.property('statusState') == 'stopping'
+    widget._operation_failed('user stopped')
+    assert not errors
+    assert widget.status_label.property('statusState') == 'stopped'
+    assert widget.run_button.isEnabled()
+    assert not widget.stop_button.isEnabled()

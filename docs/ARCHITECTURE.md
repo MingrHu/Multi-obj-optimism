@@ -195,7 +195,9 @@ TC4 碾环多工步任务由 `task_collection.TC4_RING_MULTI_TASK_1` 完整定�
 `ForgingTask` 的 KEY 生成、求解与提取流水线。一个 `ring_die_temperature` 样本值通过
 文档级替换原子能力同步修改对象 2～5 的 NDTMP 实际初温，REFTMP 保留模板值；GH4169 模板保留其自带的 GRNDAT 晶粒模型，
 初始和平均晶粒尺寸均为 50 μm；`material_fill` 是尚未确定计算方法的目标占位符。
-GH4169 默认六个输入的列顺序、范围及精确 KEY 修改规则见
+GH4169 的芯辊平台速度通过时间反比例缩放保持14.5 mm进给，并同步调整TMAX和必要的NSTEP；
+DTMAX保持不变。求解结束及结果提取前重新导出终态，按0.01 mm容差校验实际STROKE，
+未达标工况不记为完成。默认六个输入的列顺序、范围及精确 KEY 修改规则见
 [DEFORM_KEY_KEYWORDS.md](deform/DEFORM_KEY_KEYWORDS.md#gh4169-六参数任务2026-10-27)。
 7075 任务 ID 为 `7075-ring-single-task-1`，模板位于
 `data/keyfile/7075_ring_single_task_1/7075.KEY`，默认工作区为
@@ -334,3 +336,8 @@ Docker 镜像包含整个 Python 包，包括 `automation` 批处理代码，但
 `_<start>_<end>`；该工作区标识来自解析后工作区路径的哈希。各范围的结果位于
 `results/range_<start>_<end>/`，跨工作区或跨范围不会共享增量状态。续跑须使用同一工作区、完整样本文件及相同范围。
 未指定范围时保留既有状态与结果路径。KEY 文件内容不一致仍拒绝复用；不要同时启动有重叠样本范围的求解。
+
+DEFORM 桌面批处理的取消由 `automation.execution_control` 管理：取消标记通过线程上下文传播，
+只终止本工作台登记的子进程树。`automation.solver` 负责中断数据库副本验证、负步号恢复与原件归档；
+`pipeline` 和 `multi_operation` 将用户停止与失败/完成区分。用户操作和恢复边界统一维护在
+[桌面 UI 文档](ui/DESKTOP_UI.md#停止-deform-批处理与中断恢复)。

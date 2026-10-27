@@ -16,7 +16,8 @@ from .extract import extract_dataset, extract_dataset_row
 from .incremental import IncrementalDataset
 from .keyfile import derive_output_path, generate_key_files
 from .sampling import ParamRanges, generate_samples
-from .solver import DeformSolver, key_to_db_batch
+from .solver import DeformSolver, key_to_db_batch, recover_interrupted_db
+from .execution_control import BatchStopped, batch_scope, current_control, check_stopped
 
 
 class TaskStatus(IntEnum):
@@ -25,6 +26,7 @@ class TaskStatus(IntEnum):
     DONE = 0
     RUNNING = 1
     FAILED = -1
+    STOPPED = -2
 
 
 def generate_sample_file(
@@ -132,13 +134,19 @@ class ForgingTask:
             logger.error(f"无法执行 {name}：上一阶段未完成（当前状态 {self.status.name}）")
             return None
 
+        control = current_control()
         def runner() -> None:
             try:
                 logger.info(f"{name} 开始")
                 self.status = TaskStatus.RUNNING
-                work()
+                with batch_scope(control):
+                    check_stopped()
+                    work()
+                    check_stopped()
                 self.status = TaskStatus.DONE
                 logger.info(f"✅ {name} 完成")
+            except BatchStopped:
+                self.status = TaskStatus.STOPPED
             except Exception as exc:
                 self.status = TaskStatus.FAILED
                 logger.error(f"❌ {name} 失败: {exc}")
@@ -199,6 +207,9 @@ class ForgingTask:
             os.makedirs(db_dir, exist_ok=True)
             db_file = derive_output_path(key_file, db_dir, "", "DB")
             self.db_files.append(db_file)
+            check_stopped()
+            if not self.dry_run:
+                recover_interrupted_db(db_file)
             if not os.path.exists(db_file):
                 pending.append((key_file, db_file))
         return pending
@@ -239,9 +250,13 @@ class ForgingTask:
                     incremental_dataset.mark_failed(sample_index, str(exc))
                     raise
 
+            stroke_options = (
+                {"required_stroke": ("3", 1, 14.5)}
+                if "pressure_roll_profile_peak_speed" in self.param_table[0] else {}
+            )
             DeformSolver(max_parallel=self.max_parallel,
                          process_info_file=self.process_info_file,
-                         on_completed=on_completed).run_all(self.db_files)
+                         on_completed=on_completed, **stroke_options).run_all(self.db_files)
 
         thread = self._run_async("求解运行", work)
         if thread is not None:
@@ -262,6 +277,10 @@ class ForgingTask:
                 self.in_progress,
                 self.result_txt_dir,
                 sample_indices=self.sample_indices or None,
+                required_stroke=(
+                    ("3", 1, 14.5) if "pressure_roll_profile_peak_speed" in self.param_table[0]
+                    else None
+                ),
             )
 
         thread = self._run_async("提取数据", work)

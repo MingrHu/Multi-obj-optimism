@@ -469,3 +469,29 @@ def test_resume_export_failure_does_not_rerun_solver(tmp_path, monkeypatch):
 
     assert task.run()["status"] == "completed"
     assert (op1_dir / "terminal.KEY").read_text(encoding="utf-8") == "terminal"
+
+
+def test_stop_in_multi_solver_skips_next_operation_and_remaining_samples(tmp_path, monkeypatch):
+    from mobo.automation.execution_control import BatchControl, batch_scope, check_stopped
+    samples = tmp_path / 'samples.txt'
+    samples.write_text('910\t810\n911\t811\n912\t812\n')
+    task = MultiOperationTask('cancel-multi', str(samples), _operations(tmp_path),
+                              str(tmp_path/'runs'), max_parallel_samples=1, dry_run=False)
+    control = BatchControl()
+    calls = []
+    def create(key, db):
+        Path(db).write_bytes(b'initial')
+    def solve(db):
+        calls.append(db)
+        control.request_stop()
+        check_stopped()
+    monkeypatch.setattr(multi_operation_module, 'key_to_db', create)
+    monkeypatch.setattr(multi_operation_module, 'solve_db_sync', solve)
+    with batch_scope(control):
+        state = task.run()
+    assert state['status'] == 'stopped'
+    assert len(calls) == 1
+    assert state['samples']['0']['operations']['1']['status'] == 'stopped'
+    assert state['samples']['0']['operations']['1']['phase'] == 'solving'
+    assert all(row['operations']['2']['status'] != 'completed' for row in state['samples'].values())
+    assert state['completed'] == 0

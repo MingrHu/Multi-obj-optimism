@@ -104,6 +104,7 @@
     "automation/__init__.py",
     "automation/config.py",
     "automation/dataset_format.py",
+    "automation/execution_control.py",
     "automation/extract.py",
     "automation/incremental.py",
     "automation/keyfile.py",

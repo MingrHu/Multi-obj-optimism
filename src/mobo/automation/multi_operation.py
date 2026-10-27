@@ -19,6 +19,7 @@ import pandas as pd
 
 from mobo.common.logging import logger
 
+from .execution_control import BatchStopped, batch_scope, current_control, check_stopped
 from .keyfile import apply_parameters, write_parameterized_key
 from .sampling import generate_full_factorial, generate_lhs, save_samples
 from .solver import (
@@ -26,6 +27,7 @@ from .solver import (
     db_to_key,
     key_to_db,
     run_key_actions,
+    recover_interrupted_db,
     solve_db_sync,
 )
 
@@ -368,6 +370,7 @@ class MultiOperationTask:
         created_count = 0
         reused_count = 0
         for sample_index in self.sample_indices:
+            check_stopped()
             sample_dir = os.path.join(self.work_dir, str(sample_index))
             for operation_index, operation in enumerate(self.operations, 1):
                 operation_dir = os.path.join(sample_dir, f"op{operation_index}")
@@ -422,6 +425,9 @@ class MultiOperationTask:
             os.makedirs(operation_dir, exist_ok=True)
             db_path = os.path.join(operation_dir, "result.DB")
             db_files.append(db_path)
+            check_stopped()
+            if not self.dry_run:
+                recover_interrupted_db(db_path)
             if (sample_state.get("status") == "completed"
                     or op_state.get("status") == "completed"
                     or os.path.exists(db_path)):
@@ -553,6 +559,7 @@ class MultiOperationTask:
 
         # 多工步串行执行
         for operation_index in range(1, len(self.operations) + 1):
+            check_stopped()
             operation = self.operations[operation_index - 1]
             op_state = sample_state["operations"][str(operation_index)]
             # 完成的就跳过
@@ -570,6 +577,9 @@ class MultiOperationTask:
 
             # 运行：1-从未开始 2-准备中 3-准备失败 4-不存在DB文件
             try:
+                check_stopped()
+                if not self.dry_run:
+                    recover_interrupted_db(db_path)
                 phase = op_state.get("phase", "pending")
                 if phase in {"pending", "preparing"} or (phase == "failed" and op_state.get("failed_phase") == "preparing") or not os.path.exists(db_path):
                     self._set_operation(sample_index, operation_index, status="running",
@@ -655,6 +665,11 @@ class MultiOperationTask:
                 logger.info(
                     f"样本 {sample_index + 1} 工步 {operation_index}/{len(self.operations)} 完成"
                 )
+            except BatchStopped:
+                self._set_operation(sample_index, operation_index, status="stopped")
+                sample_state["status"] = "stopped"
+                self._save()
+                raise
             except Exception as exc:
                 current_phase = sample_state["operations"][str(operation_index)].get("phase")
                 self._set_operation(sample_index, operation_index, status="failed", phase="failed",
@@ -691,6 +706,10 @@ class MultiOperationTask:
         try:
             with _interprocess_lock(self.state_file + ".run.lock", blocking=False):
                 return self._run_locked()
+        except BatchStopped:
+            self.state["status"] = "stopped"
+            self._save()
+            raise
         except BlockingIOError as exc:
             raise RuntimeError(
                 f"当前分片已有运行进程，请勿重复启动: {self.state_file}"
@@ -715,14 +734,20 @@ class MultiOperationTask:
         pending = [i for i in self.sample_indices
                    if self.state["samples"][str(i)]["status"] != "completed"]
         errors = []
+        control = current_control()
+        def worker(index):
+            with batch_scope(control):
+                check_stopped()
+                self._run_sample(index)
         with ThreadPoolExecutor(max_workers=self.max_parallel_samples) as executor:
-            futures = {executor.submit(self._run_sample, i): i for i in pending}
+            futures = {executor.submit(worker, i): i for i in pending}
             for future in as_completed(futures):
                 try:
                     future.result()
                 except Exception as exc:
                     errors.append({"sample": futures[future], "error": str(exc)})
-        self.state["status"] = "failed" if errors else "completed"
+        self.state["status"] = ("stopped" if control is not None and control.event.is_set()
+                                else "failed" if errors else "completed")
         self.state["errors"] = errors
         self._save()
         logger.info(

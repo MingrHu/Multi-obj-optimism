@@ -68,11 +68,13 @@ def test_profile_peak_speed_preserves_zero_speed_control_points():
         "    3.6250000000E+001    4.0000000000E-001\n",
         "    4.6250000000E+001    0.0000000000E+000\n",
         "    6.5000000000E+001    0.0000000000E+000\n",
+        "PDIE 3 0\n", "SMAX 0 14.5 0\n", "STROKE 3 0 0 0\n",
+        "TMAX 65\n", "NSTEP 10000\n",
     ]
     bindings = [_binding("pressure_roll_profile_peak_speed", "3", "2.5")]
 
     result = replace_movctl_profile_peak_speed(lines, bindings)
 
-    assert [float(line.split()[-1]) for line in result[1:]] == [
+    assert [float(line.split()[-1]) for line in result[1:6]] == [
         0.0, 2.5, 2.5, 0.0, 0.0,
     ]

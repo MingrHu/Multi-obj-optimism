@@ -11,7 +11,8 @@ from mobo.automation.config import DeformConfig
 
 
 def ring_key(newline="\n"):
-    rows = ["TMAX 65", "SMAX 0 14.5 0", "* material and geometry unchanged"]
+    rows = ["TMAX 65", "SMAX 0 14.5 0", "PDIE 3 0", "NSTEP 10000", "DTMAX 0.01 0",
+            "STROKE 3 0 0 0", "* material and geometry unchanged"]
     for obj in range(1, 6):
         rows += [f"REFTMP {obj} 150", f"NDTMP {obj} 0 150"]
     rows += ["ANGMOV 2 1 0 1.2", "ANGMOV 4 1 0 0", "MOVCTL 3 1 2 0 1 0 5",
@@ -43,14 +44,22 @@ def test_six_parameters_only_change_allowed_numeric_fields(tmp_path, newline):
     actual = output.splitlines(keepends=True)
     assert len(actual) == len(lines)
     changes = [(a, b) for a, b in zip(lines, actual, strict=True) if a != b]
-    assert len(changes) == 16  # 5温度 + 2进给点 + 1角速度 + 8接触
+    assert len(changes) == 19  # 原16行 + TMAX + 两个零速阶段的非零时间节点
     for before, after in changes:
-        assert before.rsplit(" ", 1)[0] == after.rsplit(" ", 1)[0]
+        if before.split()[0] in {"10", "36.25", "46.25", "65"}:
+            assert float(after.split()[0]) == pytest.approx(float(before.split()[0]) * 0.32)
+            assert float(after.split()[1]) == (-1.25 if float(before.split()[1]) else 0)
+        else:
+            assert before.rsplit(" ", 1)[0] == after.rsplit(" ", 1)[0]
         assert before.endswith(newline) and after.endswith(newline)
-        assert before.split()[0] in {"NDTMP", "ANGMOV", "FRCFAC", "IHTCOF", "10", "36.25"}
+        assert before.split()[0] in {"NDTMP", "ANGMOV", "FRCFAC", "IHTCOF", "TMAX", "10", "36.25", "46.25", "65"}
     assert template.read_bytes() == "".join(lines).encode()
     recovered = extract_sample_from_key(generated[0], params, DeformConfig.OBJ_DEF)
     assert recovered == [Decimal(value) for value in values]
+    for keyword in ("REFTMP", "SMAX", "PDIE", "STROKE", "DTMAX", "NSTEP"):
+        assert [row for row in actual if row.startswith(keyword + " ")] == [
+            row for row in lines if row.startswith(keyword + " ")
+        ]
 
 
 def test_explicit_nodal_temperatures_change_without_changing_count_or_other_columns():
@@ -86,3 +95,42 @@ def test_old_three_column_samples_are_rejected():
 def test_nonfinite_parameters_are_rejected(value):
     with pytest.raises(ValueError, match="有限"):
         render(ring_key(), (value, "300", "1.25", "1.5", "0.5", "4.5"))
+
+
+@pytest.mark.parametrize("speed", [value / 100 for value in range(10, 251)])
+def test_every_two_decimal_speed_preserves_14_5_mm_stroke(speed):
+    lines = ring_key()
+    result = apply_parameters(lines, ["pressure_roll_profile_peak_speed"], ["pressure_roll"], [str(speed)])
+    start = next(i for i, line in enumerate(result) if line.startswith("MOVCTL 3 "))
+    points = [tuple(map(float, row.split())) for row in result[start + 1:start + 6]]
+    stroke = sum((abs(a[1]) + abs(b[1])) * (b[0] - a[0]) / 2
+                 for a, b in zip(points, points[1:], strict=False))
+    assert stroke == pytest.approx(14.5, abs=1e-8)
+    assert [abs(point[1]) for point in points] == [0, speed, speed, 0, 0]
+    assert [point[0] for point in points] == pytest.approx(
+        [time * 0.4 / speed for time in [0, 10, 36.25, 46.25, 65]], rel=1e-9,
+    )
+    tmax = float(next(row for row in result if row.startswith("TMAX ")).split()[1])
+    nstep = int(next(row for row in result if row.startswith("NSTEP ")).split()[1])
+    assert tmax >= points[3][0]
+    assert nstep >= tmax / 0.01
+    # 允许变化仅限四个非零时间节点、两个速度值、TMAX和NSTEP。
+    allowed = {0, 3, *range(start + 1, start + 6)}
+    assert all(before == after for index, (before, after) in enumerate(zip(lines, result, strict=True))
+               if index not in allowed)
+
+
+@pytest.mark.parametrize("old,new", [
+    ("PDIE 3 0", "PDIE 2 0"), ("SMAX 0 14.5 0", "SMAX 0 15 0"),
+    ("STROKE 3 0 0 0", "STROKE 3 0 1 0"), ("NSTEP 10000", "NSTEP 0"),
+    ("TMAX 65", "TMAX 0"), ("36.25 -0.6", "9 -0.6"),
+])
+def test_incompatible_stroke_control_is_rejected(old, new):
+    with pytest.raises(ValueError):
+        render("".join(ring_key()).replace(old, new).splitlines(keepends=True))
+
+
+@pytest.mark.parametrize("speed", ["0", "-0.1"])
+def test_nonpositive_feed_cannot_complete_stroke(speed):
+    with pytest.raises(ValueError, match="正数"):
+        render(ring_key(), ("1125", "300", speed, "1.5", "0.5", "4.5"))

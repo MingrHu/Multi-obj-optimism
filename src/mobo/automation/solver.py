@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import shutil
@@ -22,11 +23,14 @@ import tempfile
 import threading
 import time
 from contextlib import contextmanager
+from pathlib import Path
 from queue import Queue
 from typing import Any, BinaryIO, Callable, Iterator, List, Sequence
 
 from mobo.common.logging import logger
 from mobo.common.paths import LOGS_DIR
+
+from .execution_control import (BatchStopped, batch_scope, check_stopped, current_control, process_alive)
 
 # DEFORM 可执行程序（需在 PATH 中，或设置对应环境变量）
 DEF_PRE_64 = os.environ.get("MOBO_DEF_PRE_64", "DEF_PRE_64.exe")
@@ -115,10 +119,12 @@ def _run_pre_with_commands(commands: str) -> str:
 
     :param commands: 发送给 DEF_PRE_64 的完整命令串（含换行）
     """
+    check_stopped()
     with _PRE_LOCK:
         with _interprocess_lock(_PRE_PROCESS_LOCK):
             for attempt in range(3):
                 try:
+                    check_stopped()
                     return _run_pre_with_commands_unlocked(commands)
                 except RuntimeError as exc:
                     if "Access Denied" not in str(exc) or attempt == 2:
@@ -151,6 +157,9 @@ def _run_pre_with_commands_unlocked(commands: str) -> str:
             text=True,
             shell=True,
         )
+        control = current_control()
+        if control is not None:
+            control.register(process)
         with open(_OPERATION_LOG, "a", encoding="utf-8") as log_file:
             log_file.write(f"\n[MOBO PRE START] id={call_id} {summary}\n")
             while True:
@@ -165,6 +174,7 @@ def _run_pre_with_commands_unlocked(commands: str) -> str:
                 f"[MOBO PRE END] id={call_id} return_code={return_code} "
                 f"output_chars={sum(len(line) for line in output_lines)}\n"
             )
+        check_stopped()
         if return_code not in (0, None):
             output_tail = "".join(output_lines)[-2000:].strip()
             message = (
@@ -177,6 +187,8 @@ def _run_pre_with_commands_unlocked(commands: str) -> str:
         logger.error(f"DEFORM 前处理器调用异常: id={call_id}, {summary}, error={exc}")
         raise
     finally:
+        if "control" in locals() and control is not None:
+            control.unregister(process)
         if os.path.exists(cmd_file):
             os.remove(cmd_file)
     return "".join(output_lines)
@@ -189,7 +201,11 @@ def key_to_db(key_path: str, db_path: str) -> None:
     :param db_path: 输出 DB 文件路径
     """
     commands = f"E\n2\n1\n{key_path}\nE\nE\n7\n2\n{db_path}\nY\nE\nY\n"
-    _run_pre_with_commands(commands)
+    try:
+        _run_pre_with_commands(commands)
+    except BatchStopped:
+        Path(db_path).with_name(".mobo_interrupted").touch()
+        raise
 
 
 def key_to_db_batch(key_paths: Sequence[str], db_paths: Sequence[str]) -> None:
@@ -232,16 +248,64 @@ def run_key_actions(key_path: str) -> None:
     _run_pre_with_commands(commands)
 
 
-def solve_db_sync(db_path: str) -> None:
+def recover_interrupted_db(db_path: str) -> bool:
+    """在副本中恢复最新已保存步；失败时归档原件，由调用方从 KEY 重建。"""
+    directory = Path(db_path).resolve().parent
+    raw = directory / "FOR003"
+    marker = directory / ".mobo_interrupted"
+    status = directory / "DEFORM_RUNNING_JOB_STATUS.TXT"
+    if status.exists():
+        match = re.search(r"processID\s*=\s*(\d+)", status.read_text(errors="ignore"))
+        if match and process_alive(int(match.group(1))):
+            raise RuntimeError(f"DEFORM 仍在使用数据库，不能恢复: {db_path}")
+    if not raw.exists() and not marker.exists() and not (directory / "FOR003.LOCK").exists():
+        return Path(db_path).is_file()
+    check_stopped()
+    source = raw if raw.exists() else Path(db_path)
+    recovered = False
+    with tempfile.TemporaryDirectory(prefix="deform_recovery_", dir=directory) as scratch:
+        candidate = Path(scratch) / "restart.DB"
+        try:
+            shutil.copy2(source, candidate)
+            steps = query_db_steps(str(candidate))
+            action = Path(scratch) / "restart.KEY"
+            action.write_text(f"DBREAD 0\n{candidate}\nGENDB 1 1 0\n{candidate}\n", encoding="utf-8")
+            run_key_actions(str(action))
+            restored = query_db_steps(str(candidate))
+            if not any(step < 0 and abs(step) >= max(map(abs, steps)) for step in restored):
+                raise RuntimeError("最新保存步未生成可续算的负步号")
+            recovered = True
+        except BatchStopped:
+            raise
+        except Exception as exc:
+            logger.warning(f"中断数据库恢复失败，将保留原件并从 KEY 重建: {exc}")
+        check_stopped()
+        archive = directory / "recovery" / str(time.time_ns())
+        archive.mkdir(parents=True)
+        for old in (raw, directory / "FOR003.LOCK", Path(db_path), marker, status):
+            if old.exists():
+                shutil.move(str(old), str(archive / old.name))
+        if recovered:
+            shutil.copy2(candidate, db_path)
+            logger.info(f"已恢复最新保存步: {db_path}; 原件归档至 {archive}")
+    return recovered
+
+
+def solve_db_sync(db_path: str, *, required_stroke: tuple[str, int, float] | None = None) -> None:
+    """同一数据库仅允许一个求解器，取消仅作用于登记的进程树。"""
+    with _interprocess_lock(db_path + ".run.lock", blocking=False):
+        _solve_db_sync_unlocked(db_path, required_stroke=required_stroke)
+
+
+def _solve_db_sync_unlocked(db_path: str, *, required_stroke=None) -> None:
     """同步求解单个 DB，并以进程返回码和 LOG 的 NORMAL STOP 判定成功。"""
     work_dir = os.path.dirname(os.path.abspath(db_path))
     _configure_solver_bits(work_dir)
     stem = os.path.splitext(os.path.basename(db_path))[0]
-    for name in ("FOR003", "FOR003.LOCK"):
-        residue = os.path.join(work_dir, name)
-        if os.path.exists(residue):
-            os.remove(residue)
-            logger.info(f"已清理 DEFORM 异常退出残留文件: {residue}")
+    check_stopped()
+    if any(os.path.exists(os.path.join(work_dir, name)) for name in ("FOR003", "FOR003.LOCK", ".mobo_interrupted", "DEFORM_RUNNING_JOB_STATUS.TXT")):
+        if not recover_interrupted_db(db_path):
+            raise RuntimeError("中断数据库无法恢复，请从原始 KEY 重新生成 DB")
     process = subprocess.Popen(
         DEF_ARM_CTL,
         stdin=subprocess.PIPE,
@@ -251,12 +315,22 @@ def solve_db_sync(db_path: str) -> None:
         cwd=work_dir,
         text=True,
     )
-    if process.stdin is None:
-        raise RuntimeError("无法打开 DEFORM 求解器标准输入")
-    process.stdin.write(stem + "\nB\n")
-    process.stdin.flush()
-    process.stdin.close()
-    return_code = process.wait()
+    control = current_control()
+    try:
+        if control is not None:
+            control.register(process)
+        if process.stdin is None:
+            raise RuntimeError("无法打开 DEFORM 求解器标准输入")
+        process.stdin.write(stem + "\nB\n")
+        process.stdin.flush()
+        process.stdin.close()
+        return_code = process.wait()
+    finally:
+        if control is not None:
+            control.unregister(process)
+            if control.event.is_set():
+                Path(os.path.join(work_dir, ".mobo_interrupted")).touch()
+    check_stopped()
     if return_code:
         raise RuntimeError(f"DEFORM 求解器退出码为 {return_code}")
     log_path = os.path.join(work_dir, stem + ".LOG")
@@ -273,6 +347,28 @@ def solve_db_sync(db_path: str) -> None:
     message_path = os.path.join(work_dir, stem + ".MSG")
     if not os.path.isfile(message_path) or os.path.getsize(message_path) == 0:
         raise RuntimeError(f"DEFORM 未产生求解消息，不能判定模拟完成: {message_path}")
+    if required_stroke is not None:
+        validate_db_stroke(db_path, required_stroke)
+
+
+def validate_db_stroke(db_path: str, required_stroke: tuple[str, int, float]) -> None:
+    """重新导出DB最新结果集，校验实际行程；不复用可能过期的终态KEY。"""
+    object_id, axis, target = required_stroke
+    with tempfile.TemporaryDirectory(prefix="mobo_stroke_") as directory:
+        key_path = os.path.join(directory, "terminal.KEY")
+        db_to_key(db_path, key_path)
+        values = []
+        with open(key_path, encoding="utf-8") as stream:
+            for line in stream:
+                tokens = line.split()
+                if len(tokens) == 5 and tokens[:2] == ["STROKE", object_id]:
+                    values.append(float(tokens[axis + 2]))
+        if (len(values) != 1 or not math.isfinite(values[0])
+                or not math.isclose(abs(values[0]), target, abs_tol=0.01, rel_tol=0)):
+            raise RuntimeError(
+                f"工况未完成目标行程：对象{object_id}实际STROKE={values}，"
+                f"要求{target} mm（容差0.01 mm），不能作为完整终态结果"
+            )
 
 
 def _configure_solver_bits(work_dir: str) -> None:
@@ -295,7 +391,8 @@ class DeformSolver:
     """
 
     def __init__(self, max_parallel: int = 12,process_info_file:str = "",
-                 on_completed: Callable[[str], None] | None = None) -> None:
+                 on_completed: Callable[[str], None] | None = None,
+                 required_stroke: tuple[str, int, float] | None = None) -> None:
         """
         :param max_parallel: 最大并行求解进程数
         :param process_info_file: 求解过程信息记录文件位置
@@ -303,6 +400,7 @@ class DeformSolver:
         self.max_parallel = max_parallel
         self.process_info_file = process_info_file
         self.on_completed = on_completed
+        self.required_stroke = required_stroke
         self._running = 0
         self._lock = threading.Lock()
 
@@ -394,7 +492,9 @@ class DeformSolver:
             progress = self._load_progress()
             for item in progress.get("db_files", []):
                 if item["db_path"] == db_path:
+                    item["stopped"] = False
                     item["started_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+            progress["status"] = "running"
             progress["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
             self._save_progress(progress)
 
@@ -409,7 +509,20 @@ class DeformSolver:
                     item["done"] = True
                     item["finished_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
             progress["completed"] = sum(1 for it in progress["db_files"] if it["done"])
+            progress["status"] = ("completed" if progress["completed"] == len(progress["db_files"]) else "running")
             progress["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+            self._save_progress(progress)
+
+    def _mark_stopped(self) -> None:
+        """工作线程全部退出后，记录未完成工况的停止状态。"""
+        if not self.process_info_file:
+            return
+        with self._lock:
+            progress = self._load_progress()
+            for item in progress.get("db_files", []):
+                if not item.get("done"):
+                    item["stopped"] = True
+            progress["status"] = "stopped"
             self._save_progress(progress)
 
     def pending_db_files(self, db_paths: List[str]) -> List[str]:
@@ -437,9 +550,13 @@ class DeformSolver:
         :param work_dir: 工作目录
         :param db_key: 进度文件中记录的完整 DB 路径（完成后据此标记 done）
         """
-        self._mark_started(db_key or db_path)
         try:
-            solve_db_sync(db_key or db_path)
+            check_stopped()
+            self._mark_started(db_key or db_path)
+            if self.required_stroke is None:
+                solve_db_sync(db_key or db_path)
+            else:
+                solve_db_sync(db_key or db_path, required_stroke=self.required_stroke)
             logger.info(f"当前任务计算完成！请查看 {db_path} 结果")
             self._mark_done(db_key or db_path)
             if self.on_completed is not None:
@@ -461,9 +578,11 @@ class DeformSolver:
         with self._lock:
             self._running += 1
             logger.info(f"当前正在计算的任务有：{self._running} 个")
-        thread = threading.Thread(
-            target=self._solve_one, args=(db_path, work_dir, db_key), daemon=True
-        )
+        control = current_control()
+        def worker():
+            with batch_scope(control):
+                self._solve_one(db_path, work_dir, db_key)
+        thread = threading.Thread(target=worker, daemon=True)
         thread.start()
 
     def run_all(self, db_paths: List[str]) -> None:
@@ -474,7 +593,19 @@ class DeformSolver:
 
         :param db_paths: 待求解的 DB 文件路径列表
         """
-        self._init_progress(db_paths)
+        progress = self._init_progress(db_paths)
+        if self.required_stroke is not None:
+            for item in progress["db_files"]:
+                if not item.get("done"):
+                    continue
+                try:
+                    validate_db_stroke(item["db_path"], self.required_stroke)
+                except Exception as exc:
+                    item["done"] = False
+                    item["validation_error"] = str(exc)
+                    progress["completed"] = sum(bool(row.get("done")) for row in progress["db_files"])
+                    self._save_progress(progress)
+                    raise
         if self.on_completed is not None:
             completed = {
                 item["db_path"] for item in self._load_progress().get("db_files", [])
@@ -492,15 +623,22 @@ class DeformSolver:
         for i, db_path in enumerate(pending):
             task_queue.put((i + 1, db_path))
 
+        control = current_control()
         while True:
+            if control is not None and control.event.is_set():
+                if self.running:
+                    time.sleep(0.1)
+                    continue
+                self._mark_stopped()
+                control.check()
             if self.running >= self.max_parallel:
-                time.sleep(3)
+                control.event.wait(0.2) if control is not None else time.sleep(3)
                 continue
 
             if task_queue.qsize() == 0 and self.running == 0:
                 break
             if task_queue.qsize() == 0:
-                time.sleep(60)
+                control.event.wait(0.2) if control is not None else time.sleep(60)
                 continue
 
             file_num, db_path = task_queue.get()
@@ -511,7 +649,7 @@ class DeformSolver:
             self.submit(solve_target, work_dir, db_key=db_path)
             logger.info(f"开始计算第 {file_num} 个，结果 DB 将保存至 {work_dir}")
             # 防止过快提交导致计数尚未更新
-            time.sleep(5)
+            control.event.wait(5) if control is not None else time.sleep(5)
 
 
 __all__ = [
@@ -523,5 +661,6 @@ __all__ = [
     "query_db_steps",
     "run_key_actions",
     "solve_db_sync",
+    "validate_db_stroke",
     "DeformSolver",
 ]

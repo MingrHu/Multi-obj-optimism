@@ -98,6 +98,8 @@ from .theme import (
 from .ui_helpers import HelpButton, configure_scrollable_tabs
 
 
+from mobo.automation.execution_control import BatchControl, batch_scope, check_stopped, stop_all_batches
+
 def card(
     title: str | None = None, help_text: str | None = None,
 ) -> tuple[QFrame, QVBoxLayout]:
@@ -1242,6 +1244,12 @@ class AutomationPage(QWidget, AsyncMixin):
         status_row.addWidget(self.progress, 1)
         execution_layout.addLayout(status_row)
         action_row = QHBoxLayout()
+        self._batch_control = None
+        self.stop_button = QPushButton("停止计算")
+        self.stop_button.setObjectName("Danger")
+        self.stop_button.setEnabled(False)
+        self.stop_button.setToolTip("停止本工作台全部正在运行的批处理，保留已完成结果和中断数据库")
+        self.stop_button.clicked.connect(self.stop_calculation)
         self.prepare_button = QPushButton("仅生成 KEY")
         self.prepare_button.clicked.connect(self.prepare_keys)
         self.run_button = QPushButton("启动 / 继续运算")
@@ -1251,6 +1259,7 @@ class AutomationPage(QWidget, AsyncMixin):
         self.extract_button.clicked.connect(self.extract_results)
         action_row.addWidget(self.prepare_button)
         action_row.addWidget(self.run_button)
+        action_row.addWidget(self.stop_button)
         action_row.addWidget(self.extract_button)
         action_row.addStretch()
         execution_layout.addLayout(action_row)
@@ -1433,6 +1442,7 @@ class AutomationPage(QWidget, AsyncMixin):
 
     def set_busy(self, busy: bool, stage: str = "") -> None:
         self.busy = busy
+        self.stop_button.setEnabled(bool(busy and self._batch_control and not self._batch_control.event.is_set()))
         for button in (
             self.sample_button,
             self.prepare_button,
@@ -1534,9 +1544,12 @@ class AutomationPage(QWidget, AsyncMixin):
             return
         workspace = self.workspace_path.text()
         sample_range = self._sample_range()
+        self._batch_control = BatchControl()
+        control = self._batch_control
         self.set_busy(True, "正在执行批处理")
 
-        def action():
+        def execute():
+            check_stopped()
             if self.multi:
                 task = definition.build(
                     sample,
@@ -1560,6 +1573,7 @@ class AutomationPage(QWidget, AsyncMixin):
             from mobo.automation.pipeline import TaskStatus
             if task.status != TaskStatus.DONE:
                 raise RuntimeError("KEY 生成失败，请检查样本列数、KEY 参数格式及工作区；详细原因见日志")
+            check_stopped()
             task.run_solver()
             if task.status != TaskStatus.DONE:
                 raise RuntimeError("DEFORM 求解失败，详细原因见日志")
@@ -1568,14 +1582,39 @@ class AutomationPage(QWidget, AsyncMixin):
                 if DeformSolver(process_info_file=task.process_info_file).pending_db_files(task.db_files):
                     raise RuntimeError("DEFORM 存在未完成的模拟，请检查求解日志后续跑")
             if not self.dry_run.isChecked():
+                check_stopped()
                 task.extract()
                 if task.status != TaskStatus.DONE:
                     raise RuntimeError("结果提取失败，详细原因见日志")
             return {"result": {"status": "completed"}, "task": task, "multi": False}
 
+        def action():
+            with batch_scope(control):
+                return execute()
+
         self.run_async(action, self._run_done, self._operation_failed)
 
+    def stop_calculation(self) -> None:
+        stop_all_batches()
+        self.stop_button.setEnabled(False)
+        set_status(self.status_label, "stopping")
+        self.stage_label.setText("正在停止计算，保留已完成结果和中断数据库…")
+
+    def _finish_stopped(self) -> bool:
+        control = self._batch_control
+        self._batch_control = None
+        if control is None or not control.event.is_set():
+            return False
+        self.set_busy(False)
+        set_status(self.status_label, "stopped")
+        self.stage_label.setText("已停止；再次启动将恢复可用数据库，无法恢复时从 KEY 重算")
+        self.progress.setValue(0)
+        self.refresh_progress()
+        return True
+
     def _run_done(self, output: dict[str, Any]) -> None:
+        if self._finish_stopped():
+            return
         self.set_busy(False)
         result = output["result"]
         completed = result.get("status") == "completed"
@@ -1605,6 +1644,9 @@ class AutomationPage(QWidget, AsyncMixin):
                 task.load_samples_into_table()
                 task.prepare_db_files()
                 task.extract()
+                from mobo.automation.pipeline import TaskStatus
+                if task.status != TaskStatus.DONE:
+                    raise RuntimeError("结果提取失败，请检查实际终态行程及日志")
                 candidates = sorted(Path(task.result_txt_dir).glob("*.txt"), key=lambda p: p.stat().st_mtime)
                 result = str(candidates[-1]) if candidates else task.result_txt_dir
             return result
@@ -1619,6 +1661,8 @@ class AutomationPage(QWidget, AsyncMixin):
         QMessageBox.information(self, "提取完成", f"结果位置：\n{path}")
 
     def _operation_failed(self, message: str) -> None:
+        if self._finish_stopped():
+            return
         self.set_busy(False)
         set_status(self.status_label, "failed")
         self.stage_label.setText(message)
@@ -1704,6 +1748,7 @@ class AutomationPage(QWidget, AsyncMixin):
                 rows.append([
                     int(sample_id) + 1 if sample_id.isdigit() else sample_id,
                     "completed" if info.get("done") else (
+                        "stopped" if info.get("stopped") else
                         "running" if info.get("started_at") else "pending"
                     ),
                     "单工步",

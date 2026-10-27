@@ -16,7 +16,7 @@ from mobo.common.logging import logger
 from .config import DeformConfig
 from .dataset_format import format_dataset_row
 from .keyfile import derive_output_path, read_key_frames
-from .solver import db_to_key, query_db_steps
+from .solver import db_to_key, query_db_steps, validate_db_stroke
 
 
 def _export_key(db_file: str, key_file: str, step: str) -> str:
@@ -119,6 +119,7 @@ def extract_dataset(
     in_progress: Sequence[bool],
     result_dir: str,
     *, sample_indices: Sequence[int] | None = None,
+    required_stroke: tuple[str, int, float] | None = None,
 ) -> str:
     """从一批 DB 文件提取目标值，汇总为数据集 txt 文件。
 
@@ -142,6 +143,8 @@ def extract_dataset(
     with open(out_path, "w", encoding="utf-8") as f:
         for i, db_file in enumerate(db_files):
             logger.info(f"当前提取的文件为：{db_file}")
+            if required_stroke is not None:
+                validate_db_stroke(db_file, required_stroke)
             try:
                 sample_index = sample_indices[i] if sample_indices is not None else i
                 step_dir = os.path.join(key_export_dir, str(sample_index))

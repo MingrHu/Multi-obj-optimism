@@ -115,8 +115,7 @@ def test_solve_db_sync_accepts_deform_normal_end_markers(
     db_path = tmp_path / "sample.DB"
     (tmp_path / "sample.LOG").write_text(normal_marker + "\n", encoding="utf-8")
     (tmp_path / "sample.MSG").write_text("Step number is 1\n" if has_output else "")
-    (tmp_path / "FOR003").write_text("residue", encoding="utf-8")
-    (tmp_path / "FOR003.LOCK").write_text("residue", encoding="utf-8")
+
     if not has_output:
         with pytest.raises(RuntimeError, match="未产生求解消息"):
             solver.solve_db_sync(str(db_path))
@@ -378,3 +377,74 @@ def test_completed_callback_runs_for_resumed_db(monkeypatch, tmp_path):
     monkeypatch.setattr(s, "submit", lambda *args, **kwargs: None)
     s.run_all(dbs)
     assert completed == [dbs[0]]
+
+
+@pytest.mark.parametrize("stroke", ["14.5", "14.4999", "-14.5"])
+def test_final_stroke_validation_reads_latest_db(monkeypatch, stroke):
+    exported = []
+
+    def export(db, key, step=""):
+        from pathlib import Path
+        exported.append((db, key, step))
+        Path(key).write_text(f"STROKE 3 0 {stroke} 0\n")
+
+    monkeypatch.setattr(solver, "db_to_key", export)
+    solver.validate_db_stroke("sample.DB", ("3", 1, 14.5))
+    assert exported[0][0] == "sample.DB" and exported[0][2] == ""
+    import os
+    assert not os.path.exists(exported[0][1])
+
+
+@pytest.mark.parametrize("data", ["STROKE 3 0 3.625 0\n", "STROKE 3 0 14.4 0\n",
+                                  "STROKE 3 0 14.6 0\n", "STROKE 3 0 nan 0\n",
+                                  "STROKE 2 0 14.5 0\n", ""])
+def test_short_or_missing_final_stroke_is_not_accepted(monkeypatch, data):
+    from pathlib import Path
+    monkeypatch.setattr(solver, "db_to_key", lambda db, key: Path(key).write_text(data))
+    with pytest.raises(RuntimeError, match="未完成目标行程"):
+        solver.validate_db_stroke("sample.DB", ("3", 1, 14.5))
+
+
+def test_stroke_failure_prevents_done_and_completion_callback(monkeypatch):
+    complete = []
+    s = solver.DeformSolver(required_stroke=("3", 1, 14.5), on_completed=complete.append)
+    s._running = 1
+    marked = []
+    monkeypatch.setattr(s, "_mark_done", marked.append)
+
+    def fail(db, *, required_stroke):
+        assert required_stroke == ("3", 1, 14.5)
+        raise RuntimeError("未完成目标行程")
+
+    monkeypatch.setattr(solver, "solve_db_sync", fail)
+    s._solve_one("sample.DB", "")
+    assert not marked and not complete and s.running == 0
+
+
+@pytest.mark.parametrize("valid", [True, False])
+def test_resumed_completed_db_is_revalidated_before_reuse(monkeypatch, tmp_path, valid):
+    import json
+    state_file = tmp_path / "process.json"
+    s = solver.DeformSolver(process_info_file=str(state_file), required_stroke=("3", 1, 14.5))
+    s._init_progress(["sample.DB"])
+    s._mark_done("sample.DB")
+    calls = []
+
+    def validate(db, required):
+        calls.append((db, required))
+        if not valid:
+            raise RuntimeError("未完成目标行程")
+
+    monkeypatch.setattr(solver, "validate_db_stroke", validate)
+    monkeypatch.setattr(s, "submit", lambda *args, **kwargs: pytest.fail("历史完成结果不应直接重算"))
+    if valid:
+        s.run_all(["sample.DB"])
+        assert json.loads(state_file.read_text(encoding="utf-8"))["completed"] == 1
+    else:
+        with pytest.raises(RuntimeError, match="未完成目标行程"):
+            s.run_all(["sample.DB"])
+        state = json.loads(state_file.read_text(encoding="utf-8"))
+        assert state["completed"] == 0
+        assert not state["db_files"][0]["done"]
+        assert "未完成目标行程" in state["db_files"][0]["validation_error"]
+    assert calls == [("sample.DB", ("3", 1, 14.5))]
