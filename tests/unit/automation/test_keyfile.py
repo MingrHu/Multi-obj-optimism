@@ -92,14 +92,18 @@ def test_generate_key_files_reuses_existing_outputs(tmp_path):
         ["950.0", "40.0"],
     ]
     generated = keyfile.generate_key_files(str(template), param_table, str(tmp_path / "keys"))
-    Path(generated[0]).write_text("existing-key", encoding="utf-8")
+    original = Path(generated[0]).read_bytes()
 
     repeated = keyfile.generate_key_files(
         str(template), param_table, str(tmp_path / "keys")
     )
 
     assert repeated == generated
-    assert Path(generated[0]).read_text(encoding="utf-8") == "existing-key"
+    assert Path(generated[0]).read_bytes() == original
+
+    Path(generated[0]).write_text("existing-key", encoding="utf-8")
+    with pytest.raises(ValueError, match="新的工作区"):
+        keyfile.generate_key_files(str(template), param_table, str(tmp_path / "keys"))
 
 
 def test_line_replacement_changes_only_last_matching_token():

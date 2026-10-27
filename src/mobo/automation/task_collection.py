@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import os
 from dataclasses import dataclass
 from datetime import datetime
@@ -311,15 +312,24 @@ class SingleOperationTaskDefinition:
         workspace: str | os.PathLike[str] | None = None,
         dry_run: bool = False, max_parallel: int = 24,
         incremental: bool = False,
+        sample_start: int = 0, sample_end: int | None = None,
     ) -> ForgingTask:
         self.validate()
         root = Path(workspace) if workspace is not None else self.workspace
+        suffix = ""
+        state_dir = task_dir(self.task_id)
+        result_dir = root / "results"
+        if sample_start != 0 or sample_end is not None:
+            suffix = f"_{sample_start}_{sample_end if sample_end is not None else 'end'}"
+            workspace_id = hashlib.sha256(str(root.resolve()).encode("utf-8")).hexdigest()[:16]
+            state_dir = state_dir / "ranges" / workspace_id
+            result_dir = result_dir / f"range{suffix}"
         return ForgingTask(
             sample_file=str(sample_file), template_key=self.template_key,
             temp_key_dir=str(root / "input_keys"),
             result_db_dir=str(root / "db"),
             result_key_dir=str(root / "result_keys"),
-            result_txt_dir=str(root / "results"),
+            result_txt_dir=str(result_dir),
             param_table=[
                 [str(item["name"]) for item in self.parameters],
                 [str(item["object"]) for item in self.parameters],
@@ -330,19 +340,25 @@ class SingleOperationTaskDefinition:
                 [item.select_component for item in self.targets],
             ],
             in_progress=[item.in_progress for item in self.targets],
-            process_info_file=str(task_dir(self.task_id) / "process_info.json"),
+            process_info_file=str(state_dir / f"process_info{suffix}.json"),
             dry_run=dry_run, max_parallel=max_parallel,
             incremental=incremental,
-            incremental_state_file=str(task_dir(self.task_id) / "incremental_dataset.json"),
-            incremental_output_file=str(root / "results" / f"{self.task_id}_incremental_result.txt"),
+            incremental_state_file=str(state_dir / f"incremental_dataset{suffix}.json"),
+            incremental_output_file=str(result_dir / f"{self.task_id}_incremental_result{suffix}.txt"),
+            sample_start=sample_start, sample_end=sample_end,
         )
 
     def prepare_keys(
         self, sample_file: str | os.PathLike[str], *,
         workspace: str | os.PathLike[str] | None = None,
+        sample_start: int = 0, sample_end: int | None = None,
     ) -> list[str]:
-        task = self.build(sample_file, workspace=workspace)
+        task = self.build(sample_file, workspace=workspace,
+                          sample_start=sample_start, sample_end=sample_end)
         task.generate_keys()
+        from .pipeline import TaskStatus
+        if task.status != TaskStatus.DONE:
+            raise ValueError("KEY 生成失败，请检查样本列数、参数格式及工作区，详细原因见日志")
         return task.key_files
 
     def run(self, sample_file: str | os.PathLike[str], **kwargs: Any) -> ForgingTask:
@@ -472,6 +488,9 @@ GH4169_RING_SINGLE_TASK_1 = SingleOperationTaskDefinition(
         {"name": "workpiece_temperature", "object": "workpiece", "range": [1100.0, 1150.0]},
         {"name": "ring_die_temperature", "object": "ring_dies", "range": [250.0, 350.0]},
         {"name": "pressure_roll_profile_peak_speed", "object": "pressure_roll", "range": [0.1, 2.5]},
+        {"name": "driving_roll_rad_speed", "object": "driving_roll", "range": [1.0, 2.0]},
+        {"name": "ring_shear_friction_factor", "object": "workpiece", "range": [0.3, 0.7]},
+        {"name": "ring_contact_heat_transfer", "object": "workpiece", "range": [3.0, 6.0]},
     ),
     targets=(
         TargetDefinition("roundness_inner", "roundness_inner", "workpiece", (1,),

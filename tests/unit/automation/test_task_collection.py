@@ -83,6 +83,9 @@ def test_gh4169_single_task_is_registered_with_requested_design_space():
         ("workpiece_temperature", [1100.0, 1150.0]),
         ("ring_die_temperature", [250.0, 350.0]),
         ("pressure_roll_profile_peak_speed", [0.1, 2.5]),
+        ("driving_roll_rad_speed", [1.0, 2.0]),
+        ("ring_shear_friction_factor", [0.3, 0.7]),
+        ("ring_contact_heat_transfer", [3.0, 6.0]),
     ]
     assert [target.output_name for target in task.targets] == [
         "roundness_inner", "roundness_outer", "die_load_y",
@@ -129,6 +132,8 @@ def test_typed_task_getters_reject_the_wrong_task_kind():
 @pytest.mark.integration
 def test_real_7075_template_has_grain_and_generates_parameterized_key(tmp_path):
     task = RING_7075_SINGLE_TASK_1
+    if not Path(task.template_key).is_file():
+        pytest.skip("7075 真实模板未部署")
     task.validate()
     template = Path(task.template_key)
     text = template.read_text(encoding="utf-8")
@@ -143,10 +148,10 @@ def test_real_7075_template_has_grain_and_generates_parameterized_key(tmp_path):
     sample.write_text("320\t150\t0.2\n", encoding="utf-8")
     generated = Path(task.prepare_keys(sample, workspace=tmp_path / "run")[0])
     rendered = generated.read_text(encoding="utf-8")
-    assert "REFTMP       1    3.2000000000E+002" in rendered
+    assert "REFTMP       1    3.2000000000E+002" not in rendered
     assert "NDTMP        1       0    3.2000000000E+002" in rendered
     for object_id in (2, 3, 4, 5):
-        assert f"REFTMP       {object_id}    1.5000000000E+002" in rendered
+        assert f"NDTMP        {object_id}       0    1.5000000000E+002" in rendered
     assert (
         "MOVCTL       3       1       0    0.0000000000E+000    "
         "1.0000000000E+000    0.0000000000E+000    2.0000000000E-001"
@@ -171,13 +176,13 @@ def test_real_gh4169_template_has_grain_and_generates_parameterized_key(tmp_path
     ]
 
     sample = tmp_path / "sample.txt"
-    sample.write_text("1100\t250\t0.1\n", encoding="utf-8")
+    sample.write_text("1100\t250\t0.1\t1.5\t0.5\t4.5\n", encoding="utf-8")
     generated = Path(task.prepare_keys(sample, workspace=tmp_path / "run")[0])
     rendered = generated.read_text(encoding="utf-8")
-    assert "REFTMP       1    1.1000000000E+003" in rendered
+    assert "REFTMP       1    1.1000000000E+003" not in rendered
     assert "NDTMP        1       0    1.1000000000E+003" in rendered
     for object_id in (2, 3, 4, 5):
-        assert f"REFTMP       {object_id}    2.5000000000E+002" in rendered
+        assert f"NDTMP        {object_id}       0    2.5000000000E+002" in rendered
     assert (
         "MOVCTL       3       1       2    0.0000000000E+000    "
         "1.0000000000E+000    0.0000000000E+000       5"
@@ -275,6 +280,8 @@ def test_real_tc4_templates_can_generate_one_parameterized_sample(monkeypatch, t
     monkeypatch.setattr(
         task_collection, "task_dir", lambda task_id: tmp_path / "tasks" / task_id
     )
+    if any(not Path(op["template_key"]).is_file() for op in TC4_RING_MULTI_TASK_1.operations):
+        pytest.skip("TC4 真实模板未部署")
     TC4_RING_MULTI_TASK_1.validate()
     sample = tmp_path / "sample.txt"
     sample.write_text("800\t200\t0.1\t960\t350\t2.2\n", encoding="utf-8")
@@ -286,7 +293,7 @@ def test_real_tc4_templates_can_generate_one_parameterized_sample(monkeypatch, t
         first_source.read_bytes()
     ).digest()
     stage2 = paths[1].read_text(encoding="utf-8")
-    assert "REFTMP       1    8.0000000000E+002" in stage2
+    assert "REFTMP       1    8.0000000000E+002" not in stage2
     assert "NDTMP        1       0    8.0000000000E+002" in stage2
     for object_id in (2, 3, 4, 5):
         assert f"REFTMP       {object_id}    2.0000000000E+002" in stage2
@@ -295,7 +302,7 @@ def test_real_tc4_templates_can_generate_one_parameterized_sample(monkeypatch, t
         "1.0000000000E+000    0.0000000000E+000    1.0000000000E-001"
     ) in stage2
     stage3 = paths[2].read_text(encoding="utf-8")
-    assert "REFTMP       1    9.6000000000E+002" in stage3
+    assert "REFTMP       1    9.6000000000E+002" not in stage3
     assert "NDTMP        1       0    9.6000000000E+002" in stage3
     for object_id in (2, 3, 4, 5):
         assert f"REFTMP       {object_id}    3.5000000000E+002" in stage3

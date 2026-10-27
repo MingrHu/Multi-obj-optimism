@@ -1186,6 +1186,33 @@ class AutomationPage(QWidget, AsyncMixin):
         layout.addWidget(sample)
 
         execution, execution_layout = card("3 · 执行与进度")
+        self.sample_range_controls = QWidget()
+        range_layout = QHBoxLayout(self.sample_range_controls)
+        range_layout.setContentsMargins(0, 0, 0, 0)
+        self.limit_sample_range = QCheckBox("指定样本范围")
+        self.sample_start = QSpinBox()
+        self.sample_end = QSpinBox()
+        for spin in (self.sample_start, self.sample_end):
+            spin.setRange(1, 1000000000)
+            spin.setEnabled(False)
+        self.sample_start.setValue(1)
+        self.sample_end.setValue(100)
+        range_layout.addWidget(self.limit_sample_range)
+        range_layout.addWidget(QLabel("起始编号"))
+        range_layout.addWidget(self.sample_start)
+        range_layout.addWidget(QLabel("结束编号"))
+        range_layout.addWidget(self.sample_end)
+        range_layout.addWidget(QLabel("从1开始，包含两端；不勾选则处理全部样本"))
+        range_layout.addStretch()
+        self.sample_range_controls.setToolTip(
+            "例如300条样本：前100条填1～100，第二批填101～200。"
+            "范围同时用于生成KEY、求解、提取和进度查询；抽样仍生成完整文件。"
+        )
+        self.sample_range_controls.setVisible(not multi)
+        self.limit_sample_range.toggled.connect(self._sample_range_changed)
+        self.sample_start.valueChanged.connect(self._sample_range_changed)
+        self.sample_end.valueChanged.connect(self._sample_range_changed)
+        execution_layout.addWidget(self.sample_range_controls)
         options = QHBoxLayout()
         self.parallel = QSpinBox()
         self.parallel.setRange(1, 64)
@@ -1241,6 +1268,27 @@ class AutomationPage(QWidget, AsyncMixin):
         is_lhs = self.method.currentData() == "lhs"
         self.include_boundaries.setEnabled(is_lhs)
         self.include_boundaries.setVisible(is_lhs)
+
+    def _sample_range_changed(self, _value=None) -> None:
+        limited = self.limit_sample_range.isChecked()
+        self.sample_start.setEnabled(limited)
+        self.sample_end.setEnabled(limited)
+        self.refresh_progress()
+
+    def _sample_range(self) -> dict[str, int]:
+        """UI 为一基闭区间，内部统一使用零基半开区间。"""
+        if self.multi or not self.limit_sample_range.isChecked():
+            return {}
+        start, end = self.sample_start.value(), self.sample_end.value()
+        if start > end:
+            raise ValueError("样本范围的起始编号不能大于结束编号")
+        sample_path = Path(self.sample_path.text())
+        if sample_path.is_file():
+            with sample_path.open(encoding="utf-8") as stream:
+                count = sum(1 for line in stream if line.strip())
+            if end > count:
+                raise ValueError(f"样本文件共 {count} 条，结束编号不能超过 {count}")
+        return {"sample_start": start - 1, "sample_end": end}
 
     def populate_definitions(self) -> None:
         from mobo.automation.task_collection import TASK_COLLECTION, MultiOperationTaskDefinition
@@ -1310,7 +1358,10 @@ class AutomationPage(QWidget, AsyncMixin):
             sample_dir = definition.workspace / "samples"
             workspace = definition.workspace
         self.workspace_path.setText(str(workspace))
-        existing = sorted(Path(sample_dir).glob("*.txt"), key=lambda p: p.stat().st_mtime, reverse=True) if Path(sample_dir).exists() else []
+        existing = sorted(
+            [*Path(sample_dir).glob("*.txt"), *Path(sample_dir).glob("*.tsv")],
+            key=lambda p: p.stat().st_mtime, reverse=True,
+        ) if Path(sample_dir).exists() else []
         if existing:
             self.sample_path.setText(str(existing[0]))
         else:
@@ -1395,6 +1446,10 @@ class AutomationPage(QWidget, AsyncMixin):
             button.setEnabled(not busy)
         self.definition.setEnabled(not busy)
         self.task_editor.setEnabled(not busy)
+        self.sample_range_controls.setEnabled(not busy)
+        for control in (self.sample_path, self.template_path, self.workspace_path,
+                        self.parallel, self.dry_run, self.incremental):
+            control.setEnabled(not busy)
         if not busy:
             data = self.definition.currentData()
             self.delete_template_button.setEnabled(
@@ -1454,12 +1509,13 @@ class AutomationPage(QWidget, AsyncMixin):
         if definition is None:
             return
         workspace = self.workspace_path.text()
+        sample_range = self._sample_range()
         self.set_busy(True, "正在生成参数化 KEY")
 
         def action():
             if self.multi:
                 return definition.prepare_keys(sample, work_dir=workspace)
-            return definition.prepare_keys(sample, workspace=workspace)
+            return definition.prepare_keys(sample, workspace=workspace, **sample_range)
 
         self.run_async(action, self._keys_done, self._operation_failed)
 
@@ -1477,6 +1533,7 @@ class AutomationPage(QWidget, AsyncMixin):
         if definition is None:
             return
         workspace = self.workspace_path.text()
+        sample_range = self._sample_range()
         self.set_busy(True, "正在执行批处理")
 
         def action():
@@ -1497,11 +1554,23 @@ class AutomationPage(QWidget, AsyncMixin):
                 dry_run=self.dry_run.isChecked(),
                 max_parallel=self.parallel.value(),
                 incremental=self.incremental.isChecked(),
+                **sample_range,
             )
             task.generate_keys()
+            from mobo.automation.pipeline import TaskStatus
+            if task.status != TaskStatus.DONE:
+                raise RuntimeError("KEY 生成失败，请检查样本列数、KEY 参数格式及工作区；详细原因见日志")
             task.run_solver()
+            if task.status != TaskStatus.DONE:
+                raise RuntimeError("DEFORM 求解失败，详细原因见日志")
+            if not self.dry_run.isChecked():
+                from mobo.automation.solver import DeformSolver
+                if DeformSolver(process_info_file=task.process_info_file).pending_db_files(task.db_files):
+                    raise RuntimeError("DEFORM 存在未完成的模拟，请检查求解日志后续跑")
             if not self.dry_run.isChecked():
                 task.extract()
+                if task.status != TaskStatus.DONE:
+                    raise RuntimeError("结果提取失败，详细原因见日志")
             return {"result": {"status": "completed"}, "task": task, "multi": False}
 
         self.run_async(action, self._run_done, self._operation_failed)
@@ -1523,6 +1592,7 @@ class AutomationPage(QWidget, AsyncMixin):
         if definition is None:
             return
         workspace = self.workspace_path.text()
+        sample_range = self._sample_range()
         self.set_busy(True, "正在提取结果")
 
         def action():
@@ -1530,12 +1600,13 @@ class AutomationPage(QWidget, AsyncMixin):
                 task = definition.build(sample, work_dir=workspace, dry_run=self.dry_run.isChecked())
                 result = definition.extract_dataset(task, result_dir=Path(workspace) / "results")
             else:
-                task = definition.build(sample, workspace=workspace, dry_run=self.dry_run.isChecked())
+                task = definition.build(sample, workspace=workspace, dry_run=self.dry_run.isChecked(),
+                                        **sample_range)
                 task.load_samples_into_table()
                 task.prepare_db_files()
                 task.extract()
-                candidates = sorted((Path(workspace) / "results").glob("*.txt"), key=lambda p: p.stat().st_mtime)
-                result = str(candidates[-1]) if candidates else str(Path(workspace) / "results")
+                candidates = sorted(Path(task.result_txt_dir).glob("*.txt"), key=lambda p: p.stat().st_mtime)
+                result = str(candidates[-1]) if candidates else task.result_txt_dir
             return result
 
         self.run_async(action, self._extract_done, self._operation_failed)
@@ -1560,6 +1631,11 @@ class AutomationPage(QWidget, AsyncMixin):
             return None
         if not self.workspace_path.text():
             self.show_error("请选择任务工作区")
+            return None
+        try:
+            self._sample_range()
+        except (OSError, ValueError) as exc:
+            self.show_error(str(exc))
             return None
         return path
 
@@ -1614,22 +1690,28 @@ class AutomationPage(QWidget, AsyncMixin):
                 self.progress.setRange(0, len(rows))
                 self.progress.setValue(completed)
         else:
-            path = Path(os.environ.get("MOBO_DATA_DIR", "data")) / "tasks" / definition.task_id / "process_info.json"
-            if path.is_file():
-                try:
-                    raw = json.loads(path.read_text(encoding="utf-8"))
-                except (OSError, ValueError):
-                    raw = {}
-                entries = raw.get("process_info", raw) if isinstance(raw, dict) else {}
-                iterable = entries.items() if isinstance(entries, dict) else enumerate(entries)
-                for sample_id, info in iterable:
-                    value = info if isinstance(info, dict) else {"status": info}
-                    rows.append([
-                        sample_id,
-                        value.get("status", "pending"),
-                        "单工步",
-                        format_timestamp(value.get("updated_at")),
-                    ])
+            try:
+                task = active_task or definition.build(
+                    self.sample_path.text(), workspace=self.workspace_path.text(),
+                    **self._sample_range(),
+                )
+                path = Path(task.process_info_file)
+                raw = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+            except (OSError, ValueError):
+                raw = {}
+            for info in raw.get("db_files", []):
+                sample_id = Path(info["db_path"]).parent.name
+                rows.append([
+                    int(sample_id) + 1 if sample_id.isdigit() else sample_id,
+                    "completed" if info.get("done") else (
+                        "running" if info.get("started_at") else "pending"
+                    ),
+                    "单工步",
+                    format_timestamp(info.get("finished_at") or info.get("started_at")),
+                ])
+            if rows and self.busy:
+                self.progress.setRange(0, len(rows))
+                self.progress.setValue(sum(row[1] == "completed" for row in rows))
         self.batch_table.set_data(["样本", "状态", "当前工步", "更新时间"], rows)
 
 

@@ -107,7 +107,8 @@ def _apply_document_replacers(
     return result
 
 
-def generate_key_files(template_path: str, param_table: List[List[str]], save_dir: str) -> List[str]:
+def generate_key_files(template_path: str, param_table: List[List[str]], save_dir: str,
+                       *, sample_indices: Sequence[int] | None = None) -> List[str]:
     """把工艺参数写入模板 KEY，批量生成输入 KEY 文件。
 
     ``param_table`` 前两行为固定表头：第 0 行是参数名、第 1 行是对象名；从第 2 行起
@@ -119,26 +120,29 @@ def generate_key_files(template_path: str, param_table: List[List[str]], save_di
     :return: 生成的 KEY 文件路径列表
     """
     os.makedirs(save_dir, exist_ok=True)
+    indices = list(range(len(param_table[2:]))) if sample_indices is None else list(sample_indices)
+    if len(indices) != len(param_table[2:]) or len(set(indices)) != len(indices):
+        raise ValueError("样本编号必须与参数行一一对应且不重复")
+    if any(not isinstance(index, int) or index < 0 for index in indices):
+        raise ValueError("样本编号必须是非负整数")
     generated = [
         derive_output_path(template_path, save_dir, str(sample_idx), "KEY")
-        for sample_idx in range(len(param_table[2:]))
+        for sample_idx in indices
     ]
-    if all(os.path.isfile(path) and os.path.getsize(path) > 0 for path in generated):
-        logger.info(f"{len(generated)} 个 KEY 文件均已存在，跳过生成")
-        return generated
-
-    with open(template_path, "r", encoding="utf-8") as f:
+    with open(template_path, "r", encoding="utf-8", newline="") as f:
         template_lines = f.readlines()
 
     param_names, object_names = param_table[0], param_table[1]
 
     for sample_idx, (values, out_path) in enumerate(zip(
             param_table[2:], generated, strict=True)):
-        if os.path.isfile(out_path) and os.path.getsize(out_path) > 0:
-            logger.info(f"第 {sample_idx + 1} 个 KEY 文件已存在，跳过生成: {out_path}")
-            continue
         new_lines = apply_parameters(template_lines, param_names, object_names, values)
-        with open(out_path, "w", encoding="utf-8") as f:
+        if os.path.isfile(out_path) and os.path.getsize(out_path) > 0:
+            with open(out_path, "r", encoding="utf-8", newline="") as f:
+                if f.read() != "".join(new_lines):
+                    raise ValueError("已有 KEY 与当前模板/样本不一致，请选择新的工作区，避免复用旧模拟结果")
+            continue
+        with open(out_path, "w", encoding="utf-8", newline="") as f:
             f.writelines(new_lines)
         logger.info(f"第 {sample_idx + 1} 个 KEY 文件已保存: {out_path}")
 
@@ -148,6 +152,8 @@ def generate_key_files(template_path: str, param_table: List[List[str]], save_di
 def apply_parameters(lines: Sequence[str], param_names: Sequence[str],
                      object_names: Sequence[str], values: Sequence[str]) -> List[str]:
     """把一组样本参数应用到 KEY 文本行并返回新列表。"""
+    if not (len(param_names) == len(object_names) == len(values)):
+        raise ValueError("样本列数必须与当前输入参数列数一致，请重新抽样或选择对应的样本文件")
     bindings = _parameter_bindings(param_names, object_names, values)
     rendered = [
         _apply_bindings_to_line(line, bindings)
@@ -160,11 +166,11 @@ def write_parameterized_key(template_path: str, output_path: str,
                             param_names: Sequence[str], object_names: Sequence[str],
                             values: Sequence[str]) -> str:
     """基于模板写出一个参数化 KEY，不修改模板文件。"""
-    with open(template_path, "r", encoding="utf-8") as f:
+    with open(template_path, "r", encoding="utf-8", newline="") as f:
         lines = f.readlines()
     rendered = apply_parameters(lines, param_names, object_names, values)
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
-    with open(output_path, "w", encoding="utf-8") as f:
+    with open(output_path, "w", encoding="utf-8", newline="") as f:
         f.writelines(rendered)
     return output_path
 

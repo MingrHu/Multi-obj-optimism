@@ -118,6 +118,7 @@ def extract_dataset(
     target_table: List[List[Any]],
     in_progress: Sequence[bool],
     result_dir: str,
+    *, sample_indices: Sequence[int] | None = None,
 ) -> str:
     """从一批 DB 文件提取目标值，汇总为数据集 txt 文件。
 
@@ -130,6 +131,8 @@ def extract_dataset(
     :return: 输出数据集文件完整路径
     """
     # 新建数据集
+    if sample_indices is not None and len(sample_indices) != len(db_files):
+        raise ValueError("提取样本编号数量与 DB 数量不一致")
     os.makedirs(result_dir, exist_ok=True)
     timestamp = datetime.now().strftime("%Y-%m-%d %H_%M_%S")
     out_path = os.path.join(result_dir, f"{timestamp}_result.txt")
@@ -140,7 +143,8 @@ def extract_dataset(
         for i, db_file in enumerate(db_files):
             logger.info(f"当前提取的文件为：{db_file}")
             try:
-                step_dir = os.path.join(key_export_dir, str(i))
+                sample_index = sample_indices[i] if sample_indices is not None else i
+                step_dir = os.path.join(key_export_dir, str(sample_index))
                 # 样本工艺参数（param_table 前两行为表头，样本从第 2 行起）
                 row: List[Any] = list(param_table[i + 2])
                 row.extend(_extract_values(

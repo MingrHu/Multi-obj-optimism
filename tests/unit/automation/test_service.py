@@ -121,10 +121,10 @@ def test_run_and_extract_resume_from_disk(monkeypatch, tmp_path):
 def test_run_execution_step_restores_missing_key_before_solver(monkeypatch, tmp_path):
     """单工步续跑在求解前补生成缺失 KEY，不覆盖已有非空 KEY。"""
     paths = _paths(tmp_path)
-    Path(paths["smp_file"]).write_text("\n\n\n", encoding="utf-8")
+    Path(paths["smp_file"]).write_text("900\n910\n920\n", encoding="utf-8")
     Path(paths["std_key_file"]).write_text("HEADER\n", encoding="utf-8")
     service.init_execution_task(
-        "t1", paths, [[], []], [[], [], []], [],
+        "t1", paths, [["temp"], ["workpiece"]], [[], [], []], [],
     )
     key_dir = Path(paths["temp_key_path"])
     existing = key_dir / "MODEL0.KEY"
@@ -372,10 +372,13 @@ def test_run_extract_data_resume_loads_samples_and_no_index_col(monkeypatch, tmp
         (d / f"MODEL{i}.DB").write_text("")
 
     service.init_execution_task(
-        "t1", paths, [["temp"], ["workpiece"]], [["grain"], ["workpiece"], [1]], [False]
+        "t1", paths, [["temp", "speed"], ["workpiece", "topdie"]],
+        [["grain"], ["workpiece"], [1]], [False]
     )
     # 记录里 param_table 仍只有 2 行（样本行未落盘）
-    assert task_store.load("t1")["req"]["param_table"] == [["temp"], ["workpiece"]]
+    assert task_store.load("t1")["req"]["param_table"] == [
+        ["temp", "speed"], ["workpiece", "topdie"],
+    ]
 
     res = service.run_extract_data("t1")
     assert res["status"] == "success"  # 不再 IndexError

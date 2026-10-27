@@ -5,10 +5,12 @@ from functools import partial
 from .base import LineReplacement, ParameterBinding, ReplacerSpec
 from .deform_parameters import (
     replace_keyword_last_value,
+    replace_driving_roll_angular_speed,
     replace_movctl_constant_speed,
     replace_movctl_profile_peak_speed,
     replace_object_temperature,
     replace_ring_die_temperature,
+    replace_ring_contact_parameters,
     rescale_movctl_speed_profile,
 )
 from .registry import ReplacementRegistry
@@ -20,8 +22,8 @@ registry.register_fn(
     kind="line",
 )
 registry.register_fn(
-    "driving_roll_rad_speed", partial(replace_keyword_last_value, keyword="ANGMOV"),
-    kind="line",
+    "driving_roll_rad_speed", replace_driving_roll_angular_speed,
+    kind="document",
 )
 registry.register_fn(
     "temp", partial(replace_keyword_last_value, keyword="NDTMP"),
@@ -48,6 +50,10 @@ registry.register_fn(
 registry.register_fn(
     "ring_die_temperature", replace_ring_die_temperature,
     kind="document",
+)
+registry.register_fn(
+    ("ring_shear_friction_factor", "ring_contact_heat_transfer"),
+    replace_ring_contact_parameters, kind="document", name="ring_contacts",
 )
 registry.register_fn(
     ("pressure_roll_speed_lower", "pressure_roll_speed_upper"),

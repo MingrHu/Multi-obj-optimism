@@ -41,10 +41,13 @@ KEYWORD    object_id    field_1    field_2    ...
 | `roll_tmp` | `REFTMP` | 匹配关键字和对象 ID，替换行末值 | `workpiece` |
 | `temp` | `NDTMP` | 匹配关键字和对象 ID，替换行末值 | `workpiece` |
 | `speed` | `MOVCTL` | 匹配关键字和对象 ID，替换行末值 | `topdie` 等 |
-| `driving_roll_rad_speed` | `ANGMOV` | 匹配关键字和对象 ID，替换行末值 | `driving_roll` |
 | `pressure_roll_speed_lower` | `MOVCTL` 控制点块 | 与上界共同缩放控制点速度列 | `pressure_roll` |
 | `pressure_roll_speed_upper` | `MOVCTL` 控制点块 | 与下界共同缩放控制点速度列 | `pressure_roll` |
-| `workpiece_temperature` | `REFTMP` + `NDTMP` | 同时更新工件参考温度和统一节点温度 | `workpiece` |
+| `workpiece_temperature` | `NDTMP` | 更新默认初温及显式节点温度，保留参考温度 | `workpiece` |
+| `ring_die_temperature` | `NDTMP` | 同步设置对象 2～5 的实际初温 | `ring_dies` |
+| `driving_roll_rad_speed` | `ANGMOV` | 仅修改角速度控制、常量模式的速度字段 | `driving_roll` |
+| `ring_shear_friction_factor` | `FRCFAC 1 j 1 0 m` | 对象对 1–2/3/4/5 共同剪切因子 | `workpiece` |
+| `ring_contact_heat_transfer` | `IHTCOF 1 j 0 h` | 对象对 1–2/3/4/5 共同接触换热系数 | `workpiece` |
 | `pressure_roll_constant_speed` | `MOVCTL` | 仅用于常速模式，替换行末速度 | `pressure_roll` |
 
 ### 2.1 `REFTMP`：对象参考温度
@@ -78,9 +81,10 @@ NDTMP        1       0    1.2000000000E+003
 
 模板中可能同时存在二者。实际采用哪个关键字，应以该模板的初始化方式为准。
 
-TC4 多工步任务使用 `workpiece_temperature`，因为后续工步在上一工步 DB
-状态上换模。过渡动作会同时应用 `REFTMP` 和参数化后的
-`NDTMP 1 0 <temperature>` 片段，避免只改参考温度而未设置继承工件温度。
+`workpiece_temperature` 只修改 `NDTMP`，不把 `REFTMP` 当作实际初温。
+`NDTMP object 0 T` 无显式节点记录时修改默认温度；有单列逐节点记录时同时修改默认值和所有节点值，
+保留记录数与其余字段。多列温度记录拒绝处理，避免误改历史温度/梯度列。
+TC4 多工步换模仍加载模板参考温度和参数化的工件节点温度片段。
 
 ### 2.3 `MOVCTL`：平移运动控制
 
@@ -498,7 +502,7 @@ Inter-Object Data → 文件末尾     = 接触关系
 | 简单平移速度 | `MOVCTL` |
 | 压力辊函数速度上下界 | `MOVCTL` + 后续控制点 |
 | 驱动辊角速度 | `ANGMOV` |
-| TC4 工件温度 | `REFTMP` + `NDTMP` |
+| 工件实际初温 | `NDTMP`（参考温度保留模板值） |
 | 压力辊常速 | 常速模式 `MOVCTL` 行末值 |
 
 ### 已支持提取
@@ -542,3 +546,22 @@ Inter-Object Data → 文件末尾     = 接触关系
 - 行末字段到底是物理量、模式编号还是后续记录数量。
 - 单位制是否一致。
 - 修改后能否正常通过 DEFORM 前处理器生成 DB。
+
+
+## GH4169 六参数任务（2026-10-27）
+
+默认列顺序为工件初温 1100～1150℃、四模具共同初温 250～350℃、芯辊进给峰值速度
+0.1～2.5 mm/s、驱动辊角速度 1～2 rad/s、共同剪切摩擦因子 0.3～0.7、共同接触换热系数 3～6。
+换热系数使用模板 KEY 的单位制，不直接解释为 W/(m²·K)。剪切因子 m 与库仑系数 μ 不同。
+本机 DEFORM V11 手册 §2.5、§2.10.2.1、§2.11.1.2.1 及 ANGMOV/FRCFAC/IHTCOF
+关键字说明是格式依据：有网格对象使用节点温度；无网格刚性工具才可用参考温度表示恒定工具温度。
+GH4169 对象 1～5 均有网格，故实际初温必须修改 NDTMP。
+
+接触参数必须包含四组正向对象对 1–2、1–3、1–4、1–5；只支持模板已有的常量剪切摩擦及常量
+换热模式。缺失、重复或模式不符时报错，不修改其他对象对或自动切换摩擦模型。
+芯辊进给只改非零速度字段，保留方向、零速段及时间节点；参考温度、材料、晶粒、网格、
+SMAX 和 TMAX 均保留。生成 KEY 保留原换行格式。
+
+所有任务的 LHS、边界组合及全因子样本落盘统一为无表头 TSV、固定两位小数。
+旧三列 GH4169 样本不能用于六参数任务；历史恢复工具按当前六列定义取值，温度读取 NDTMP。
+如旧 KEY 与当前模板/样本不一致，须选择新工作区，防止复用旧 DB 和旧结果。

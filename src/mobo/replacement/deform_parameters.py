@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+import re
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from .base import LineReplacement, ParameterBinding
@@ -52,28 +54,18 @@ def replace_keyword_last_value(
 def replace_object_temperature(
     lines: Sequence[str], bindings: Sequence[ParameterBinding]
 ) -> list[str]:
-    """同时设置对象的 REFTMP 和统一 NDTMP 默认温度。"""
+    """设置工件初始节点温度（含显式节点记录），保留 REFTMP。"""
     result = list(lines)
     for binding in bindings:
-        if binding.name != "workpiece_temperature" or binding.object_id is None:
-            continue
-        for index, line in enumerate(result):
-            tokens = line.split()
-            if len(tokens) < 2 or tokens[1] != binding.object_id:
-                continue
-            if tokens[0] in {"REFTMP", "NDTMP"}:
-                start = line.rfind(tokens[-1])
-                result[index] = (
-                    line[:start] + format_deform_float(binding.value)
-                    + line[start + len(tokens[-1]):]
-                )
+        if binding.name == "workpiece_temperature" and binding.object_id is not None:
+            result = _replace_nodal_temperature(result, (binding.object_id,), binding.value)
     return result
 
 
 def replace_ring_die_temperature(
     lines: Sequence[str], bindings: Sequence[ParameterBinding]
 ) -> list[str]:
-    """用一个采样值同步设置碾环对象 2～5 的模具参考温度。"""
+    """用一个采样值同步设置对象 2～5 的实际初始节点温度。"""
     result = list(lines)
     binding = next(
         (item for item in bindings if item.name == "ring_die_temperature"),
@@ -81,13 +73,106 @@ def replace_ring_die_temperature(
     )
     if binding is None:
         return result
-    value = format_deform_float(binding.value)
-    for index, line in enumerate(result):
+    return _replace_nodal_temperature(result, ("2", "3", "4", "5"), binding.value)
+
+
+def _replace_token(line: str, index: int, value: str) -> str:
+    """仅替换指定字段，保留该行其余字节（包括空白与换行）。"""
+    token = list(re.finditer(r"\S+", line))[index]
+    return line[:token.start()] + value + line[token.end():]
+
+
+def _finite_value(value: str) -> float:
+    number = float(value)
+    if not math.isfinite(number):
+        raise ValueError("工艺参数必须是有限数值")
+    return number
+
+
+def _replace_nodal_temperature(
+    lines: Sequence[str], object_ids: Sequence[str], value: str,
+) -> list[str]:
+    _finite_value(value)
+    rendered = list(lines)
+    found: set[str] = set()
+    for index, line in enumerate(lines):
         tokens = line.split()
-        if len(tokens) < 3 or tokens[0] != "REFTMP" or tokens[1] not in {"2", "3", "4", "5"}:
+        if len(tokens) < 2 or tokens[0] != "NDTMP" or tokens[1] not in object_ids:
             continue
-        start = line.rfind(tokens[-1])
-        result[index] = line[:start] + value + line[start + len(tokens[-1]):]
+        if len(tokens) not in (4, 5):
+            raise ValueError(f"不支持的 NDTMP 格式: {line.strip()}")
+        count = int(tokens[2])
+        columns = int(tokens[4]) if len(tokens) == 5 else 1
+        if count < 0 or columns != 1:
+            raise ValueError("初温替换只支持单列 NDTMP 温度数据")
+        found.add(tokens[1])
+        rendered[index] = _replace_token(line, 3, format_deform_float(value))
+        for offset in range(1, count + 1):
+            row = index + offset
+            if row >= len(lines) or len(lines[row].split()) != 2:
+                raise ValueError("NDTMP 节点温度记录不完整")
+            int(lines[row].split()[0])
+            rendered[row] = _replace_token(lines[row], 1, format_deform_float(value))
+    missing = set(object_ids) - found
+    if missing:
+        raise ValueError(f"缺少对象 {', '.join(sorted(missing))} 的 NDTMP 初始温度")
+    return rendered
+
+
+def replace_ring_contact_parameters(
+    lines: Sequence[str], bindings: Sequence[ParameterBinding],
+) -> list[str]:
+    """精确替换环件与四个模具的常量剪切因子/接触换热系数。"""
+    result = list(lines)
+    specs = {
+        "ring_shear_friction_factor": ("FRCFAC", ("1", "0")),
+        "ring_contact_heat_transfer": ("IHTCOF", ("0",)),
+    }
+    for binding in bindings:
+        if binding.name not in specs:
+            continue
+        if binding.object_id != "1":
+            raise ValueError(f"{binding.name} 必须绑定 workpiece（对象 1）")
+        value = _finite_value(binding.value)
+        if value <= 0 or (binding.name == "ring_shear_friction_factor" and value > 1):
+            raise ValueError("剪切因子须在 (0, 1] 内，接触换热系数须为正数")
+        keyword, mode = specs[binding.name]
+        found: set[str] = set()
+        for index, line in enumerate(result):
+            tokens = line.split()
+            if len(tokens) < 3 or tokens[0] != keyword or tokens[1] != "1" or tokens[2] not in {"2", "3", "4", "5"}:
+                continue
+            if len(tokens) != 4 + len(mode) or tuple(tokens[3:-1]) != mode:
+                raise ValueError(f"{keyword} 对象对 1–{tokens[2]} 不是支持的常量模式")
+            if tokens[2] in found:
+                raise ValueError(f"{keyword} 对象对 1–{tokens[2]} 重复")
+            found.add(tokens[2])
+            result[index] = _replace_token(line, -1, format_deform_float(binding.value))
+        if found != {"2", "3", "4", "5"}:
+            raise ValueError(f"{keyword} 缺少环件与对象 2～5 的完整接触定义")
+    return result
+
+
+def replace_driving_roll_angular_speed(
+    lines: Sequence[str], bindings: Sequence[ParameterBinding],
+) -> list[str]:
+    """只支持显式角速度控制的恒定 ANGMOV，不修改扭矩或函数表。"""
+    result = list(lines)
+    for binding in bindings:
+        if binding.name != "driving_roll_rad_speed":
+            continue
+        _finite_value(binding.value)
+        found = False
+        for index, line in enumerate(result):
+            tokens = line.split()
+            if len(tokens) < 2 or tokens[0] != "ANGMOV" or tokens[1] != binding.object_id:
+                continue
+            if len(tokens) != 5 or tokens[2:4] != ["1", "0"] or found:
+                raise ValueError("驱动辊角速度需要唯一的 ANGMOV 常角速度定义")
+            found = True
+            result[index] = _replace_token(line, 4, format_deform_float(binding.value))
+        if not found:
+            raise ValueError("未找到驱动辊的 ANGMOV 定义")
     return result
 
 
@@ -115,34 +200,37 @@ def replace_movctl_profile_peak_speed(
     for binding in bindings:
         if binding.name != "pressure_roll_profile_peak_speed" or binding.object_id is None:
             continue
-        magnitude = abs(float(binding.value))
+        magnitude = abs(_finite_value(binding.value))
+        found = False
         for index, line in enumerate(result):
             tokens = line.split()
-            if (
-                len(tokens) < 8
-                or tokens[0] != "MOVCTL"
-                or tokens[1] != binding.object_id
-                or tokens[3] != "2"
-            ):
+            if len(tokens) < 2 or tokens[0] != "MOVCTL" or tokens[1] != binding.object_id:
                 continue
+            if len(tokens) != 8 or tokens[3] != "2" or found:
+                raise ValueError("芯辊峰值速度需要唯一的 MOVCTL 五点速度曲线")
+            found = True
             count = int(tokens[-1])
+            if count != 5:
+                raise ValueError("芯辊峰值速度只支持五点速度曲线")
+            nonzero = 0
             for offset in range(1, count + 1):
                 point_index = index + offset
-                if point_index >= len(result):
-                    break
+                if point_index >= len(result) or len(result[point_index].split()) != 2:
+                    raise ValueError("MOVCTL 控制点记录不完整")
                 speed = parse_speed(result[point_index])
-                if speed is None or speed == 0.0:
+                if speed is None or not math.isfinite(speed):
+                    raise ValueError("MOVCTL 控制点速度无效")
+                if speed == 0.0:
                     continue
-                body, newline = (
-                    (result[point_index][:-1], "\n")
-                    if result[point_index].endswith("\n")
-                    else (result[point_index], "")
-                )
-                head, separator, _ = body.rpartition(" ")
+                nonzero += 1
                 value = -magnitude if speed < 0 else magnitude
-                result[point_index] = (
-                    head + separator + format_deform_float(str(value)) + newline
+                result[point_index] = _replace_token(
+                    result[point_index], -1, format_deform_float(str(value))
                 )
+            if nonzero != 2:
+                raise ValueError("MOVCTL 五点曲线应包含两个非零平台速度点")
+        if not found:
+            raise ValueError("未找到芯辊的 MOVCTL 速度曲线")
     return result
 
 
@@ -264,10 +352,12 @@ __all__ = [
     "format_deform_float",
     "parse_speed",
     "replace_keyword_last_value",
+    "replace_driving_roll_angular_speed",
     "replace_movctl_constant_speed",
     "replace_movctl_profile_peak_speed",
     "replace_object_temperature",
     "replace_ring_die_temperature",
+    "replace_ring_contact_parameters",
     "rescale_movctl_speed_profile",
     "scale_abs",
     "scale_movctl_block",

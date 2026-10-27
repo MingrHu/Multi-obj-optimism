@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 import threading
@@ -234,6 +235,7 @@ def run_key_actions(key_path: str) -> None:
 def solve_db_sync(db_path: str) -> None:
     """同步求解单个 DB，并以进程返回码和 LOG 的 NORMAL STOP 判定成功。"""
     work_dir = os.path.dirname(os.path.abspath(db_path))
+    _configure_solver_bits(work_dir)
     stem = os.path.splitext(os.path.basename(db_path))[0]
     for name in ("FOR003", "FOR003.LOCK"):
         residue = os.path.join(work_dir, name)
@@ -268,6 +270,21 @@ def solve_db_sync(db_path: str) -> None:
     )
     if not any(marker in log_text for marker in normal_markers) or "ABNORMAL STOP" in log_text:
         raise RuntimeError(f"DEFORM 求解未正常结束，请检查: {log_path}")
+    message_path = os.path.join(work_dir, stem + ".MSG")
+    if not os.path.isfile(message_path) or os.path.getsize(message_path) == 0:
+        raise RuntimeError(f"DEFORM 未产生求解消息，不能判定模拟完成: {message_path}")
+
+
+def _configure_solver_bits(work_dir: str) -> None:
+    """安装目录存在 64 位引擎时，在任务目录使用 DEFORM 的原生标记选用它。"""
+    controller = shutil.which(DEF_ARM_CTL)
+    if os.name != "nt" or controller is None:
+        return
+    engine = os.path.join(os.path.dirname(controller), "DEF_SIM_64.EXE")
+    if os.path.isfile(engine):
+        marker = os.path.join(work_dir, "64bit.DAT")
+        with open(marker, "a", encoding="ascii"):
+            pass
 
 
 class DeformSolver:

@@ -193,8 +193,10 @@ TC4 碾环多工步任务由 `task_collection.TC4_RING_MULTI_TASK_1` 完整定�
 7075 和 GH4169 碾环单工步任务分别由 `task_collection.RING_7075_SINGLE_TASK_1` 与
 `task_collection.GH4169_RING_SINGLE_TASK_1` 定义，复用
 `ForgingTask` 的 KEY 生成、求解与提取流水线。一个 `ring_die_temperature` 样本值通过
-文档级替换原子能力同步作用于对象 2～5；GH4169 模板保留其自带的 GRNDAT 晶粒模型，
+文档级替换原子能力同步修改对象 2～5 的 NDTMP 实际初温，REFTMP 保留模板值；GH4169 模板保留其自带的 GRNDAT 晶粒模型，
 初始和平均晶粒尺寸均为 50 μm；`material_fill` 是尚未确定计算方法的目标占位符。
+GH4169 默认六个输入的列顺序、范围及精确 KEY 修改规则见
+[DEFORM_KEY_KEYWORDS.md](deform/DEFORM_KEY_KEYWORDS.md#gh4169-六参数任务2026-10-27)。
 7075 任务 ID 为 `7075-ring-single-task-1`，模板位于
 `data/keyfile/7075_ring_single_task_1/7075.KEY`，默认工作区为
 `data/AUTO/single/7075_ring_single_task_1`。模板数据由各部署环境自行提供，不随 Git 同步；
@@ -292,6 +294,9 @@ pytest 的输出捕获。现调整为：
 
 ## 平台边界
 
+任务目录在已安装 `DEF_SIM_64.EXE` 时自动写入 DEFORM 原生 `64bit.DAT` 标记，使用64位引擎；
+求解日志宣告结束但没有非空 `.MSG` 时判为失败，避免空跑被误判完成。
+
 `mobo.automation` 通过子进程驱动 Windows 平台的 `DEF_PRE_64.exe` /
 `DEF_ARM_CTL.COM`，**仅能在装有 DEFORM 的 Windows 环境真实运行**。在 Linux/macOS 上：
 
@@ -315,3 +320,17 @@ Docker 镜像包含整个 Python 包，包括 `automation` 批处理代码，但
 `tools/docs_surface.json` 保存人工确认后的公共表面快照；代码公共表面变化但文档/快照未
 同步时，检查会失败。`.github/workflows/docs-consistency.yml` 在相关提交、拉取请求以及
 每周定时执行该检查。
+
+
+## 单工步样本范围
+
+`SingleOperationTaskDefinition.build()` / `prepare_keys()` 及 `ForgingTask` 支持
+`sample_start=0`、`sample_end=None`，内部采用零基半开区间；例如 `[100, 200)` 表示文件中第101～200条非空数据行。
+默认仍处理完整文件。抽样始终生成完整样本文件，范围只限制 KEY 生成、求解、提取和进度查询。
+
+范围任务保留全局样本编号：`<模板名>100.KEY` 对应第101条样本，DB 位于 `db/100/`，导出 KEY
+位于 `result_keys/100/`。增量状态也使用全局编号，参数行则按所选范围内的顺序匹配，避免错配。
+指定范围时，进度与增量状态保存在 `task_dir(task_id)/ranges/<工作区标识>/`，文件名包含
+`_<start>_<end>`；该工作区标识来自解析后工作区路径的哈希。各范围的结果位于
+`results/range_<start>_<end>/`，跨工作区或跨范围不会共享增量状态。续跑须使用同一工作区、完整样本文件及相同范围。
+未指定范围时保留既有状态与结果路径。KEY 文件内容不一致仍拒绝复用；不要同时启动有重叠样本范围的求解。

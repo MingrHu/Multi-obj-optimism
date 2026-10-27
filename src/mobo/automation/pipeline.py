@@ -91,6 +91,8 @@ class ForgingTask:
         incremental: bool = False,
         incremental_state_file: str = "",
         incremental_output_file: str = "",
+        sample_start: int = 0,
+        sample_end: int | None = None,
     ) -> None:
         self.sample_file = sample_file
         self.template_key = template_key
@@ -106,6 +108,10 @@ class ForgingTask:
         self.incremental = incremental
         self.incremental_state_file = incremental_state_file
         self.incremental_output_file = incremental_output_file
+        self.sample_start = sample_start
+        self.sample_end = sample_end
+        self.sample_indices: list[int] = []
+        self.global_total = 0
 
         # 中间产物
         self.key_files: List[str] = []
@@ -142,11 +148,23 @@ class ForgingTask:
         return thread
 
     def load_samples_into_table(self) -> None:
-        """把样本文件的每行数值追加到参数表（表头之后）。"""
+        """读取指定的零基半开样本范围，保留完整文件中的全局编号。"""
         del self.param_table[2:]
         with open(self.sample_file, "r", encoding="utf-8") as f:
-            for line in f:
-                self.param_table.append(line.split())
+            rows = [line.split() for line in f if line.strip()]
+        self.global_total = len(rows)
+        end = self.global_total if self.sample_end is None else self.sample_end
+        if (not isinstance(self.sample_start, int) or not isinstance(end, int)
+                or not 0 <= self.sample_start < end <= self.global_total):
+            raise ValueError(f"样本范围必须满足 0 <= start < end <= {self.global_total}")
+        self.sample_indices = list(range(self.sample_start, end))
+        self.param_table.extend(rows[self.sample_start:end])
+        if any(len(row) != len(self.param_table[0]) for row in self.param_table[2:]):
+            raise ValueError("所选样本列数与输入参数列数不一致")
+        self.key_files = [
+            derive_output_path(self.template_key, self.temp_key_dir, str(index), "KEY")
+            for index in self.sample_indices
+        ]
 
     def generate_keys(self) -> Optional[threading.Thread]:
         """阶段一：把工艺参数写入模板，批量生成输入 KEY 文件（异步）。"""
@@ -156,7 +174,10 @@ class ForgingTask:
             if self.dry_run:
                 self.key_files = ["<dry-run>"]
                 return
-            self.key_files = generate_key_files(self.template_key, self.param_table, self.temp_key_dir)
+            self.key_files = generate_key_files(
+                self.template_key, self.param_table, self.temp_key_dir,
+                sample_indices=self.sample_indices,
+            )
 
         thread = self._run_async("生成 KEY 文件", work)
         if thread is not None:
@@ -173,7 +194,8 @@ class ForgingTask:
         pending: List[Tuple[str, str]] = []
         # 根据生成的key文件的名称重建结果db文件的路径
         for i, key_file in enumerate(self.key_files):
-            db_dir = os.path.join(self.result_db_dir, str(i))
+            sample_index = self.sample_indices[i] if self.sample_indices else i
+            db_dir = os.path.join(self.result_db_dir, str(sample_index))
             os.makedirs(db_dir, exist_ok=True)
             db_file = derive_output_path(key_file, db_dir, "", "DB")
             self.db_files.append(db_file)
@@ -201,14 +223,15 @@ class ForgingTask:
             def on_completed(db_path: str) -> None:
                 if incremental_dataset is None:
                     return
-                sample_index = self.db_files.index(db_path)
+                local_index = self.db_files.index(db_path)
+                sample_index = self.sample_indices[local_index] if self.sample_indices else local_index
                 if incremental_dataset.is_completed(sample_index):
                     return
                 incremental_dataset.mark_started(sample_index)
                 try:
                     row = extract_dataset_row(
                         db_path, sample_index, self.result_key_dir,
-                        self.param_table[sample_index + 2], self.target_table,
+                        self.param_table[local_index + 2], self.target_table,
                         self.in_progress,
                     )
                     incremental_dataset.commit(sample_index, row)
@@ -238,6 +261,7 @@ class ForgingTask:
                 self.target_table,
                 self.in_progress,
                 self.result_txt_dir,
+                sample_indices=self.sample_indices or None,
             )
 
         thread = self._run_async("提取数据", work)

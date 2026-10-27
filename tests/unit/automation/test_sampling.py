@@ -92,3 +92,21 @@ def test_generate_samples_full_requires_levels(tmp_path):
 def test_generate_samples_unsupported(tmp_path):
     with pytest.raises(ValueError, match="不支持的采样方法"):
         sampling.generate_samples("t1", "bogus", {"t1": (0.0, 10.0)}, str(tmp_path))
+
+
+@pytest.mark.parametrize("method", ["lhs", "full"])
+def test_all_saved_samples_have_exactly_two_decimals(tmp_path, method):
+    import re
+    path = sampling.generate_samples(
+        "precision", method, {"temperature": (1100, 1150), "factor": (0.3, 0.7)},
+        str(tmp_path), n_samples=4, level_nums=[3, 2], include_boundaries=True,
+    )
+    rows = Path(path).read_text().splitlines()
+    assert all(re.fullmatch(r"-?\d+\.\d{2}\t-?\d+\.\d{2}", row) for row in rows)
+
+
+def test_save_samples_normalizes_numeric_and_string_columns(tmp_path):
+    path = sampling.save_samples("precision", pd.DataFrame({
+        "a": [1, 2], "b": ["0.3", "0.456"],
+    }), "manual", str(tmp_path))
+    assert Path(path).read_text() == "1.00\t0.30\n2.00\t0.46\n"

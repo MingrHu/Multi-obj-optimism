@@ -84,8 +84,9 @@ def test_run_key_actions_command_string(monkeypatch):
     "NORMAL STOP",
     "Simulation Module Indicates End of Simulation",
 ])
+@pytest.mark.parametrize("has_output", [True, False])
 def test_solve_db_sync_accepts_deform_normal_end_markers(
-    monkeypatch, tmp_path, normal_marker
+    monkeypatch, tmp_path, normal_marker, has_output
 ):
     written = []
     popen_kwargs = {}
@@ -113,14 +114,37 @@ def test_solve_db_sync_accepts_deform_normal_end_markers(
     monkeypatch.setattr(solver.subprocess, "Popen", fake_popen)
     db_path = tmp_path / "sample.DB"
     (tmp_path / "sample.LOG").write_text(normal_marker + "\n", encoding="utf-8")
+    (tmp_path / "sample.MSG").write_text("Step number is 1\n" if has_output else "")
     (tmp_path / "FOR003").write_text("residue", encoding="utf-8")
     (tmp_path / "FOR003.LOCK").write_text("residue", encoding="utf-8")
+    if not has_output:
+        with pytest.raises(RuntimeError, match="未产生求解消息"):
+            solver.solve_db_sync(str(db_path))
+        return
     solver.solve_db_sync(str(db_path))
     assert written == ["sample\nB\n"]
     assert popen_kwargs["stdout"] is solver.subprocess.DEVNULL
     assert popen_kwargs["stderr"] is solver.subprocess.STDOUT
     assert not (tmp_path / "FOR003").exists()
     assert not (tmp_path / "FOR003.LOCK").exists()
+
+
+def test_selects_installed_64_bit_engine_in_job_directory(monkeypatch, tmp_path):
+    import os
+    if os.name != "nt":
+        pytest.skip("Windows DEFORM 引擎选择")
+    install = tmp_path / "install"
+    install.mkdir()
+    controller = install / "DEF_ARM_CTL.COM"
+    monkeypatch.setattr(solver.shutil, "which", lambda _: str(controller))
+    run = tmp_path / "run"
+    run.mkdir()
+    solver._configure_solver_bits(str(run))
+    assert not (run / "64bit.DAT").exists()
+    (install / "DEF_SIM_64.EXE").write_bytes(b"fake installed engine")
+    solver._configure_solver_bits(str(run))
+    assert (run / "64bit.DAT").is_file()
+    assert sorted(path.name for path in run.iterdir()) == ["64bit.DAT"]
 
 
 def test_key_to_db_batch(monkeypatch):

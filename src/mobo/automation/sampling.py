@@ -114,7 +114,8 @@ def save_samples(task_id:str,df: pd.DataFrame, method_tag: str, save_dir: str) -
     """
     os.makedirs(save_dir, exist_ok=True)
     out_path = os.path.join(save_dir, f"{task_id}-{method_tag}.txt")
-    df.to_csv(out_path, sep="\t", index=False, header=False)
+    # 统一数值化后格式化，保证 LHS、全因子以及字符串输入均固定两位小数。
+    df.astype(float).to_csv(out_path, sep="\t", index=False, header=False, float_format="%.2f")
     logger.info(f"采样数据已保存至 {out_path}，共 {len(df)} 个样本")
     return out_path
 

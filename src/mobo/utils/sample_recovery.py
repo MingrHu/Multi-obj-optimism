@@ -94,12 +94,30 @@ def _parse_key(key_path: Path) -> KeyParameterData:
             if len(tokens) < 2:
                 continue
             keyword, object_id = tokens[0], tokens[1]
-            if keyword in {"REFTMP", "NDTMP", "ANGMOV"} and len(tokens) >= 3:
+            if keyword in {"REFTMP", "ANGMOV"} and len(tokens) >= 3:
                 keyword_values.setdefault((keyword, object_id), []).append(
                     _decimal(
                         tokens[-1], label=f"第 {line_number} 行 {keyword}", key_path=key_path
                     )
                 )
+            if keyword == "NDTMP" and len(tokens) >= 4:
+                temperatures = keyword_values.setdefault((keyword, object_id), [])
+                temperatures.append(_decimal(tokens[3], label="NDTMP 默认温度", key_path=key_path))
+                if len(tokens) > 4 and tokens[4] != "1":
+                    raise ValueError(f"{key_path}: 不支持恢复多列 NDTMP 温度")
+                for _ in range(int(tokens[2])):
+                    node_line = next(iterator, None)
+                    if node_line is None or len(node_line[1].split()) != 2:
+                        raise ValueError(f"{key_path}: NDTMP 节点记录不完整")
+                    temperatures.append(_decimal(
+                        node_line[1].split()[1], label="NDTMP 节点温度", key_path=key_path,
+                    ))
+            if keyword in {"FRCFAC", "IHTCOF"}:
+                mode = ["1", "0"] if keyword == "FRCFAC" else ["0"]
+                if len(tokens) == 4 + len(mode) and tokens[3:-1] == mode:
+                    keyword_values.setdefault((keyword, f"{object_id}:{tokens[2]}"), []).append(
+                        _decimal(tokens[-1], label=keyword, key_path=key_path)
+                    )
             if keyword != "MOVCTL" or len(tokens) < 4:
                 continue
 
@@ -220,13 +238,29 @@ def _profile_upper_speed(data: KeyParameterData, context: RecoveryContext) -> De
 def _ring_die_temperature(data: KeyParameterData, context: RecoveryContext) -> Decimal:
     values: list[Decimal] = []
     for object_id in ("2", "3", "4", "5"):
-        values.extend(data.keyword_values.get(("REFTMP", object_id), ()))
-    return _one_value(values, context, "对象 2～5 的 REFTMP")
+        values.append(_one_value(
+            data.keyword_values.get(("NDTMP", object_id), ()), context,
+            f"对象 {object_id} 的 NDTMP",
+        ))
+    return _one_value(values, context, "对象 2～5 的 NDTMP")
+
+
+def _ring_contact_extractor(keyword: str) -> ParameterExtractor:
+    def extract(data: KeyParameterData, context: RecoveryContext) -> Decimal:
+        return _one_value([
+            _one_value(data.keyword_values.get((keyword, f"1:{object_id}"), ()),
+                       context, f"{keyword} 对象对 1–{object_id}")
+            for object_id in ("2", "3", "4", "5")
+        ], context, f"{keyword} 四组接触")
+    return extract
 
 
 registry = ParameterRecoveryRegistry()
-registry.register(("roll_tmp", "workpiece_temperature"), _keyword_extractor("REFTMP"))
+registry.register("roll_tmp", _keyword_extractor("REFTMP"))
+registry.register("workpiece_temperature", _keyword_extractor("NDTMP"))
 registry.register("ring_die_temperature", _ring_die_temperature)
+registry.register("ring_shear_friction_factor", _ring_contact_extractor("FRCFAC"))
+registry.register("ring_contact_heat_transfer", _ring_contact_extractor("IHTCOF"))
 registry.register("driving_roll_rad_speed", _keyword_extractor("ANGMOV"))
 registry.register("temp", _keyword_extractor("NDTMP"))
 registry.register("speed", _movctl_header)

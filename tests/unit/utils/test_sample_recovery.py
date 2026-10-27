@@ -17,28 +17,30 @@ OBJECT_IDS = {
 
 def _profile_key(workpiece: str, die: str, speed: str) -> str:
     return "".join([
-        f"REFTMP 1 {workpiece}\n",
-        f"REFTMP 2 {die}\n",
-        f"REFTMP 3 {die}\n",
+        f"REFTMP 1 20\nNDTMP 1 0 {workpiece}\n",
+        f"REFTMP 2 20\nNDTMP 2 0 {die}\n",
+        f"REFTMP 3 20\nNDTMP 3 0 {die}\n",
+        "ANGMOV 2 1 0 1.5\n",
+        *[f"FRCFAC 1 {obj} 1 0 0.5\nIHTCOF 1 {obj} 0 4.5\n" for obj in range(2, 6)],
         "MOVCTL 3 1 2 0 1 0 5\n",
         "0 0\n",
         f"10 -{speed}\n",
         f"20 -{speed}\n",
         "30 0\n",
         "40 0\n",
-        f"REFTMP 4 {die}\n",
-        f"REFTMP 5 {die}\n",
+        f"REFTMP 4 20\nNDTMP 4 0 {die}\n",
+        f"REFTMP 5 20\nNDTMP 5 0 {die}\n",
     ])
 
 
 def _constant_key(workpiece: str, die: str, speed: str) -> str:
     return "".join([
-        f"REFTMP 1 {workpiece}\n",
-        f"REFTMP 2 {die}\n",
-        f"REFTMP 3 {die}\n",
+        f"REFTMP 1 20\nNDTMP 1 0 {workpiece}\n",
+        f"REFTMP 2 20\nNDTMP 2 0 {die}\n",
+        f"REFTMP 3 20\nNDTMP 3 0 {die}\n",
         f"MOVCTL 3 1 0 0 1 0 {speed}\n",
-        f"REFTMP 4 {die}\n",
-        f"REFTMP 5 {die}\n",
+        f"REFTMP 4 20\nNDTMP 4 0 {die}\n",
+        f"REFTMP 5 20\nNDTMP 5 0 {die}\n",
     ])
 
 
@@ -63,7 +65,7 @@ def test_extract_sample_uses_task_parameter_column_order(tmp_path):
             "gh4169-ring-single-task-1",
             "GH4169",
             _profile_key("1125", "300", "1.25"),
-            "1125.00\t300.00\t1.25\n",
+            "1125.00\t300.00\t1.25\t1.50\t0.50\t4.50\n",
         ),
         (
             "7075-ring-single-task-1",
@@ -74,11 +76,18 @@ def test_extract_sample_uses_task_parameter_column_order(tmp_path):
     ],
 )
 def test_recover_registered_single_operation_task(
-    tmp_path, task_id, prefix, key_text, expected
+    tmp_path, task_id, prefix, key_text, expected, monkeypatch
 ):
+    from dataclasses import replace
+    from mobo.automation.task_collection import TASK_COLLECTION
     key_dir = tmp_path / "keys"
     key_dir.mkdir()
     (key_dir / f"{prefix}0.KEY").write_text(key_text)
+    template = tmp_path / f"{prefix}.KEY"
+    template.write_text(key_text)
+    monkeypatch.setitem(TASK_COLLECTION, task_id, replace(
+        TASK_COLLECTION[task_id], template_key=str(template),
+    ))
     output = tmp_path / "recovered.txt"
 
     recover_samples(task_id, key_dir, output)
@@ -96,8 +105,8 @@ def test_recover_orders_by_numeric_key_suffix(tmp_path):
     recover_samples("gh4169-ring-single-task-1", key_dir, output)
 
     assert output.read_text() == (
-        "1100.00\t250.00\t0.10\n"
-        "1110.00\t260.00\t0.20\n"
+        "1100.00\t250.00\t0.10\t1.50\t0.50\t4.50\n"
+        "1110.00\t260.00\t0.20\t1.50\t0.50\t4.50\n"
     )
 
 
@@ -113,7 +122,7 @@ def test_recover_rejects_missing_index(tmp_path):
 def test_extract_rejects_inconsistent_shared_parameter(tmp_path):
     key_path = tmp_path / "GH41690.KEY"
     key_path.write_text(
-        _profile_key("1125", "300", "1.25").replace("REFTMP 5 300", "REFTMP 5 301")
+        _profile_key("1125", "300", "1.25").replace("NDTMP 5 0 300", "NDTMP 5 0 301")
     )
     parameters = (
         {"name": "ring_die_temperature", "object": "ring_dies", "range": [250, 350]},

@@ -172,7 +172,7 @@ def test_prepare_parameterized_keys_keeps_fixed_stage_and_expands_shared_value(t
     assert [path.name for path in generated] == ["1_parameterized.KEY", "2_parameterized.KEY"]
     assert generated[0].read_bytes() == first.read_bytes()
     text = generated[1].read_text(encoding="utf-8")
-    assert "REFTMP 1 8.8000000000E+002" in text
+    assert "REFTMP 1 900" in text
     assert "NDTMP 1 0 8.8000000000E+002" in text
     assert "REFTMP 2 2.7500000000E+002" in text
     assert "REFTMP 3 2.7500000000E+002" in text
