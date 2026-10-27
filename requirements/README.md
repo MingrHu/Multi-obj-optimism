@@ -19,26 +19,57 @@
 
 优先使用仓库脚本创建虚拟环境并安装 CPU 版 PyTorch、运行依赖、开发工具和当前包。
 
-Windows PowerShell：
+Windows 一键安装（推荐，包含桌面 UI）：
 
 ```powershell
-.\scripts\setup_env.ps1
+.\install_windows.cmd
 ```
 
-Linux 或 macOS：
+也可双击仓库根目录的 `install_windows.cmd`。不需要预先激活 `.venv`、安装 Bash 或修改系统执行策略。
+入口启动 Windows PowerShell，自动复用可用的64位 Python 3.11/3.12；找不到时从 Python 官方下载
+并验证签名，将 Python 3.12.10 安装到仓库 `.tools/python312`。该版本是 Python 3.12 最后一个
+提供官方 Windows 安装器的完整维护版本，已有合适解释器时不会降级它。
+缺少 Microsoft Visual C++ x64 运行库时，从微软官方下载并验证签名后安装；Windows 可能弹出管理员授权。
+自动化环境可设置 `MOBO_SETUP_NO_PAUSE=1`，跳过命令行入口末尾的按键等待。
+下载来源：[Python Windows 安装器](https://www.python.org/downloads/release/python-31210/)、
+[微软运行库](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist)。
 
-```bash
-bash scripts/setup_env.sh
-```
-
-需要桌面界面时增加脚本的 GUI 选项：
+脚本安装 CPU PyTorch、完整运行/算法依赖、开发工具、当前包及 GUI；逐步检查退出码，
+最后执行 `pip check`、完整算法/API 入口导入、QtCharts 导入及文档检查。
+只有全部检查通过才输出 `SUCCESS`，失败立即停止并返回非零退出码。
+默认复用现有 `.venv`，重新执行即可按当前锁定清单更新依赖；不要把旧服务器的 `.venv` 直接复制过来。
+对迁移来的环境、版本冲突环境或需要干净重装的环境，先关闭使用该环境的程序，再执行：
 
 ```powershell
-.\scripts\setup_env.ps1 -WithGui
+.\install_windows.cmd -Recreate
 ```
 
+旧环境保留为仓库根目录的 `.venv.backup-<唯一编号>`，不会删除数据、KEY 或计算结果。
+Python 安装器、仓库本地 Python 和备份环境均已被 Git 忽略。安装失败可重新执行；
+需要重启系统的运行库安装会给出提示。
+
+高级入口仍可单独使用：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup_env.ps1 -WithGui
+```
+
+可选参数：`-PythonPath /absolute/path/to/python.exe` 指定64位 Python 3.11/3.12；
+`-PipIndex` 指定普通依赖镜像（CPU PyTorch 始终使用其专用源）；`-NoAutoPython` 禁止自动下载 Python；
+`-SkipVCRuntime` 跳过系统运行库检测/安装；`-DeformDir /absolute/path/to/deform/3D` 指定现有 DEFORM 目录。
+PowerShell 5.1 和7均支持，某个 `py` 启动器候选失败后会继续探测其余候选。
+不加 `-WithGui` 的高级入口仅安装完整运行和开发依赖。
+
+脚本检测已配置的 DEFORM 路径、PATH 以及 Program Files 下的 SFTC/DEFORM 安装目录，
+发现有效前处理器和控制程序后，将 `MOBO_DEF_PRE_64`、`MOBO_DEF_ARM_CTL` 写入当前进程及用户环境变量。
+新打开的终端/工作台可直接读取；已打开的其他进程需要重新启动。
+DEFORM 商业软件和许可证须另行安装；KEY 模板、样本及结果数据也需自行迁移，不包含在依赖安装中。
+
+Linux 或 macOS（不支持实际调用 Windows DEFORM）：
+
 ```bash
-bash scripts/setup_env.sh --with-gui
+bash scripts/setup_env.sh             # 完整运行和开发依赖
+bash scripts/setup_env.sh --with-gui  # 另加桌面界面
 ```
 
 ## 按场景手动安装
@@ -66,6 +97,9 @@ python -m pip install -r requirements/gui.txt
 PyTorch 应优先按安装脚本中的方式从 CPU wheel 源安装，再安装其他清单，避免无 GPU 环境
 下载 CUDA 运行时。生产 Docker 的实际安装顺序见
 [`deploy/docker/Dockerfile`](../deploy/docker/Dockerfile)。
+
+NumPy 锁定为2.4.1，避开因向后兼容问题撤回的2.4.0；修复说明见
+[NumPy 2.4.1 发布说明](https://numpy.org/devdocs/release/2.4.1-notes.html)。
 
 ## 与 pyproject.toml 的关系
 

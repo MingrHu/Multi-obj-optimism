@@ -9,14 +9,13 @@ MOBO Desktop 是面向 Windows 工程计算场景的 PySide6 原生工作台。�
 先在仓库根目录安装 GUI 可选依赖并启动后端：
 
 ```powershell
-.\scripts\setup_env.ps1 -WithGui
-.\.venv\Scripts\Activate.ps1
-mobo-api
+.\install_windows.cmd
+.\.venv\Scripts\mobo-api.exe
 ```
 
-如果现有 `.venv` 引用了已经卸载或移动的 Python，使用
-`.\scripts\setup_env.ps1 -Recreate -WithGui` 重建。仅缺少 PySide6 且虚拟环境本身可用时，
-也可执行 `.\.venv\Scripts\python.exe -m pip install -r .\requirements\gui.txt` 补装。
+一键入口自动准备兼容 Python、运行库、完整算法及 UI 依赖，不依赖 Bash。
+对迁移或冲突环境可执行 `.\install_windows.cmd -Recreate`，旧 `.venv` 会备份保留。
+安装、更新和可选参数统一见 [依赖安装说明](../requirements/README.md#推荐安装方式)。
 
 在另一个 PowerShell 中启动界面：
 

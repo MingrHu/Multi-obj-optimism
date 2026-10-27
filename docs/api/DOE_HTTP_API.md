@@ -95,7 +95,7 @@ worker 启动失败，不接受业务请求。依赖全部就绪时健康检查�
     "dependencies": {
       "ready": true,
       "components": {
-        "numpy": "2.4.0",
+        "numpy": "2.4.1",
         "pandas": "2.3.3",
         "pyDOE": "0.3.8",
         "sampling": "ready",

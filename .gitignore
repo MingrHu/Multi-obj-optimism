@@ -78,3 +78,7 @@ quality-reports/
 .trae/
 temp/
 data
+
+# Project-local bootstrap runtimes, installers and preserved environments
+.tools/
+.venv.backup-*/

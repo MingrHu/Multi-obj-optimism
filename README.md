@@ -33,16 +33,24 @@ Python 工具包，覆盖从数据生成到多目标寻优的完整链路：
 四个锁定依赖清单的职责和组合方式见
 [`requirements/README.md`](requirements/README.md)。
 
-Windows PowerShell（DEFORM 自动化推荐）：
+Windows 一键安装（含完整算法依赖、开发工具和桌面 UI）：
 
 ```powershell
-Set-ExecutionPolicy -Scope Process Bypass
-.\scripts\setup_env.ps1
-.\.venv\Scripts\Activate.ps1
+.\install_windows.cmd
 ```
 
-已有虚拟环境失效时使用 `.\scripts\setup_env.ps1 -Recreate`，也可通过 `-PythonPath` 指定
-Python 3.11 或 3.12 解释器。
+也可双击根目录 `install_windows.cmd`，无需预先安装 Bash 或激活虚拟环境。
+脚本自动探测 Python，缺少时安装仓库本地64位 Python 3.12，并检查/补装 Visual C++ 运行库。
+重复运行会按仓库锁定清单更新现有环境。迁移或冲突环境使用
+`.\install_windows.cmd -Recreate`，旧 `.venv` 会备份保留；支持用 `-PythonPath` 指定解释器。
+安装流程逐步校验退出码，完整导入自检通过后才显示成功。参数、下载来源及 DEFORM 配置边界统一见
+[`requirements/README.md`](requirements/README.md#推荐安装方式)。
+
+高级入口（不加 `-WithGui` 时只安装完整运行与开发依赖）：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup_env.ps1 -WithGui
+```
 
 Linux / macOS（不能真实调用 DEFORM，可运行其余功能）：
 
@@ -61,10 +69,17 @@ pip install torch==2.10.0 --index-url https://download.pytorch.org/whl/cpu
 pip install -e ".[dev]"
 ```
 
-安装完成后自检：
+安装脚本会自动自检，也可直接使用虚拟环境解释器复查，无需激活环境。
+Windows：
+
+```powershell
+.\.venv\Scripts\python.exe -m pip check
+```
+
+Linux/macOS：
 
 ```bash
-python -c "import flask, requests, torch, mobo; print(torch.__version__, mobo.__version__)"
+.venv/bin/python -m pip check
 ```
 
 > 国内网络可通过 `PIP_INDEX` 环境变量或 PowerShell 的 `-PipIndex` 参数指定镜像。
@@ -401,10 +416,10 @@ PySide6 未被核心逻辑引用，已放入可选依赖组：`pip install -e ".
 Windows 环境完成安装后，可在仓库根目录启动桌面工作台：
 
 ```powershell
-.\scripts\setup_env.ps1 -WithGui
+.\install_windows.cmd
 .\.venv\Scripts\python.exe .\work_platform\main.py
 ```
 
-现有虚拟环境失效时改用 `.\scripts\setup_env.ps1 -Recreate -WithGui`。
+现有虚拟环境失效时可执行 `.\install_windows.cmd -Recreate`，旧环境会备份保留。
 
 完整的页面能力、后端连接方式和测试入口见 [`work_platform/README.md`](work_platform/README.md)。
