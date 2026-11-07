@@ -73,3 +73,15 @@ python tools/check_early_stop.py
 变化率：4.000000%
 满足停止条件
 ```
+
+
+## GH4169 初末态 KEY 复制
+
+从仓库根目录运行以下命令，按提示先输入直接包含数字工况目录的 `result_keys` 路径，再输入输出目录。
+
+```powershell
+.\.venv\Scripts\python.exe .\tools\extract_key_pairs.py
+```
+
+脚本保留工况编号，并逐个检查 `GH4169<编号>_step_1.KEY` 与 `GH4169<编号>_terminal.KEY`。
+已有文件保留原样，只补齐缺失文件。两份文件都已存在的工况会跳过。
