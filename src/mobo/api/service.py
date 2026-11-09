@@ -9,6 +9,7 @@ import uuid
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
+from time import perf_counter
 from typing import Any
 
 from mobo.common.logging import logger
@@ -922,6 +923,7 @@ def _mark_cancelled(
 
 
 def start_inference(payload: dict[str, Any]) -> dict[str, Any]:
+    started_at = perf_counter()
     # 推理相关依赖按请求加载 避免服务启动时加载全部模型框架
     import joblib
     import numpy as np
@@ -935,13 +937,20 @@ def start_inference(payload: dict[str, Any]) -> dict[str, Any]:
     array = np.asarray(rows, dtype=float)
     if array.ndim == 1:
         array = array.reshape(1, -1)
+    loading_started_at = perf_counter()
     scalers = joblib.load(Path(record["model_dir"]) / f"{record['target_names'][0]}_scalers.pkl")
     # 输入和输出必须复用训练时保存的标准化器 保证预测尺度正确
     scaled = scalers["scaler_X"].transform(array)
+    model_loading_seconds = perf_counter() - loading_started_at
+    prediction_seconds = 0.0
     predictions = []
     for index, target in enumerate(record["target_names"]):
+        loading_started_at = perf_counter()
         model = _load_model(record["model_dir"], target)
+        model_loading_seconds += perf_counter() - loading_started_at
+        prediction_started_at = perf_counter()
         values = np.asarray(model.predict(scaled)).reshape(-1, 1) # type: ignore
+        prediction_seconds += perf_counter() - prediction_started_at
         predictions.append(scalers[f"scaler_y_{index}"].inverse_transform(values).ravel())
     matrix = np.column_stack(predictions)
     all_results = {
@@ -951,13 +960,24 @@ def start_inference(payload: dict[str, Any]) -> dict[str, Any]:
     resource = store.register_resource(
         doe_id, "inference", record["target_names"], values=all_results,
     )
+    # 统计本次服务处理耗时 不包含后续状态写入 HTTP 序列化和网络传输
+    total_seconds = perf_counter() - started_at
+    sample_count = len(rows)
+    timing = {
+        "sample_count": sample_count,
+        "total_ms": total_seconds * 1000.0,
+        "model_loading_ms": model_loading_seconds * 1000.0,
+        "prediction_ms": prediction_seconds * 1000.0,
+        "per_sample_ms": total_seconds * 1000.0 / sample_count,
+    }
     store.update_section(
         doe_id, "inference", model_id=record["model_id"],
-        values=all_results, **resource,
+        values=all_results, timing=timing, **resource,
     )
     return {
         "id": doe_id, "model_id": record["model_id"], **resource,
         "predictions": {field: all_results[field] for field in fields},
+        "timing": timing,
     }
 
 

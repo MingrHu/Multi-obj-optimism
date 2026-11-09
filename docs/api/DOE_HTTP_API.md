@@ -1294,6 +1294,13 @@ DOE 不存在返回 HTTP 404：
     "predictions": {
       "Y1": [1050.25],
       "Y2": [0.42]
+    },
+    "timing": {
+      "sample_count": 1,
+      "total_ms": 8.42,
+      "model_loading_ms": 5.31,
+      "prediction_ms": 1.24,
+      "per_sample_ms": 8.42
     }
   }
 }
@@ -1310,8 +1317,20 @@ DOE 不存在返回 HTTP 404：
 | `data.columns` | string array | 该模型全部输出目标的字段顺序 |
 | `data.predictions` | object | 本次请求字段到预测结果数组的映射 |
 | `data.predictions.<field>` | number array | 对应目标的批量预测结果，顺序与输入样本一致 |
+| `data.timing` | object | 本次请求的服务端推理耗时统计 |
+| `data.timing.sample_count` | integer | 本次输入样本数量，不是输出目标数量 |
+| `data.timing.total_ms` | number | 从进入推理服务函数到完整结果资源登记完成的耗时，单位毫秒 |
+| `data.timing.model_loading_ms` | number | 加载标准化器、输入标准化和加载所有输出模型的累计耗时，单位毫秒 |
+| `data.timing.prediction_ms` | number | 所有输出模型的 predict 调用及预测数组转换的累计耗时，单位毫秒，不含输出反标准化 |
+| `data.timing.per_sample_ms` | number | total_ms / sample_count，批量摊销的平均耗时，单位毫秒/样本 |
 
-服务会在 DOE 状态的 `inference` 区块保存本次使用的 `model_id` 和全部输出目标结果。
+`timing` 是兼容原协议的新增响应字段，请求参数、选模规则和预测结果结构保持不变。
+`total_ms` 包含校验、模型加载、输入标准化、预测、输出反标准化和资源登记，
+不包含随后保存 inference 状态、HTTP 响应序列化及网络传输，因此不是客户端完整请求耗时。
+即使通过 `fields` 只返回部分目标，耗时仍统计全部输出目标的计算；批量请求只返回一组汇总计时。
+示例耗时仅用于说明结构，实际结果随模型、样本数量和运行环境变化。
+
+服务会在 DOE 状态的 `inference` 区块保存本次使用的 `model_id`、`timing` 和全部输出目标结果。
 本接口可以通过 `fields` 只返回部分目标，但之后仍可将 `data.resource_id` 传给按资源
 索引获取数据接口，读取本次推理的其他目标。新的推理结果会使上一次索引失效。
 

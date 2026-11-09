@@ -139,6 +139,11 @@ def main() -> None:
         "fields": ["grain"],
     })
 
+    # 耗时单位毫秒 total_ms 不包含网络传输 per_sample_ms 为批量平均耗时
+    timing = inference["data"]["timing"]
+    if timing["sample_count"] != 1 or timing["total_ms"] < 0:
+        raise RuntimeError(f"推理耗时统计异常 {timing}")
+
     # 10 通过统一 GET 接口获取最近一次推理的 load
     call("GET", "/api/v1/hust/doe/data/get", params=[
         ("id", doe_id),

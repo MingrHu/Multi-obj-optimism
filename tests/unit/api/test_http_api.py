@@ -641,6 +641,11 @@ def test_inference_loads_best_scored_model(monkeypatch, tmp_path):
     })
     assert result["predictions"]["target"][0] == pytest.approx(25.0)
     assert result["resource_id"].startswith("tos-")
+    timing = result["timing"]
+    assert timing["sample_count"] == 1
+    assert timing["total_ms"] >= timing["model_loading_ms"] + timing["prediction_ms"] >= 0
+    assert timing["per_sample_ms"] == timing["total_ms"]
+    assert store.load("infer_1")["inference"]["timing"] == timing
     assert store.load("infer_1")["inference"]["model_id"] == "best"
 
 
@@ -652,7 +657,7 @@ def test_inference_supports_named_inputs_and_selected_outputs(monkeypatch, tmp_p
 
     from mobo.api import service
 
-    _client(monkeypatch, tmp_path)
+    client = _client(monkeypatch, tmp_path)
     store.create({"id": "infer_fields"})
     model_dir = store.task_dir("infer_fields") / "models" / "best"
     model_dir.mkdir(parents=True)
@@ -675,10 +680,25 @@ def test_inference_supports_named_inputs_and_selected_outputs(monkeypatch, tmp_p
         "target_names": ["grain", "load"], "score": 1.0,
     }])
 
-    response = service.start_inference({
+    # 固定时钟校验双输出累计计时 批量平均值与 HTTP 兼容字段
+    ticks = iter(range(12))
+    monkeypatch.setattr(service, "perf_counter", lambda: next(ticks))
+    http_response = client.post("/api/v1/hust/doe/inference/startInference", json={
         "id": "infer_fields", "inputs": {"temperature": [0.5, 1.5]},
         "fields": ["load"],
     })
+    assert http_response.status_code == 200
+    assert http_response.json["code"] == 0
+    assert http_response.json["message"] == "推理完成"
+    response = http_response.json["data"]
+    assert set(response) == {
+        "id", "model_id", "resource_id", "resource_type", "columns", "predictions", "timing",
+    }
+    assert response["timing"] == {
+        "sample_count": 2, "total_ms": 11000.0, "model_loading_ms": 3000.0,
+        "prediction_ms": 2000.0, "per_sample_ms": 5500.0,
+    }
+    assert store.load("infer_fields")["inference"]["timing"] == response["timing"]
     assert response["predictions"] == {"load": pytest.approx([10.0, 30.0])}
     fetched = service.get_data({
         "id": "infer_fields", "resource_id": response["resource_id"], "fields": ["load"],
