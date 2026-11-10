@@ -1,6 +1,6 @@
 #  @author MingrHu
 #  @date   2026-11-07
-"""按工况编号复制 DEFORM 初始步和终态 KEY 文件"""
+"""从独立输入目录和结果目录按工况编号配对复制 DEFORM 初态与终态 KEY"""
 
 from os import name as platform_name
 from pathlib import Path
@@ -22,18 +22,20 @@ def read_path(prompt: str) -> Path:
     return Path(value).expanduser().resolve()
 
 
-#  @brief  按文件检查并补齐工况的初始步和终态 KEY
-#  @param  source result_keys 源目录
+#  @brief  按文件检查并补齐工况的输入初态和求解终态 KEY
+#  @param  initial 直接包含工件名称加编号 KEY 文件的 input_keys 目录
+#  @param  source 直接包含数字工况子目录的终态 result_keys 目录
 #  @param  output 保存数字工况目录的目标根目录
 #  @return 已复制工况数和跳过工况数
 #  @author MingrHu
 #  @date   2026-11-07
-def extract_key_pairs(source: Path, output: Path) -> tuple[int, int]:
-    source, output = source.resolve(), output.resolve()
-    if not source.is_dir():
-        raise ValueError(f"源目录不存在或不是目录：{source}")
-    if output.is_relative_to(source) or source.is_relative_to(output):
-        raise ValueError("源目录和输出目录必须分开，不能相同或互相包含")
+def extract_key_pairs(initial: Path, source: Path, output: Path) -> tuple[int, int]:
+    initial, source, output = initial.resolve(), source.resolve(), output.resolve()
+    for directory in (initial, source):
+        if not directory.is_dir():
+            raise ValueError(f"源目录不存在或不是目录：{directory}")
+        if output.is_relative_to(directory) or directory.is_relative_to(output):
+            raise ValueError("源目录和输出目录必须分开，不能相同或互相包含")
 
     cases = sorted(
         (path for path in source.iterdir() if path.is_dir() and path.name.isascii() and path.name.isdecimal()),
@@ -45,13 +47,32 @@ def extract_key_pairs(source: Path, output: Path) -> tuple[int, int]:
 
     copied = 0
     for case in cases:
-        prefix = f"GH4169{case.name}"
-        files = (case / f"{prefix}_step_1.KEY", case / f"{prefix}_terminal.KEY")
+        terminals = [path for path in case.iterdir()
+                     if path.is_file() and path.name.endswith("_terminal.KEY")]
+        if len(terminals) != 1:
+            print(f"跳过工况 {case.name}，需要唯一的 _terminal.KEY 文件，实际 {len(terminals)} 个")
+            continue
+        terminal = terminals[0]
+        # 从终态文件名直接移除后缀 不猜测材料名称或数字前缀
+        prefix = terminal.name.removesuffix("_terminal.KEY")
+        if not prefix.endswith(case.name):
+            print(f"跳过工况 {case.name}，终态文件名与工况编号不匹配：{terminal.name}")
+            continue
+        files = (initial / f"{prefix}.KEY", terminal)
         destination = output / case.name
         if destination.is_symlink() or (
             destination.exists() and (not destination.is_dir() or destination.resolve() != destination)
         ):
             print(f"跳过工况 {case.name}，目标不是普通目录：{destination}")
+            continue
+        # 仅清理输出工况目录内的旧初态文件 源目录中的文件保持不变
+        try:
+            for old_step in destination.glob("*_step_1.KEY"):
+                if old_step.is_file() or old_step.is_symlink():
+                    old_step.unlink()
+                    print(f"已删除旧初态文件：{old_step}")
+        except OSError as error:
+            print(f"跳过工况 {case.name}，旧初态清理失败：{error}")
             continue
         pending = [path for path in files if not (destination / path.name).is_file()]
         if not pending:
@@ -96,9 +117,10 @@ def extract_key_pairs(source: Path, output: Path) -> tuple[int, int]:
 #  @date   2026-11-07
 def main() -> int:
     try:
-        source = read_path("请输入 result_keys 源目录：")
+        initial = read_path("请输入初态 input_keys 目录（直接包含 KEY 文件）：")
+        source = read_path("请输入终态 result_keys 目录（包含数字工况子目录）：")
         output = read_path("请输入 KEY 输出目录：")
-        copied, skipped = extract_key_pairs(source, output)
+        copied, skipped = extract_key_pairs(initial, source, output)
     except (EOFError, KeyboardInterrupt):
         print("\n已取消提取")
         return 1
