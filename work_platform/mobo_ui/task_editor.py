@@ -148,7 +148,7 @@ class TaskDefinitionEditor(QWidget):
             "上下限相同可输入固定值；抽样文件统一保留两位小数。\n"
             "workpiece_temperature：工件初温（NDTMP，℃）\n"
             "ring_die_temperature：对象2～5共同初温（NDTMP，℃）\n"
-            "pressure_roll_profile_peak_speed：芯辊进给峰值（mm/s），时间反比例缩放，保持14.5mm行程\n"
+            "pressure_roll_profile_peak_speed：芯辊进给峰值（mm/s），单梯形面积14.513mm，SMAX=14.5001mm即停\n"
             "driving_roll_rad_speed：驱动辊角速度（rad/s）\n"
             "ring_shear_friction_factor：工件与四个模具共同的剪切摩擦因子m\n"
             "ring_contact_heat_transfer：工件与四个模具共同的接触换热系数（KEY单位制）"

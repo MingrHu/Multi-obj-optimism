@@ -223,8 +223,23 @@ def _profile_abs_speeds(data: KeyParameterData, context: RecoveryContext) -> lis
 
 
 def _profile_peak_speed(data: KeyParameterData, context: RecoveryContext) -> Decimal:
-    nonzero = [speed for speed in _profile_abs_speeds(data, context) if speed != 0]
-    return _one_value(nonzero, context, f"对象 {context.object_id} 的非零 MOVCTL 速度绝对值")
+    """恢复四点单梯形的主平台速度 同时兼容历史五点与六点输入"""
+    blocks = _movctl_blocks(data, context, mode="2")
+    if len(blocks) != 1:
+        raise ValueError(f"{context.key_path}: 芯辊需要唯一的 MOVCTL 速度曲线")
+    speeds = [value.copy_abs() for value in blocks[0].point_speeds]
+    if len(speeds) not in (4, 5, 6) or speeds[1] <= 0:
+        raise ValueError(f"{context.key_path}: 芯辊只支持四点单梯形或历史五点与六点平台曲线")
+    peak = speeds[1]
+    expected = [Decimal(0), peak, peak, Decimal(0)]
+    if len(speeds) == 5:
+        expected += [Decimal(0)]
+    elif len(speeds) == 6:
+        expected += [peak * Decimal("0.02")] * 2
+    if speeds != expected or (len(speeds) in (4, 6) and any(value < 0 for value in blocks[0].point_speeds)):
+        raise ValueError(f"{context.key_path}: MOVCTL 平台或补进速度不一致")
+    return peak
+
 
 
 def _profile_lower_speed(data: KeyParameterData, context: RecoveryContext) -> Decimal:

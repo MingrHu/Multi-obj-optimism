@@ -51,6 +51,7 @@ DOE 聚合服务。路由层位于 `api.handler`，实际处理层位于 `api.se
 | 子包 | 模块 | 职责 |
 |---|---|---|
 | `common` | `paths.py` | 集中式路径解析（包括 `DOE_TASKS_DIR/AUTO_SINGLE_DIR/AUTO_MULTI_DIR/AUTOMATION_TEMPLATES_DIR`）+ 环境变量覆盖 |
+| `common` | `ring_control.py` | GH4169单梯形面积、严格停止阈值及历史输入兼容常量 |
 | `common` | `logging.py` | `GlobalLogger` 单例；显式 stdout 重定向 |
 | `common` | `task_store.py` | 任务状态持久化（默认 `data/tasks/<id>/state.json`，支持命名状态文件），三流程共用；`history` 完整记录阶段转移（只追加不覆盖），`resolve_req` 三路解析续跑参数（记录 > 传入 > 报错） |
 | `surrogate` | `common.py` | 数据加载/划分/标准化、指标、`save_model`、`Time`、DNN 构建 |
@@ -195,8 +196,9 @@ TC4 碾环多工步任务由 `task_collection.TC4_RING_MULTI_TASK_1` 完整定�
 `ForgingTask` 的 KEY 生成、求解与提取流水线。一个 `ring_die_temperature` 样本值通过
 文档级替换原子能力同步修改对象 2～5 的 NDTMP 实际初温，REFTMP 保留模板值；GH4169 模板保留其自带的 GRNDAT 晶粒模型，
 初始和平均晶粒尺寸均为 50 μm；`material_fill` 是尚未确定计算方法的目标占位符。
-GH4169 的芯辊平台速度通过时间反比例缩放保持14.5 mm进给，并同步调整TMAX和必要的NSTEP；
-DTMAX保持不变。求解结束及结果提取前重新导出终态，按0.01 mm容差校验实际STROKE，
+GH4169 使用总面积14.513 mm的四点单梯形，SMAX为14.5001 mm，取消末端补进；
+DTMAX保持不变。求解结束及结果提取前重新导出终态，严格校验正向实际行程达到14.5001 mm，
+TMAX设为梯形终点，NSTEP按时间缩放增加；拒绝旧运动曲线与耗尽时间/步数上限的结果。默认工作区使用trapezoid_v3后缀。
 未达标工况不记为完成。默认六个输入的列顺序、范围及精确 KEY 修改规则见
 [DEFORM_KEY_KEYWORDS.md](deform/DEFORM_KEY_KEYWORDS.md#gh4169-六参数任务2026-10-27)。
 7075 任务 ID 为 `7075-ring-single-task-1`，模板位于

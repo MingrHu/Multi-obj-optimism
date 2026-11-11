@@ -29,6 +29,7 @@ from typing import Any, BinaryIO, Callable, Iterator, List, Sequence
 
 from mobo.common.logging import logger
 from mobo.common.paths import LOGS_DIR
+from mobo.common.ring_control import TRAPEZOID_STROKE
 
 from .execution_control import (BatchStopped, batch_scope, check_stopped, current_control, process_alive)
 
@@ -352,23 +353,67 @@ def _solve_db_sync_unlocked(db_path: str, *, required_stroke=None) -> None:
 
 
 def validate_db_stroke(db_path: str, required_stroke: tuple[str, int, float]) -> None:
-    """重新导出DB最新结果集，校验实际行程；不复用可能过期的终态KEY。"""
+    """导出DB最新结果集 验证正向阈值及停止条件 不接受保护上限终态"""
     object_id, axis, target = required_stroke
+    if axis not in (0, 1, 2) or not math.isfinite(target) or target <= 0:
+        raise ValueError("目标行程必须是有效正向分量")
     with tempfile.TemporaryDirectory(prefix="mobo_stroke_") as directory:
         key_path = os.path.join(directory, "terminal.KEY")
         db_to_key(db_path, key_path)
-        values = []
+        records: dict[str, list[list[str]]] = {
+            name: [] for name in ("STROKE", "SMAX", "PDIE", "TNOW", "TMAX", "NSTEP", "MOVCTL")
+        }
+        profile_rows: list[str] = []
         with open(key_path, encoding="utf-8") as stream:
             for line in stream:
                 tokens = line.split()
-                if len(tokens) == 5 and tokens[:2] == ["STROKE", object_id]:
-                    values.append(float(tokens[axis + 2]))
-        if (len(values) != 1 or not math.isfinite(values[0])
-                or not math.isclose(abs(values[0]), target, abs_tol=0.01, rel_tol=0)):
-            raise RuntimeError(
-                f"工况未完成目标行程：对象{object_id}实际STROKE={values}，"
-                f"要求{target} mm（容差0.01 mm），不能作为完整终态结果"
-            )
+                if not tokens or tokens[0] not in records:
+                    continue
+                if tokens[0] in {"STROKE", "MOVCTL"} and tokens[1:2] != [object_id]:
+                    continue
+                records[tokens[0]].append(tokens)
+                if tokens[0] == "MOVCTL" and tokens[-1] == "4":
+                    profile_rows = [next(stream, "") for _ in range(4)]
+        try:
+            if any(len(items) != 1 for items in records.values()):
+                raise ValueError("缺失或重复的终态行程/停止控制记录")
+            fields = {name: items[0] for name, items in records.items()}
+            if len(fields["STROKE"]) != 5 or len(fields["SMAX"]) != 4:
+                raise ValueError("终态行程记录长度不正确")
+            value = float(fields["STROKE"][axis + 2])
+            limits = [float(token) for token in fields["SMAX"][1:]]
+            expected = [0.0, 0.0, 0.0]
+            expected[axis] = target
+            now = float(fields["TNOW"][1])
+            time_limit = float(fields["TMAX"][1])
+            steps_left = int(fields["NSTEP"][1])
+            # SMAX相同也不能复用旧六点补进结果 校验本版本单梯形与保护时间
+            header = fields["MOVCTL"]
+            if (len(header) != 8 or header[2:4] != ["1", "2"] or header[-1] != "4"
+                    or [float(token) for token in header[4:7]] != [0.0, 1.0, 0.0]
+                    or len(profile_rows) != 4 or any(len(row.split()) != 2 for row in profile_rows)):
+                raise ValueError("DB运动曲线不是当前四点单梯形 请使用新工作区重新计算")
+            points = [[float(token) for token in row.split()] for row in profile_rows]
+            if (not all(math.isfinite(value) for point in points for value in point)
+                    or points[0] != [0.0, 0.0] or points[1][1] <= 0
+                    or points[1][1] != points[2][1] or points[3][1] != 0
+                    or any(b[0] <= a[0] for a, b in zip(points, points[1:], strict=False))):
+                raise ValueError("DB单梯形时间或速度记录无效")
+            area = sum((a[1] + b[1]) * (b[0] - a[0]) / 2
+                       for a, b in zip(points, points[1:], strict=False))
+            if (not math.isclose(area, TRAPEZOID_STROKE, rel_tol=1e-9)
+                    or not math.isclose(time_limit, points[-1][0], rel_tol=1e-9)):
+                raise ValueError("DB单梯形面积或TMAX与当前任务不一致")
+            if not math.isfinite(value) or not target <= value <= target + 0.01:
+                raise ValueError(f"实际正向STROKE={value} mm 要求[{target}, {target + 0.01}] mm")
+            if limits != expected or fields["PDIE"][1:2] != [object_id]:
+                raise ValueError("DB停止设置与当前任务不一致 请使用新工作区重新计算")
+            if (not math.isfinite(now) or not math.isfinite(time_limit)
+                    or not 0 <= now < time_limit or steps_left <= 0):
+                raise ValueError("终态达到时间或步数保护上限 或时间记录无效")
+        except (ValueError, IndexError) as exc:
+            raise RuntimeError(f"工况未完成目标行程：{exc}，不能作为完整终态结果") from exc
+
 
 
 def _configure_solver_bits(work_dir: str) -> None:

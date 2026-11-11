@@ -12,6 +12,7 @@ from enum import IntEnum
 from typing import Any, Callable, List, Optional, Sequence, Tuple
 
 from mobo.common.logging import logger
+from mobo.common.ring_control import STOP_STROKE
 from .extract import extract_dataset, extract_dataset_row
 from .incremental import IncrementalDataset
 from .keyfile import derive_output_path, generate_key_files
@@ -251,7 +252,7 @@ class ForgingTask:
                     raise
 
             stroke_options = (
-                {"required_stroke": ("3", 1, 14.5)}
+                {"required_stroke": ("3", 1, STOP_STROKE)}
                 if "pressure_roll_profile_peak_speed" in self.param_table[0] else {}
             )
             DeformSolver(max_parallel=self.max_parallel,
@@ -278,7 +279,7 @@ class ForgingTask:
                 self.result_txt_dir,
                 sample_indices=self.sample_indices or None,
                 required_stroke=(
-                    ("3", 1, 14.5) if "pressure_roll_profile_peak_speed" in self.param_table[0]
+                    ("3", 1, STOP_STROKE) if "pressure_roll_profile_peak_speed" in self.param_table[0]
                     else None
                 ),
             )

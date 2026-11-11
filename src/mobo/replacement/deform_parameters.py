@@ -6,6 +6,11 @@ import math
 import re
 from typing import Dict, List, Optional, Sequence, Tuple
 
+from mobo.common.ring_control import (
+    MAIN_STROKE, STOP_STROKE, TRAPEZOID_STROKE, RECOVERY_SPEED_RATIO,
+    RECOVERY_RAMP_DISTANCE, RECOVERY_END_DISTANCE,
+)
+
 from .base import LineReplacement, ParameterBinding
 
 
@@ -195,50 +200,19 @@ def replace_movctl_constant_speed(
 def replace_movctl_profile_peak_speed(
     lines: Sequence[str], bindings: Sequence[ParameterBinding]
 ) -> list[str]:
-    """替换平台速度并反比例缩放时间，保持14.5 mm进给及原启停形状。"""
+    """生成面积14.513 mm的单梯形 以SMAX控制实际停止行程"""
     result = list(lines)
     for binding in bindings:
-        if binding.name != "pressure_roll_profile_peak_speed" or binding.object_id is None:
-            continue
-        magnitude = _finite_value(binding.value)
-        if magnitude <= 0:
-            raise ValueError("芯辊峰值速度必须为正数，才能完成14.5 mm行程")
-        found = False
-        for index, line in enumerate(result):
-            tokens = line.split()
-            if len(tokens) < 2 or tokens[0] != "MOVCTL" or tokens[1] != binding.object_id:
-                continue
-            if len(tokens) != 8 or tokens[3] != "2" or found:
-                raise ValueError("芯辊峰值速度需要唯一的 MOVCTL 五点速度曲线")
-            found = True
-            count = int(tokens[-1])
-            if count != 5:
-                raise ValueError("芯辊峰值速度只支持五点速度曲线")
-            nonzero = 0
-            for offset in range(1, count + 1):
-                point_index = index + offset
-                if point_index >= len(result) or len(result[point_index].split()) != 2:
-                    raise ValueError("MOVCTL 控制点记录不完整")
-                speed = parse_speed(result[point_index])
-                if speed is None or not math.isfinite(speed):
-                    raise ValueError("MOVCTL 控制点速度无效")
-                if speed == 0.0:
-                    continue
-                nonzero += 1
-                value = -magnitude if speed < 0 else magnitude
-                result[point_index] = _replace_token(
-                    result[point_index], -1, format_deform_float(str(value))
-                )
-            if nonzero != 2:
-                raise ValueError("MOVCTL 五点曲线应包含两个非零平台速度点")
-        if not found:
-            raise ValueError("未找到芯辊的 MOVCTL 速度曲线")
-        result = _retime_ring_feed(result, binding)
+        if binding.name == "pressure_roll_profile_peak_speed" and binding.object_id is not None:
+            result = _retime_ring_feed(result, binding)
     return result
 
 
 def _retime_ring_feed(lines: Sequence[str], binding: ParameterBinding) -> list[str]:
-    """只改进给时间、TMAX和必要的NSTEP，SMAX/DTMAX及其他内容不变。"""
+    """兼容旧五点与六点输入 生成无末端补进的四点单梯形"""
+    magnitude = _finite_value(binding.value)
+    if magnitude <= 0:
+        raise ValueError("芯辊峰值速度必须为正数，才能完成目标行程")
     controls: dict[str, list[tuple[int, list[str]]]] = {
         name: [] for name in ("PDIE", "SMAX", "TMAX", "NSTEP", "MOVCTL", "STROKE")
     }
@@ -251,28 +225,58 @@ def _retime_ring_feed(lines: Sequence[str], binding: ParameterBinding) -> list[s
         controls[tokens[0]].append((index, tokens))
     if any(len(items) != 1 for items in controls.values()):
         raise ValueError("等行程进给需要唯一的PDIE/SMAX/TMAX/NSTEP/MOVCTL/STROKE定义")
-    if controls["PDIE"][0][1][1] != binding.object_id:
+    if controls["PDIE"][0][1][1:2] != [binding.object_id]:
         raise ValueError("等行程进给要求压力辊是主模具PDIE")
-    stroke_limit = [float(value) for value in controls["SMAX"][0][1][1:]]
+    stroke_index, stroke_tokens = controls["SMAX"][0]
+    stroke_limit = [float(value) for value in stroke_tokens[1:]]
     initial_stroke = [float(value) for value in controls["STROKE"][0][1][2:]]
-    if stroke_limit != [0.0, 14.5, 0.0] or initial_stroke != [0.0, 0.0, 0.0]:
-        raise ValueError("等行程进给要求Y向SMAX=14.5 mm且初始STROKE为零")
+    if (stroke_limit not in ([0.0, MAIN_STROKE, 0.0], [0.0, STOP_STROKE, 0.0])
+            or initial_stroke != [0.0, 0.0, 0.0]):
+        raise ValueError("等行程进给要求Y向SMAX为14.5或14.5001 mm且初始STROKE为零")
     profile_index, header = controls["MOVCTL"][0]
-    if header[2:4] != ["1", "2"] or [float(value) for value in header[4:7]] != [0.0, 1.0, 0.0]:
-        raise ValueError("等行程进给只支持Y正向的时间函数速度控制")
-    points = [[float(value) for value in lines[profile_index + offset].split()]
-              for offset in range(1, 6)]
+    if (len(header) != 8 or header[2:4] != ["1", "2"]
+            or [float(value) for value in header[4:7]] != [0.0, 1.0, 0.0]
+            or header[-1] not in {"4", "5", "6"}):
+        raise ValueError("等行程进给只支持Y正向的四点单梯形或历史五点与六点速度控制")
+    count = int(header[-1])
+    rows = lines[profile_index + 1:profile_index + count + 1]
+    if len(rows) != count or any(len(row.split()) != 2 for row in rows):
+        raise ValueError("MOVCTL 控制点记录不完整")
+    points = [[_finite_value(value) for value in row.split()] for row in rows]
     times = [point[0] for point in points]
-    if (times[0] != 0 or not all(math.isfinite(time) for time in times)
+    speeds = [point[1] for point in points]
+    if (times[0] != 0
             or any(right <= left for left, right in zip(times, times[1:], strict=False))
-            or [point[1] != 0 for point in points] != [False, True, True, False, False]
-            or points[1][1] != points[2][1]):
-        raise ValueError("等行程进给需要从零开始、严格递增的五点启停平台曲线")
-    area = sum((abs(left[1]) + abs(right[1])) * (right[0] - left[0]) / 2
-               for left, right in zip(points, points[1:], strict=False))
-    scale = 14.5 / area
+            or speeds[0] != 0 or speeds[1] <= 0 or speeds[1] != speeds[2] or speeds[3] != 0):
+        raise ValueError("等行程进给需要从零开始、严格递增且正向的平台曲线")
+    if count == 5 and speeds[4] != 0:
+        raise ValueError("旧五点曲线必须以零速度结束")
+    if count == 6:
+        recovery = speeds[1] * RECOVERY_SPEED_RATIO
+        if (stroke_limit[1] != STOP_STROKE
+                or any(not math.isclose(speed, recovery, rel_tol=1e-9) for speed in speeds[4:])
+                or not math.isclose((times[4] - times[3]) * speeds[1], RECOVERY_RAMP_DISTANCE, rel_tol=1e-7)
+                or not math.isclose((times[5] - times[3]) * speeds[1], RECOVERY_END_DISTANCE, rel_tol=1e-7)):
+            raise ValueError("六点曲线必须符合严格行程补进控制定义")
+
+    area = sum((left[1] + right[1]) * (right[0] - left[0]) / 2
+               for left, right in zip(points[:4], points[1:4], strict=False))
+    if not math.isfinite(area) or area <= 0:
+        raise ValueError("主进给面积必须是有限正数")
+    if count == 4:
+        if stroke_limit[1] != STOP_STROKE or not math.isclose(area, TRAPEZOID_STROKE, rel_tol=1e-9):
+            raise ValueError("四点输入必须是面积14.513 mm且SMAX为14.5001 mm的单梯形")
+        scale = speeds[1] / magnitude
+        extra_time = 0.0
+    else:
+        # 先复现旧14.5 mm主段的速度缩放 再只延长匀速段 加减速斜率不变
+        scale = MAIN_STROKE / (area * magnitude / speeds[1])
+        extra_time = (TRAPEZOID_STROKE - MAIN_STROKE) / magnitude
     if math.isclose(scale, 1.0, rel_tol=1e-12):
         scale = 1.0
+    new_times = [times[0], times[1] * scale,
+                 times[2] * scale + extra_time, times[3] * scale + extra_time]
+    new_speeds = [0.0, magnitude, magnitude, 0.0]
     time_index, time_tokens = controls["TMAX"][0]
     step_index, step_tokens = controls["NSTEP"][0]
     if len(time_tokens) != 2 or len(step_tokens) != 2:
@@ -281,21 +285,25 @@ def _retime_ring_feed(lines: Sequence[str], binding: ParameterBinding) -> list[s
     original_steps = int(step_tokens[1])
     if original_limit <= 0 or original_steps <= 0:
         raise ValueError("等行程进给要求TMAX和NSTEP为正数")
-    time_limit = max(original_limit, times[-1]) * scale
-    if not math.isfinite(time_limit):
-        raise ValueError("进给时间超出可表示范围")
+    if not all(math.isfinite(value) for value in new_times + new_speeds):
+        raise ValueError("进给时间或速度超出可表示范围")
     result = list(lines)
-    for offset, time in enumerate(times, 1):
-        if time * scale != time:
-            result[profile_index + offset] = _replace_token(
-                result[profile_index + offset], 0, format_deform_float(str(time * scale))
-            )
-    if time_limit != original_limit:
-        result[time_index] = _replace_token(lines[time_index], 1, format_deform_float(str(time_limit)))
-    required_steps = math.ceil(original_steps * max(1.0, time_limit / original_limit))
-    if required_steps != original_steps:
-        result[step_index] = _replace_token(lines[step_index], 1, str(required_steps))
+    result[stroke_index] = _replace_token(lines[stroke_index], 2, format_deform_float(str(STOP_STROKE)))
+    result[time_index] = _replace_token(lines[time_index], 1, format_deform_float(str(new_times[-1])))
+    time_scale = new_times[-1] / original_limit
+    if math.isclose(time_scale, 1.0, rel_tol=1e-9):
+        time_scale = 1.0
+    required_steps = math.ceil(original_steps * max(1.0, scale, time_scale))
+    result[step_index] = _replace_token(lines[step_index], 1, str(required_steps))
+    result[profile_index] = _replace_token(lines[profile_index], -1, "4")
+    new_rows = []
+    for index, (time, speed) in enumerate(zip(new_times, new_speeds, strict=True)):
+        row = rows[min(index, count - 1)]
+        row = _replace_token(row, 0, format_deform_float(str(time)))
+        new_rows.append(_replace_token(row, 1, format_deform_float(str(speed))))
+    result[profile_index + 1:profile_index + count + 1] = new_rows
     return result
+
 
 
 def collect_speed_scale_specs(

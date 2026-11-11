@@ -482,7 +482,7 @@ _GH4169_TEMPLATE_DIR = KEY_FILE_DIR / "gh4169_ring_single_task_1"
 GH4169_RING_SINGLE_TASK_1 = SingleOperationTaskDefinition(
     task_id="gh4169-ring-single-task-1",
     name="GH4169碾环单工步任务1",
-    workspace=AUTO_SINGLE_DIR / "gh4169_ring_single_task_1",
+    workspace=AUTO_SINGLE_DIR / "gh4169_ring_single_task_1_trapezoid_v3",
     template_key=str(_GH4169_TEMPLATE_DIR / "GH4169.KEY"),
     parameters=(
         {"name": "workpiece_temperature", "object": "workpiece", "range": [1100.0, 1150.0]},

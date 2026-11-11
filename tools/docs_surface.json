@@ -127,6 +127,7 @@
     "common/__init__.py",
     "common/logging.py",
     "common/paths.py",
+    "common/ring_control.py",
     "common/task_store.py",
     "extraction/__init__.py",
     "extraction/base.py",

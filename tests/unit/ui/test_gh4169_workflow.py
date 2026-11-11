@@ -215,7 +215,7 @@ def test_gh4169_solver_always_requires_terminal_stroke_even_without_incremental(
 
     monkeypatch.setattr(pipeline, "DeformSolver", CheckedSolver)
     task.run_solver()
-    assert captured == [("3", 1, 14.5)] and not errors
+    assert captured == [("3", 1, 14.5001)] and not errors
 
 
 def test_manual_extraction_reports_incomplete_stroke_as_failure(page, monkeypatch, tmp_path):
@@ -228,7 +228,7 @@ def test_manual_extraction_reports_incomplete_stroke_as_failure(page, monkeypatc
     widget.dry_run.setChecked(False)
 
     def incomplete(db, required):
-        assert required == ("3", 1, 14.5)
+        assert required == ("3", 1, 14.5001)
         raise RuntimeError("工况未完成目标行程")
 
     monkeypatch.setattr(extract, "validate_db_stroke", incomplete)

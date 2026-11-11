@@ -1,0 +1,12 @@
+#  @author MingrHu
+#  @date   2026-11-11
+"""GH4169 严格行程控制常量 单位为 mm 与 s"""
+
+MAIN_STROKE = 14.5
+STOP_STROKE = 14.5001
+TRAPEZOID_STROKE = 14.513
+
+# 仅用于识别和迁移上一版六点补进输入 新输出不含补进段
+RECOVERY_SPEED_RATIO = 0.02
+RECOVERY_RAMP_DISTANCE = 0.1
+RECOVERY_END_DISTANCE = 0.7

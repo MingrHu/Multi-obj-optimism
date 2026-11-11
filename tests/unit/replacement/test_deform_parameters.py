@@ -75,6 +75,6 @@ def test_profile_peak_speed_preserves_zero_speed_control_points():
 
     result = replace_movctl_profile_peak_speed(lines, bindings)
 
-    assert [float(line.split()[-1]) for line in result[1:6]] == [
-        0.0, 2.5, 2.5, 0.0, 0.0,
+    assert [float(line.split()[-1]) for line in result[1:5]] == [
+        0.0, 2.5, 2.5, 0.0,
     ]

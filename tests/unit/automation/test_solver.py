@@ -379,41 +379,45 @@ def test_completed_callback_runs_for_resumed_db(monkeypatch, tmp_path):
     assert completed == [dbs[0]]
 
 
-@pytest.mark.parametrize("stroke", ["14.5", "14.4999", "-14.5"])
+@pytest.mark.parametrize("stroke", ["14.5001", "14.5002", "14.501629313"])
 def test_final_stroke_validation_reads_latest_db(monkeypatch, stroke):
     exported = []
 
     def export(db, key, step=""):
         from pathlib import Path
         exported.append((db, key, step))
-        Path(key).write_text(f"STROKE 3 0 {stroke} 0\n")
+        Path(key).write_text(terminal_controls() + f"STROKE 3 0 {stroke} 0\n")
 
     monkeypatch.setattr(solver, "db_to_key", export)
-    solver.validate_db_stroke("sample.DB", ("3", 1, 14.5))
+    solver.validate_db_stroke("sample.DB", ("3", 1, 14.5001))
     assert exported[0][0] == "sample.DB" and exported[0][2] == ""
     import os
     assert not os.path.exists(exported[0][1])
 
 
-@pytest.mark.parametrize("data", ["STROKE 3 0 3.625 0\n", "STROKE 3 0 14.4 0\n",
+@pytest.mark.parametrize("data", ["STROKE 3 0 14.5 0\n", "STROKE 3 0 14.4999999 0\n",
+                                  "STROKE 3 0 -14.5001 0\n", "STROKE 3 0 14.500099999 0\n",
+                                  "STROKE 3 0 inf 0\n", "STROKE 3 0 invalid 0\n",
+                                  "STROKE 3 0 14.5001 0\nSTROKE 3 0 14.5001 0\n",
+                                  "STROKE 3 0 3.625 0\n", "STROKE 3 0 14.4 0\n",
                                   "STROKE 3 0 14.6 0\n", "STROKE 3 0 nan 0\n",
                                   "STROKE 2 0 14.5 0\n", ""])
 def test_short_or_missing_final_stroke_is_not_accepted(monkeypatch, data):
     from pathlib import Path
-    monkeypatch.setattr(solver, "db_to_key", lambda db, key: Path(key).write_text(data))
+    monkeypatch.setattr(solver, "db_to_key", lambda db, key: Path(key).write_text(terminal_controls() + data))
     with pytest.raises(RuntimeError, match="未完成目标行程"):
-        solver.validate_db_stroke("sample.DB", ("3", 1, 14.5))
+        solver.validate_db_stroke("sample.DB", ("3", 1, 14.5001))
 
 
 def test_stroke_failure_prevents_done_and_completion_callback(monkeypatch):
     complete = []
-    s = solver.DeformSolver(required_stroke=("3", 1, 14.5), on_completed=complete.append)
+    s = solver.DeformSolver(required_stroke=("3", 1, 14.5001), on_completed=complete.append)
     s._running = 1
     marked = []
     monkeypatch.setattr(s, "_mark_done", marked.append)
 
     def fail(db, *, required_stroke):
-        assert required_stroke == ("3", 1, 14.5)
+        assert required_stroke == ("3", 1, 14.5001)
         raise RuntimeError("未完成目标行程")
 
     monkeypatch.setattr(solver, "solve_db_sync", fail)
@@ -425,7 +429,7 @@ def test_stroke_failure_prevents_done_and_completion_callback(monkeypatch):
 def test_resumed_completed_db_is_revalidated_before_reuse(monkeypatch, tmp_path, valid):
     import json
     state_file = tmp_path / "process.json"
-    s = solver.DeformSolver(process_info_file=str(state_file), required_stroke=("3", 1, 14.5))
+    s = solver.DeformSolver(process_info_file=str(state_file), required_stroke=("3", 1, 14.5001))
     s._init_progress(["sample.DB"])
     s._mark_done("sample.DB")
     calls = []
@@ -447,4 +451,45 @@ def test_resumed_completed_db_is_revalidated_before_reuse(monkeypatch, tmp_path,
         assert state["completed"] == 0
         assert not state["db_files"][0]["done"]
         assert "未完成目标行程" in state["db_files"][0]["validation_error"]
-    assert calls == [("sample.DB", ("3", 1, 14.5))]
+    assert calls == [("sample.DB", ("3", 1, 14.5001))]
+
+
+def terminal_controls():
+    return ("PDIE 3 0\nSMAX 0 14.5001 0\nTNOW 45.48 45.48 0 0\nTMAX 46.2825\nNSTEP 5000\n"
+            "MOVCTL 3 1 2 0 1 0 4\n0 0\n10 0.4\n36.2825 0.4\n46.2825 0\n")
+
+
+@pytest.mark.parametrize("old,new", [
+    ("SMAX 0 14.5001 0", "SMAX 0 14.5 0"),
+    ("PDIE 3 0", "PDIE 2 0"),
+    ("NSTEP 5000", "NSTEP 0"),
+    ("NSTEP 5000", "NSTEP -1"),
+    ("TNOW 45.48", "TNOW 46.2825"),
+    ("TNOW 45.48", "TNOW nan"),
+    ("TMAX 46.2825", "TMAX inf"),
+    ("TMAX 46.2825\n", ""),
+    ("TMAX 46.2825", "TMAX 46.2825\nTMAX 46.2825"),
+])
+def test_protection_limit_or_old_db_cannot_pass(monkeypatch, old, new):
+    from pathlib import Path
+    data = terminal_controls().replace(old, new) + "STROKE 3 0 14.5002 0\n"
+    monkeypatch.setattr(solver, "db_to_key", lambda db, key: Path(key).write_text(data))
+    with pytest.raises(RuntimeError, match="未完成目标行程"):
+        solver.validate_db_stroke("sample.DB", ("3", 1, 14.5001))
+
+
+@pytest.mark.parametrize("old,new", [
+    ("MOVCTL 3 1 2 0 1 0 4", "MOVCTL 3 1 2 0 1 0 6"),
+    ("MOVCTL 3 1 2 0 1 0 4", "MOVCTL 3 1 2 0 1 0 5"),
+    ("36.2825 0.4", "36.25 0.4"),
+    ("46.2825 0", "46.2825 0.008"),
+    ("10 0.4", "10 nan"),
+    ("10 0.4", "10 -0.4"),
+    ("TMAX 46.2825", "TMAX 65"),
+])
+def test_old_or_invalid_motion_profile_is_rejected(monkeypatch, old, new):
+    from pathlib import Path
+    data = terminal_controls().replace(old, new) + "STROKE 3 0 14.5002 0\n"
+    monkeypatch.setattr(solver, "db_to_key", lambda db, key: Path(key).write_text(data))
+    with pytest.raises(RuntimeError, match="未完成目标行程"):
+        solver.validate_db_stroke("sample.DB", ("3", 1, 14.5001))

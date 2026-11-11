@@ -78,7 +78,7 @@ def test_tc4_task_is_registered_and_has_fixed_first_operation():
 def test_gh4169_single_task_is_registered_with_requested_design_space():
     task = get_single_operation_task_definition("gh4169-ring-single-task-1")
     assert task is GH4169_RING_SINGLE_TASK_1
-    assert task.workspace.parts[-2:] == ("single", "gh4169_ring_single_task_1")
+    assert task.workspace.parts[-2:] == ("single", "gh4169_ring_single_task_1_trapezoid_v3")
     assert [(item["name"], item["range"]) for item in task.parameters] == [
         ("workpiece_temperature", [1100.0, 1150.0]),
         ("ring_die_temperature", [250.0, 350.0]),
@@ -185,7 +185,7 @@ def test_real_gh4169_template_has_grain_and_generates_parameterized_key(tmp_path
         assert f"NDTMP        {object_id}       0    2.5000000000E+002" in rendered
     assert (
         "MOVCTL       3       1       2    0.0000000000E+000    "
-        "1.0000000000E+000    0.0000000000E+000       5"
+        "1.0000000000E+000    0.0000000000E+000       4"
     ) in rendered
     assert rendered.count(
         "4.0000000000E-001"
